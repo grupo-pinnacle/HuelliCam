@@ -1,303 +1,171 @@
-# 📚 Referencia Técnica Integral del Sistema — VetConnect
+# Referencia Técnica del Sistema — Huellicam
 
-Esta guía contiene la documentación de bajo nivel, contratos de endpoints, eventos de WebSocket y estructura completa de directorios para desarrolladores.
-
----
-
-## 1. Estructura de Directorios del Monorepo
-
-```
-vetconnect/
-├── backend/                        # API REST, WebSockets & Capa de Persistencia
-│   ├── prisma/
-│   │   ├── schema.prisma           # Modelado de datos PostgreSQL
-│   │   └── seed.ts                 # Semilla de datos de prueba (TypeScript, ejecutado via `ts-node`)
-│   ├── src/
-│   │   ├── modules/
-│   │   │   ├── admin/              # Fiscalización SENASA, aprobación/rechazo de veterinarios, AuditLogs
-│   │   │   ├── auth/               # Registro, Login, Refresh JWT, Verificación Email
-│   │   │   ├── users/              # Perfil de usuario, conmutación isOnline, bio
-│   │   │   ├── pets/               # CRUD de mascotas, especies, fichas clínicas
-│   │   │   ├── consultations/      # Triage, colas, asignación, estados, notas
-│   │   │   ├── prescriptions/      # Emisión y verificación QR de recetas oficiales SENASA
-│   │   │   ├── calls/              # Señalización WebRTC y tokens LiveKit
-│   │   │   ├── media/              # Subida de adjuntos (S3 / Local), magic bytes
-│   │   │   └── notifications/      # Push Expo API y bandeja in-app
-│   │   ├── config/
-│   │   │   ├── cors.ts             # Política CORS dinámica Express y Socket.io
-│   │   │   └── env.ts              # Validación Zod fail-fast de variables de entorno
-│   │   ├── lib/
-│   │   │   ├── prisma.ts           # Cliente Prisma singleton con connection pooling
-│   │   │   └── redis.ts            # Cliente ioredis y Redis adapter
-│   │   ├── middlewares/            # Auth, requireRole, rateLimiter, errorHandler RFC 7807
-│   │   ├── realtime/               # Gateway de Socket.io y multiplexación de salas
-│   │   ├── app.ts                  # Configuración de Express, Helmet & Middlewares
-│   │   └── server.ts               # Punto de entrada HTTP, Socket.io y Graceful Shutdown
-│   ├── jest.config.js              # Configuración de pruebas automatizadas
-│   └── package.json
-│
-├── web/                            # Frontend Web (Veterinarios, Admins y Tutores)
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── call/               # CallRoom, PreJoinModal (LiveKit WebRTC + Handshake)
-│   │   │   ├── common/             # ErrorBoundary, Global Fallbacks
-│   │   │   └── ui/                 # Componentes base y catálogo Storybook (Button, Input, Badge, etc.)
-│   │   ├── context/                # AuthContext (Almacenamiento de token y Axios interceptor)
-│   │   ├── pages/                  # Landing, Login, Register, DashboardClient, DashboardVet, ConsultationRoom, PrescriptionView, AdminVets, NotFound
-│   │   ├── routes/                 # ProtectedRoute, enrutamiento condicional por rol
-│   │   ├── services/               # api.ts (Instancia Axios centralizada y contratos REST)
-│   │   └── types/                  # Interfaces TypeScript nativas sincronizadas con backend DTOs
-│   ├── tailwind.config.js          # Sistema de diseño, tokens clínicos y responsive breakpoints
-│   └── vite.config.ts              # Configuración de Vite, code-splitting y proxies
-│
-├── mobile/                         # Aplicación Nativa Mobile (React Native / Expo)
-│   ├── app/                        # File-based routing (Expo Router)
-│   │   ├── (auth)/                 # Pantallas de Login y Registro
-│   │   └── (app)/                  # Pantallas con Tabs (Home, Pets, Chat, Historial)
-│   ├── src/
-│   │   ├── components/             # Componentes UI nativos (NativeWind)
-│   │   ├── hooks/                  # useAuth, useIncomingCall, usePets
-│   │   ├── lib/                    # api.ts, socket.ts, secureStore.ts
-│   │   └── stores/                 # Zustand state stores
-│   └── app.json                    # Configuración de Expo, permisos y bundle IDs
-│
-└── docs/                           # Documentación técnica consolidada
-    ├── PROJECT_CHARTER.md          # Carta fundacional, gobernanza y visión del proyecto
-    ├── PLAN_DE_PROYECTO_Y_GESTION.md # Plan de Proyecto, RACI, Stakeholders, DCU & KPIs
-    ├── ARCHITECTURE.md             # Arquitectura de alto nivel y normativas
-    ├── DECISIONS.md                # Registro oficial de decisiones de arquitectura (ADR-001 a ADR-024)
-    ├── TECH_REFERENCE.md           # Este documento (referencia técnica y contratos)
-    ├── GUIA_OFICIAL_BUENAS_PRACTICAS_Y_SISTEMA.md # Guía de Buenas Prácticas, Antipatrones y Seguridad
-    ├── DEPLOY.md                   # Manual de despliegue en producción (Coolify / Vercel / EAS)
-    ├── BRIEF.md                    # Brief de producto y modelo de negocio
-    ├── SPEC.md                     # Especificación técnica, modelos de dominio y protocolos
-    ├── MINUTA_STAKEHOLDER_2026-09.md # Requerimientos acordados con stakeholders y backlog v2.1+
-    ├── LIVEKIT_AUDIT.md            # Guía Maestra & Checklist Preventivo de Implementación LiveKit SFU
-    ├── PROPUESTA_MEJORAS_LIVEKIT.md # Hoja de Ruta Consolidada LiveKit
-    └── RECONCILIACION_ARQUITECTURA_Y_DISCREPANCIAS.md # Registro Oficial de Reconciliación de Arquitectura
-```
-
-> ℹ️ **Nota de Diseño sobre `packages/shared` (ADR-008):**
-> Para maximizar la velocidad de desarrollo y evitar la sobrecarga de tooling complejo de monorepos (Nx, Turborepo o transpiladores cruzados), la arquitectura descarta formalmente un workspace `packages/shared`. Los contratos y esquemas Zod se definen con rigor en el Backend (`backend/src/contracts/` y DTOs por módulo) y se sincronizan como interfaces TypeScript nativas en los clientes `web` y `mobile`.
+Documentación técnica de bajo nivel sincronizada con `backend/prisma/schema.prisma`, los routers de Express (`backend/src/app.ts`) y los contratos de tiempo real (`backend/src/realtime/socket.types.ts`).
 
 ---
 
-### 1.1 Modelos Canónicos del Schema de Base de Datos (Prisma v2.0)
-El esquema inicial del MVP v2.0 comprende **exactamente 10 modelos principales** más soporte de notificaciones:
-1. `User`: Identidades con autenticación JWT, rol (`CLIENT`, `VET`, `ADMIN`), `vetStatus` y `tokenVersion`.
-2. `Pet`: Mascotas con soporte de soft-delete (`deletedAt`) y validación opcional de microchip ISO 15 dígitos.
-3. `Consultation`: Ciclo clínico y máquina de estados (`WAITING`, `ACTIVE`, `COMPLETED`, `CANCELLED`).
-4. `Message`: Mensajería sincrónica de chat con deduplicación por `clientMsgId` único.
-5. `Call`: Sesiones de teleconsulta WebRTC con estado (`INITIATED`, `ACTIVE`, `ENDED`) y duración.
-6. `Prescription`: Recetas médicas digitales oficiales con firma profesional y código QR.
-7. `Review`: Calificaciones médicas profesionales en escala universal de 1 a 5 estrellas (ADR-023).
-8. `AuditLog`: Registro inmutable de auditoría para trazabilidad de mutaciones administrativas (ADR-014).
-9. `DailyUploadCounter`: Control de cuota diaria de subidas por usuario (`totalBytes` acumulado hasta 50 MB/día y `count`, mitigación DoS).
-10. `MediaFile`: Metadatos de archivos clínicos y adjuntos (`id`, `ownerId`, `consultationId`, `fileName`, `fileSize`, `mimeType`, `localPath`, `s3Key`, `createdAt`, `deletedAt`). Cumple con ADR-010 (acceso autenticado, prohibición de serving estático) y ADR-020.
-*(Soporte de notificaciones: modelos `PushToken` [tokens de dispositivo Expo Push API con `platform` y unicidad de token] y `Notification` [bandeja in-app persistida con `title`, `body`, `type`, `data`, `isRead`, `readAt`] bajo ADR-011).*
+## 1. Modelo de Datos (Prisma ORM 6 — PostgreSQL 16)
+
+El esquema actual en [schema.prisma](../backend/prisma/schema.prisma) define **4 enums** y **15 modelos**:
+
+### 1.1 Enums
+- **`Role`:** `CLIENT` | `VET` | `ADMIN`
+- **`VetStatus`:** `PENDING` | `APPROVED` | `REJECTED`
+- **`CallStatus`:** `INITIATED` | `ACTIVE` | `ENDED`
+- **`ConsultationStatus`:**
+  - Flujo principal: `WAITING`, `ACTIVE`, `COMPLETED`, `CANCELLED`
+  - Estados de concurrencia y recuperación de sesión: `TRIAGE_CRITICAL_QUEUED`, `CLAIM_PENDING_SYNC`, `LIVEKIT_CONNECTING`, `IN_CALL_ACTIVE`, `AWAITING_EMERGENCY_CALLBACK`, `HANDOFF_IN_PROGRESS`
+
+### 1.2 Los 15 Modelos Canónicos
+
+| Modelo | Tabla SQL | Responsabilidad Principal |
+|---|---|---|
+| `User` | `users` | Cuentas (`CLIENT`, `VET`, `ADMIN`), estado de matrícula (`vetStatus`, `licenseNumber`), presencia (`isOnline`, `lastSeen`), `tokenVersion`, reputación denormalizada (`ratingAvg`, `ratingCount`) y soft-delete (`deletedAt`). |
+| `Pet` | `pets` | Ficha declarativa de mascota (`name`, `species`, `breed`, `weightKg`, `sex`, `birthDate`, `microchip`, `allergies`, `chronicConditions`) con soft-delete. |
+| `Consultation` | `consultations` | Ciclo clínico de atención, notas de triaje, `diagnosisNotes`, timestamps, y campos de concurrencia (`activeDeviceId`, `transportStatus`, `stateVersion`, `claimedAt`, `livekitRoomSid`). |
+| `ConsultationAuditLog` | `consultation_audit_log` | Trazabilidad granular de transiciones, reclamos, desconexiones y handoff por dispositivo sobre una consulta. |
+| `Message` | `messages` | Mensajes del chat clínico con clave única de idempotencia (`clientMsgId`) y adjunto opcional (`attachmentUrl`). |
+| `Call` | `calls` | Registro de salas de videollamada (`roomName`, `status`, duración). |
+| `Prescription` | `prescriptions` | Recetas médicas digitales emitidas por el veterinario (`medication`, `dosage`, `frequency`, `durationDays`, `indications`). |
+| `Review` | `reviews` | Calificación única por consulta (`1..5` estrellas) y comentario opcional. |
+| `AuditLog` | `audit_logs` | Auditoría inmutable de acciones administrativas (aprobación/rechazo SENASA, CRUDs, revocación de sesiones, cambio de feature flags y tarifas). |
+| `DailyUploadCounter` | `daily_upload_counters` | Cuota diaria de subidas por usuario (`date` `YYYY-MM-DD`, `count`, `totalBytes` con tope 50 MB/día). |
+| `MediaFile` | `media_files` | Metadatos de archivos clínicos en almacenamiento local o S3 (`fileName`, `fileSize`, `mimeType`, `localPath`, `s3Key`, `deletedAt`). |
+| `PushToken` | `push_tokens` | Tokens de dispositivos registrados para Expo Push Notifications (`token`, `platform`: `ios \| android \| web`). |
+| `Notification` | `notifications` | Bandeja de notificaciones in-app (`title`, `body`, `type`, `data`, `isRead`, `readAt`). |
+| `PasswordResetToken` | `password_reset_tokens` | Códigos OTP de 6 dígitos hasheados (`codeHash`) con expiración (`expiresAt`) y control de un solo uso (`usedAt`). |
+| `EmailDispatchLog` | `email_dispatch_logs` | Deduplicación persistente (`dedupeKey` único) de correos automáticos (`APPOINTMENT`, `CHECKUP`, `BIRTHDAY`). |
 
 ---
 
-## 2. Contratos de API REST (Endpoints Clave)
+## 2. Contratos de API REST
+
+Prefijo base de la API: `/api` (más endpoint de salud `GET /health`). Todas las entradas se validan con **Zod** y los errores siguen el envelope estándar `{ success: false, error: { code, message, details, timestamp } }`.
 
 ### 2.1 Autenticación (`/api/auth`)
-| Método | Endpoint | Descripción | Acceso |
-|---|---|---|---|
-| `POST` | `/api/auth/register` | Registro de nuevos tutores o veterinarios (VET inicia en `PENDING`) | Público |
-| `POST` | `/api/auth/login` | Inicio de sesión. Web: Refresh Token en cookie `HttpOnly`. Mobile (`X-Client-Platform: mobile`): Refresh Token en JSON body para `expo-secure-store` | Público |
-| `POST` | `/api/auth/refresh` | Renovación de access token. Web: lee cookie `HttpOnly`. Mobile: lee payload `{ refreshToken }` | Público |
-| `POST` | `/api/auth/logout` | Cierre de sesión, incrementa `tokenVersion` e invalida cookies | Autenticado |
-| `GET`  | `/api/auth/me`     | Rehidratación del perfil de usuario autenticado activo en `AuthContext.tsx` | Autenticado |
 
-### 2.2 Usuarios & Perfil (`/api/users`)
-> ⚠️ **Nota de Contrato:** Para obtener el perfil del usuario autenticado, usar `GET /api/auth/me` (definido en la sección 2.1). El módulo `users` solo expone `PATCH /api/users/profile` para actualizaciones.
-
-| Método | Endpoint | Descripción | Acceso |
+| Método | Ruta | Descripción | Acceso |
 |---|---|---|---|
-| `PATCH`| `/api/users/profile` | Conmutación reactiva de guardia (`isOnline: boolean`), edición de `bio` y `photoUrl` | Autenticado |
+| `POST` | `/api/auth/register` | Registro de `CLIENT` o `VET` (los `VET` inician en `PENDING`). | Público |
+| `POST` | `/api/auth/login` | Login. Web recibe cookie `HttpOnly` de refresh; Mobile (`X-Client-Platform: mobile`) recibe `refreshToken` en el body. | Público |
+| `POST` | `/api/auth/refresh` | Renovación de `accessToken` desde cookie o body `{ refreshToken }`. | Público |
+| `POST` | `/api/auth/logout` | Cierre de sesión e incremento de `tokenVersion`. | Autenticado |
+| `GET` | `/api/auth/me` | Retorna perfil actualizado del usuario autenticado. | Autenticado |
+| `POST` | `/api/auth/forgot-password` | Envía código OTP de 6 dígitos al correo (expira en 15 min). | Público |
+| `POST` | `/api/auth/verify-reset-code` | Valida código OTP vigente para un email. | Público |
+| `POST` | `/api/auth/reset-password` | Actualiza contraseña e invalida sesiones previas (`tokenVersion`). | Público |
+
+### 2.2 Usuarios (`/api/users`)
+
+| Método | Ruta | Descripción | Acceso |
+|---|---|---|---|
+| `PATCH` | `/api/users/profile` | Actualiza `firstName`, `lastName`, `phone`, `bio`, `photoUrl` y disponibilidad `isOnline`. | Autenticado |
+| `PATCH` | `/api/users/password` | Cambio de contraseña autenticado validando `currentPassword` y rotando sesión. | Autenticado |
 
 ### 2.3 Mascotas (`/api/pets`)
-| Método | Endpoint | Descripción | Acceso |
-|---|---|---|---|
-| `GET` | `/api/pets` | Listar mascotas del usuario autenticado | CLIENT / ADMIN |
-| `POST` | `/api/pets` | Crear nueva ficha de mascota (nombre, especie, raza, peso, sexo, microchip ISO, alergias conocidas y condiciones crónicas) (ADR-029) | CLIENT / ADMIN |
-| `GET` | `/api/pets/:id` | Obtener detalle e historial clínico de una mascota | Dueño / Vet asignado / ADMIN |
-| `PATCH`| `/api/pets/:id` | Modificar ficha declarativa de mascota (peso, nombre, alergias, condiciones crónicas, etc. sin alterar el expediente clínico inmutable) (ADR-029) | Dueño / ADMIN |
-| `DELETE`| `/api/pets/:id` | Soft-delete de mascota (`deletedAt`) | Dueño / ADMIN |
 
-### 2.3 Consultas & Telemedicina (`/api/consultations`)
-| Método | Endpoint | Descripción | Acceso |
-| `POST` | `/api/consultations` | Crear consulta e ingresar en cola de triage (`WAITING`, TTL 15 min). **AI-First Triage (ADR-028):** El tutor ya no selecciona la prioridad manual; envía `petId`, `notes` (descripción), `symptoms` (chips clínicos) y `duration`. El motor de triaje clínico de backend infiere la severidad (`ROJO`\|`AMARILLO`\|`VERDE`) y formatea `notes` con el prefijo de prioridad clínica y banderas rojas para la consola médica. | CLIENT |
-| `GET`  | `/api/consultations/mine`| **CLIENT:** Devuelve sus propias consultas activas/pendientes. **VET:** Devuelve sus consultas asignadas MÁS todas las consultas en estado `WAITING` de la cola de guardia (sin requerir query params). **Sanitización (ADR-030):** En interfaces de usuario, los clientes deben sanitizar `notes` para remover tags de sistema (`[Prioridad: ...]`, `[Triage IA: ...]`, `[CANCELLED_...]`) antes de renderizar la descripción del síntoma. | Autenticado |
-| `GET` | `/api/consultations/:id`| Obtener detalle completo de consulta e historial | Participantes / ADMIN |
-| `PATCH`| `/api/consultations/:id/assign` | Toma directa de guardia o auto-asignación FIFO | VET (Approved) / ADMIN |
-| `PATCH`| `/api/consultations/:id/cancel` | Cancelar consulta telemática (transición a `CANCELLED`) | Participantes / ADMIN |
-| `PATCH`| `/api/consultations/:id/complete` | Cerrar consulta registrando evolución (`diagnosisNotes`) | VET asignado |
-| `POST` | `/api/consultations/:id/prescriptions` | Emitir receta digital oficial con QR y firma | VET asignado |
-| `GET`  | `/api/consultations/:id/messages` | Recuperar historial de mensajes o sincronización incremental (`?after={ISO_TIMESTAMP}`). ⚠️ **Los mensajes nuevos se envían EXCLUSIVAMENTE via Socket.io `message:send` — no existe un endpoint REST para enviar mensajes.** | Participantes |
-| `POST` | `/api/consultations/:id/review` | Calificar atención médica (1 a 5 estrellas, ADR-023) | CLIENT asignado |
-
-### 2.4 Administración & Fiscalización SENASA (`/api/admin`)
-| Método | Endpoint | Descripción | Acceso |
+| Método | Ruta | Descripción | Acceso |
 |---|---|---|---|
-| `GET`  | `/api/admin/vets/pending` | Listar veterinarios pendientes de validación de matrícula SENASA (`vetStatus = PENDING`). Requiere rol `ADMIN` | ADMIN |
-| `PATCH`| `/api/admin/vets/:id/approve` | Aprobar matrícula profesional (`vetStatus = APPROVED`) y registrar auditoría inmutable en `AuditLog` | ADMIN |
-| `PATCH`| `/api/admin/vets/:id/reject` | Rechazar solicitud profesional con motivo obligatorio (`{ reason: string }`), pasa a `REJECTED` y audita | ADMIN |
+| `POST` | `/api/pets` | Crea ficha declarativa (`name`, `species`, `breed`, `weightKg`, `sex`, `birthDate`, `microchip`, `allergies`, `chronicConditions`). | Autenticado |
+| `GET` | `/api/pets` | Lista mascotas activas del usuario autenticado. | Autenticado |
+| `GET` | `/api/pets/:id` | Detalle e historial clínico de la mascota. | Dueño / Vet / ADMIN |
+| `POST` | `/api/pets/:id/documents` | Registra metadatos de un documento clínico asociado a la mascota. | Dueño / Vet / ADMIN |
+| `PATCH` | `/api/pets/:id` | Actualiza datos declarativos de la mascota sin alterar consultas ni recetas. | Dueño / ADMIN |
+| `DELETE` | `/api/pets/:id` | Soft-delete (`deletedAt`). | Dueño / ADMIN |
 
-### 2.5 Recetas Digitales SENASA (`/api/prescriptions`)
-| Método | Endpoint | Descripción | Acceso |
+### 2.4 Consultas, Mensajes y Reseñas (`/api/consultations`)
+
+| Método | Ruta | Descripción | Acceso |
 |---|---|---|---|
-| `GET`  | `/api/prescriptions/:id` | Consulta y verificación pública no confidencial de receta médica oficial escaneada vía QR (medicamento, dosis, matrícula, fecha, mascota) | Público |
-| `POST` | `/api/consultations/:id/prescriptions` | Emisión de receta digital oficial con firma y código QR | VET asignado |
+| `POST` | `/api/consultations` | Crea consulta (`petId`, `notes`, `symptoms?`, `duration?`), ejecuta evaluación de triaje y la coloca en cola. | CLIENT |
+| `GET` | `/api/consultations/mine` | Para `CLIENT`: sus consultas. Para `VET`: sus consultas asignadas + cola `WAITING`. Expira automáticamente consultas `WAITING` > 15 min. | Autenticado |
+| `GET` | `/api/consultations/:id` | Detalle de consulta con mascota, mensajes, recetas y reseña. | Participantes / ADMIN |
+| `PATCH` | `/api/consultations/:id/assign` | Asigna la consulta al veterinario de guardia (`APPROVED`). | VET (Approved) |
+| `PATCH` | `/api/consultations/:id/complete` | Cierra consulta `ACTIVE` con `diagnosisNotes`, cierra sala LiveKit y emite `call:ended`. | VET asignado / ADMIN |
+| `PATCH` | `/api/consultations/:id/cancel` | Cancela consulta con motivo opcional y libera sala LiveKit. | Participantes / ADMIN |
+| `POST` | `/api/consultations/:id/review` | Registra calificación (`1..5`) y recalcula `ratingAvg` / `ratingCount` atómicamente. | CLIENT asignado |
+| `GET` | `/api/consultations/:id/messages` | Historial de chat y sincronización incremental (`?after={ISO_TIMESTAMP}`). | Participantes / ADMIN |
+| `POST` | `/api/consultations/:id/messages` | Envío REST alternativo de mensaje con deduplicación por `clientMsgId`. | Participantes / ADMIN |
+
+### 2.5 Recetas Digitales (`/api/prescriptions` y `/api/consultations/:id/prescriptions`)
+
+| Método | Ruta | Descripción | Acceso |
+|---|---|---|---|
+| `GET` | `/api/prescriptions/:id` | Verificación pública de receta médica (usada al escanear el código QR). | Público |
+| `GET` | `/api/prescriptions` | Listado de recetas del tutor o emitidas por el veterinario autenticado. | Autenticado |
+| `POST` | `/api/consultations/:id/prescriptions` | Emite receta digital (`medication`, `dosage`, `frequency`, `durationDays`, `indications`), genera QR y envía email. | VET asignado |
 
 ### 2.6 Videollamadas (`/api/calls`)
-| Método | Endpoint | Descripción | Acceso |
+
+| Método | Ruta | Descripción | Acceso |
 |---|---|---|---|
-| `POST` | `/api/calls/:consultationId/token` | Generar token de acceso LiveKit para una consulta (sin PII) | Participantes de la consulta |
-| `POST` | `/api/calls/:consultationId/ring` | Disparar notificación de timbrado global al par (emite `call:incoming` con Cero PII y fallback Push Expo). Requiere consulta en estado `ACTIVE`. Errores: `400 INVALID_STATE`, `403 FORBIDDEN` | Participantes de la consulta |
+| `POST` | `/api/calls/:consultationId/token` | Genera JWT LiveKit (`identity: user.id` o compuesto por dispositivo, `name: user.firstName`) y `wsUrl`. Requiere estado `ACTIVE`. | Participantes / ADMIN |
+| `POST` | `/api/calls/:consultationId/ring` | Emite `call:incoming` vía Socket.io y envía notificación push al par. | Participantes / ADMIN |
 
-### 2.7 Notificaciones Push & In-App (`/api/notifications`)
-| Método | Endpoint | Descripción | Acceso |
+### 2.7 Archivos Médicos (`/api/media`)
+
+| Método | Ruta | Descripción | Acceso |
 |---|---|---|---|
-| `POST` | `/api/notifications/register-token` | Registrar o actualizar token Expo Push (`ExponentPushToken[...]`) idempotentemente | Autenticado |
-| `GET`  | `/api/notifications` | Listar notificaciones in-app del usuario autenticado (`take`, `skip`) | Autenticado |
-| `PATCH`| `/api/notifications/:id/read` | Marcar notificación específica como leída (`isRead: true`, `readAt`) | Autenticado |
+| `POST` | `/api/media` | Subida multipart (`file`), validación binaria de *Magic Bytes* (JPEG, PNG, PDF), tope 10 MB/archivo y 50 MB/día (`DailyUploadCounter`). | Autenticado |
+| `GET` | `/api/media/:id` | Descarga protegida: retorna URL prefirmada (300s) en S3 o stream local previa verificación de permisos. | Participantes / ADMIN |
 
-### 2.8 Archivos Médicos & Adjuntos (`/api/media`)
-| Método | Endpoint | Descripción | Acceso |
+### 2.8 Notificaciones (`/api/notifications`)
+
+| Método | Ruta | Descripción | Acceso |
 |---|---|---|---|
-| `POST` | `/api/media` | Subida multipart con validación binaria de Magic Bytes (JPEG, PNG, PDF). Límite individual de 10 MB/archivo y cuota agregada de 50 MB/día por usuario (RNF-06). Persiste metadatos en `MediaFile` y consumo en `DailyUploadCounter`. Retorna `413 FILE_TOO_LARGE` si archivo > 10 MB o `429 UPLOAD_QUOTA_EXCEEDED` si supera 50 MB/día | Autenticado |
-| `GET`  | `/api/media/:id` | Descarga/streaming seguro de archivo clínico (prohibido acceso estático público ADR-010; valida que solicitante sea dueño, vet asignado o ADMIN). En S3 retorna URL presignada con TTL 300s; en local sirve vía stream seguro | Participantes / ADMIN |
+| `POST` | `/api/notifications/register-token` | Registra o actualiza `PushToken` (`ios`, `android`, `web`). | Autenticado |
+| `GET` | `/api/notifications` | Lista las últimas notificaciones in-app del usuario. | Autenticado |
+| `PATCH` | `/api/notifications/read-all` | Marca todas las notificaciones del usuario como leídas. | Autenticado |
+| `PATCH` | `/api/notifications/:id/read` | Marca una notificación específica como leída. | Autenticado |
 
-### 2.9 Contratos de Consumo Frontend Web & Matriz de Query Keys (TanStack Query v5)
+### 2.9 Administración (`/api/admin` — Requiere `Role.ADMIN`)
 
-El cliente web gestiona el estado asíncrono del servidor mediante **TanStack Query v5**, organizando las consultas y mutaciones bajo una matriz determinista de *Query Keys*:
-
-| Query Key | Hook / Consumo | Endpoint Backend | StaleTime | Invalidado Tras Mutación |
-|---|---|---|---|---|
-| `['pets']` | Listado de mascotas del tutor | `GET /api/pets` | 5 min | Alta de mascota (`POST /api/pets`), baja (`DELETE /api/pets/:id`) |
-| `['pet', petId]` | Detalle e historial de mascota | `GET /api/pets/:id` | 5 min | Edición de mascota (`PATCH /api/pets/:id`) |
-| `['consultations', 'mine']` | Consultas del usuario autenticado | `GET /api/consultations/mine` | 30 seg | Solicitud de triage (`POST /api/consultations`), asignación (`PATCH /.../assign`) |
-| `['consultation', id]` | Ficha clínica de la consulta activa | `GET /api/consultations/:id` | 10 seg | Cierre con evolución (`PATCH /.../complete`), receta emitida |
-| `['vets', 'pending']` | Cola de fiscalización SENASA | `GET /api/admin/vets/pending` | 1 min | Aprobación (`PATCH /.../approve`), rechazo (`PATCH /.../reject`) |
-| `['prescriptions', id]` | Verificación de receta pública | `GET /api/prescriptions/:id` | 15 min | Inmutable tras emisión |
-
-#### Interceptor de Autenticación & Cola Concurrente de Refresco:
-- Instancia centralizada: `web/src/services/api.ts`
-- Token en memoria: `currentAccessToken` (volátil, cero persistencia en `localStorage` contra XSS).
-- Cola `failedQueue`: Si múltiples llamadas concurrentes reciben HTTP 401, se pausan en cola mientras se despacha un único `POST /api/auth/refresh` con cookie `HttpOnly`. Al renovarse el token, toda la cola se reintenta automáticamente con el nuevo `Authorization: Bearer <token>`.
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/api/admin/stats` | Métricas de veterinarios, mascotas y consultas por estado. |
+| `GET` | `/api/admin/audit-logs` | Últimos 100 registros de `AuditLog`. |
+| `GET` | `/api/admin/vets/pending` | Cola de veterinarios con `vetStatus = PENDING`. |
+| `PATCH` | `/api/admin/vets/:id/approve` | Aprueba matrícula profesional y audita la operación. |
+| `PATCH` | `/api/admin/vets/:id/reject` | Rechaza matrícula con `reason` obligatorio y audita. |
+| `GET` / `POST` / `PATCH` / `DELETE` | `/api/admin/users`, `/api/admin/users/:id` | Gestión completa de usuarios, `/ban`, `/restore` y `POST /api/admin/users/:id/revoke-sessions`. |
+| `GET` / `POST` / `PATCH` / `DELETE` | `/api/admin/pets`, `/api/admin/pets/:id` | Gestión administrativa de mascotas y `/restore`. |
+| `GET` | `/api/admin/consultations`, `/api/admin/consultations/:id/messages` | Supervisión operativa de consultas y lectura de mensajes. |
+| `GET` / `PATCH` | `/api/admin/feature-flags` | Consulta y activación/desactivación auditada de flags (`PAYMENTS_ENABLED`, `TRIAGE_ACTIVE`, `VIDEOCALLS_ENABLED`, `NEW_REGISTRATIONS_ENABLED`). |
+| `GET` | `/api/admin/executive-metrics` | Cálculo de GMV, comisión neta, pérdida por cancelaciones y tasa de conversión sobre consultas. |
+| `GET` / `PATCH` | `/api/admin/pricing-settings` | Lectura y actualización del arancel base, take-rate (`0..1`) y moneda (`ARS`, `USD`, `BRL`, `MXN`, `EUR`). |
 
 ---
 
-### 2.10 Especificación Técnica de Vistas y Páginas Web
+## 3. Eventos en Tiempo Real (Socket.io)
 
-Cada página del frontend web implementa una interfaz formal tipada, gestionando los 4 estados canónicos (`loading`, `error`, `empty`, `success`):
+Definidos en `backend/src/realtime/socket.types.ts` y atendidos en `socket.server.ts` / `chat.gateway.ts`. El socket autentica el JWT en el handshake y suscribe automáticamente al usuario a `user:{userId}`, `device:{deviceId}` (si envía `x-device-id`) y `role:vets` (para `VET` y `ADMIN`).
 
-| Página / Archivo | Ruta Web | Acceso / Rol | Endpoints REST Consumidos | Eventos Sockets / WebRTC |
-|---|---|---|---|---|
-| **Landing** (`Landing.tsx`) | `/` | Público | `GET /` (Assets estáticos) | N/A |
-| **Login** (`Login.tsx`) | `/login` | Público | `POST /api/auth/login` | N/A |
-| **Register** (`Register.tsx`) | `/register` | Público | `POST /api/auth/register` | N/A |
-| **DashboardClient** (`DashboardClient.tsx`) | `/client/dashboard` | `CLIENT` | `GET /api/pets`, `POST /api/pets`, `POST /api/consultations`, `GET /api/consultations/mine` | `N/A (Polling HTTP /api/consultations/:id en espera)` |
-| **DashboardVet** (`DashboardVet.tsx`) | `/vet/dashboard` | `VET` | `PATCH /api/users/profile`, `GET /api/consultations/mine`, `PATCH /api/consultations/:id/assign`, `POST /api/consultations/:id/prescriptions` | `N/A (Presencia y cola vía REST)` |
-| **ConsultationRoom** (`ConsultationRoom.tsx`) | `/call/:id` | `CLIENT`, `VET`, `ADMIN` | `POST /api/calls/:id/token`, `GET /api/consultations/:id/messages` | `join:consultation`, `message:send`, `message:new`, LiveKit WebRTC SFU |
-| **PrescriptionView** (`PrescriptionView.tsx`) | `/prescriptions/:id`, `/verify-rx` | Público | `GET /api/prescriptions/:id` | N/A (Vista optimizada para impresión, farmacia y validación QR SENASA) |
-| **AdminVets** (`AdminVets.tsx`) | `/admin/vets`, `/admin/dashboard` | `ADMIN` | `GET /api/admin/vets/pending`, `GET /api/admin/stats`, `PATCH /api/admin/vets/:id/approve`, `PATCH /api/admin/vets/:id/reject` | N/A |
-| **PrivacyPolicy** (`PrivacyPolicy.tsx`) | `/privacy` | Público | N/A | N/A (Estatutos Ley 25.326, canal ARCO, minimización de datos) |
-| **TermsConditions** (`TermsConditions.tsx`) | `/terms` | Público | N/A | N/A (Descargo de emergencia, Ley 14.072, deslinde de responsabilidad) |
-| **CookiePolicy** (`CookiePolicy.tsx`) | `/cookies` | Público | N/A | N/A (Cookies técnicas vs analíticas, panel de revocación) |
-| **RefundPolicy** (`RefundPolicy.tsx`) | `/refunds` | Público | N/A | N/A (Ley 24.240 Art. 34, SLA de triage 15 min, cortes de conexión) |
-| **NotFound** (`NotFound.tsx`) | `*` (Catch-all) | Público | N/A | N/A (Redirección segura al home) |
+### Cliente → Servidor
+- `join:consultation` `{ consultationId }` — Suscribe a la sala `consultation:{id}` previa verificación de participación.
+- `leave:consultation` `{ consultationId }` — Abandona la sala de la consulta.
+- `message:send` `{ consultationId, content, clientMsgId, attachmentUrl? }` — Persiste y retransmite mensaje de forma idempotente (con callback ACK).
+- `call:answered` `{ consultationId }` — Notifica atención de videollamada en la sala.
+- `call:rejected` `{ consultationId, reason? }` — Cancela el timbrado.
+- `call:ended` `{ consultationId }` — Notifica fin de llamada en la sala.
 
----
-
-## 3. Matriz de Eventos en Tiempo Real (Socket.io)
-
-| Evento | Payload | Emisor | Receptor | Descripción |
-|---|---|---|---|---|
-| `join:consultation` | `{ consultationId: string }` | Cliente / Vet | Servidor | Une el socket a la sala de chat de la consulta |
-| `message:send` | `{ consultationId, content, clientMsgId, attachmentUrl? }` | Cliente / Vet | Servidor | **Única forma de enviar mensajes de chat (no existe REST POST para mensajes).** Deduplicación idempotente: si `clientMsgId` ya existe, el servidor retorna el mensaje preexistente sin duplicar (HTTP 200). |
-| `message:new` | `Message` object | Servidor | Sala de Consulta | Broadcast del mensaje a ambos participantes |
-| `call:incoming` | `{ consultationId, callerName, roomName }` | Servidor | Usuario llamado | Dispara la alerta de llamada entrante en Web y Mobile |
-| `call:answered` | `{ consultationId }` | Usuario llamado | Servidor | Notifica que la videollamada fue atendida |
-| `call:rejected` | `{ consultationId, reason }` | Usuario llamado | Servidor | Cancela el timbrado en el dispositivo emisor |
-| `prescription:new` | `Prescription` object | Servidor | Tutor / Sala | ⚠️ **TIPADO PERO NO EMITIDO — Pendiente de implementación:** El evento está declarado en `socket.types.ts` (ServerToClientEvents) pero `prescriptions.service.ts` no emite este evento actualmente. Para completarlo, `prescriptions.service.ts` debe emitir este evento a la sala `consultation:${consultationId}` después de crear la prescripción exitosamente. |
-
-### 3.1 Protocolo WebRTC & Handshake de Videollamada (LiveKit Web Client)
-- **Cero PII en Token JWT:** `identity: user.id`, `name: user.firstName`. Correos y teléfonos redactados.
-- **Inyección dinámica de `wsUrl`:** Se toma del payload de `POST /api/calls/:id/token`.
-- **Handshake WebView para Apps Móviles:**
-  Al montar la sala en navegadores embebidos, se emite el evento:
-  ```javascript
-  window.ReactNativeWebView?.postMessage(JSON.stringify({ type: 'page:ready' }));
-  ```
-  Esto permite a la app nativa desmontar el spinner de carga inicial sin parpadeos.
-- **Prevención de Eco Acústico (Antipatrón 3 de AGENTS.md):**
-  Se monta exclusivamente `<VideoConference />` dentro de `<LiveKitRoom />`. Nunca duplicar `<RoomAudioRenderer />`.
+### Servidor → Cliente
+- `message:new` — Broadcast del mensaje persistido a la sala de la consulta.
+- `consultation:new` — Notifica a `role:vets` el ingreso de una nueva consulta en cola (redactando `email` y `phone` del tutor).
+- `call:incoming` `{ consultationId, callerName, roomName }` — Alerta entrante en Web y Mobile.
+- `call:ended` `{ consultationId, endedBy? }` — Cierre de llamada.
+- `notification:new` — Entrega en vivo de una nueva `Notification` persistida.
+- `auth:session_terminated` `{ reason, message }` — Notifica revocación de sesión desde panel admin o cambio crítico.
+- `session:invalidated` / `consultation:critical_resume` / `consultation:tutor_reconnecting` — Eventos de migración y handoff multidispositivo durante consultas activas.
+- `prescription:new` — Tipo declarado en `ServerToClientEvents` para evolución futura (hoy la notificación de receta se envía por correo y consulta REST).
 
 ---
 
-## 4. Guía de Ejecución de Pruebas Automatizadas
+## 4. Bundler Mobile y Pruebas
 
-### 4.1 Pruebas del Backend (Jest)
-```bash
-# Ejecutar toda la suite de pruebas del backend (Jest)
-cd backend && npm test
-
-# Ejecutar únicamente pruebas unitarias
-npm run test:unit -w backend
-```
-
-### 4.2 Pruebas del Frontend Web (Vitest & Testing Library)
-```bash
-# Ejecutar toda la suite de pruebas del frontend web (Vitest)
-npm test -w web
-
-# Ejecutar en modo observador interactivo (TDD)
-cd web && npx vitest
-
-# Cobertura de código del frontend
-cd web && npx vitest run --coverage
-```
-
-### 4.3 Taller de Componentes Aislados & Accesibilidad (Storybook 8)
-```bash
-# Iniciar servidor interactivo de Storybook (puerto 6006)
-npm run storybook -w web
-
-# Compilación estática de Storybook y verificación de bundles
-npm run build-storybook -w web
-```
-- **Catálogo UI:** Pruebas visuales de átomos, moléculas y organismos en `web/src/components/ui/`.
-- **Addon a11y (Axe Core):** Auditoría en vivo de contraste (4.5:1 mínimo) y roles ARIA.
-- **Sincronización:** Exportación con `html.to.design` para actualización de Figma.
-
-### 4.4 Aseguramiento Autónomo de Calidad E2E con IA (TestSprite MCP)
-- **Servidor MCP:** `@testsprite/testsprite-mcp` (puerto configurable vía `mcpServers.testsprite`).
-- **Target URL:** Despliegue en producción/preview Vercel (`https://vet-connect-web.vercel.app`).
-- **Escenarios Clave:** Ejecución autónoma de los 8 flujos clínicos (TS-E2E-01 al TS-E2E-08) que cubren registro de usuarios, CRUD de mascotas, triage de urgencia, atención veterinaria, videoconsulta WebRTC y validación QR de recetas.
-- **Reportes:** Grabaciones de video, capturas de pantalla, trazas de red y diagnósticos automáticos de causa raíz ante anomalías.
-- **Referencia Canónica:** [`docs/web/11_INTEGRACION_STORYBOOK_Y_TESTSPRITE_QA.md`](web/11_INTEGRACION_STORYBOOK_Y_TESTSPRITE_QA.md).
-
-### 4.5 Resolución de Singletons en Bundler Metro (ADR-031 — Mobile Expo SDK 54)
-- **Desafío:** Coexistencia de React 18.3.1 (Web LTS) y React 19.1.0 / React Native 0.81.4 (Expo SDK 54) en el monorepo.
-- **Mecanismo:** En `mobile/metro.config.js`:
-  1. `config.resolver.blockList`: Exclusión de rutas hoisted de React en el root (`VetConnect/node_modules/react` y `VetConnect/node_modules/react-dom`).
-  2. `config.resolver.resolveRequest`: Intercepción en tiempo de resolución para redirigir `react`, `react/*`, `react-dom`, `react-dom/*`, `react-native` y `react-native/*` estrictamente a `mobile/node_modules/`.
-- **Resultado:** Prevención absoluta de fallos de dispatchers nulos (`Cannot read property 'useId' of null`) e invalid hook calls al ejecutar Expo Go.
-
-### 4.6 Verificación de Integración Continua y Pre-Despliegue
-```bash
-# 1. Verificación semántica y de gobernanza (40 PBs ↔ 20 TASKs ↔ 10 Modelos)
-npm run check:governance
-
-# 2. Typecheck estricto sin emisión en los 3 workspaces
-npm run typecheck
-
-# 3. Suite completa de pruebas en todo el monorepo (meta: 120+ tests)
-npm test
-
-# 4. Compilación de producción (Backend tsc + Web vite build)
-npm run build
-```
-
+- **Singleton React en Metro (`mobile/metro.config.js`):** Bloquea la resolución hacia `node_modules/react` de la raíz (React 18.3.1 usado por `web/`) y fuerza toda importación de `react`, `react-dom` y `react-native` hacia `mobile/node_modules/` (React 19.1.0 / RN 0.81.4).
+- **Suites de Verificación:**
+  - `npm run check:governance` — Verifica sincronización entre `schema.prisma`, enlaces locales y documentación.
+  - `npm run typecheck` — Validación `tsc --noEmit` en `backend`, `web` y `mobile`.
+  - `npm test -w backend` — Suite Jest + Supertest.
+  - `npm test -w web` — Suite Vitest + Testing Library.
+  - `npm test -w mobile` — Suite Jest + `jest-expo`.

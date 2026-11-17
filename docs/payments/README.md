@@ -1,50 +1,46 @@
-# 💳 Sistema de Monetización y Pagos — Huellicam / VetConnect
+# Arquitectura de Pagos Marca Blanca — Huellicam
 
-> **Estado Arquitectónico:**  
-> VetConnect / Huellicam está concebido y estructurado como un **Software Marca Blanca (White-Label)** de telemedicina veterinaria, diseñado para ser licenciado, exportado y desplegado de forma independiente por diferentes clínicas, organizaciones o empresas de salud animal.
-
----
-
-## 1. Visión General de la Estrategia de Pagos
-
-Para preservar la naturaleza de **software exportable y marca blanca neutral**, la arquitectura de pagos está completamente desacoplada de la lógica clínica mediante el **Patrón Adaptador (Adapter Pattern)**:
-
-1. **Plan Principal (Core Marca Blanca):**  
-   Arquitectura agnóstica de pasarelas de pago (`PaymentGateway`). El software no impone un procesador ni una entidad financiera cautiva. Cada licenciatario u operador puede configurar su proveedor de cobro (Stripe, Mercado Pago, dLocal, etc.) y su modelo arancelario (por consulta, suscripción o guardia institucional).  
-   👉 Ver detalle completo en: [`01_WHITE_LABEL_PAYMENTS_ARCHITECTURE.md`](./01_WHITE_LABEL_PAYMENTS_ARCHITECTURE.md).
-
-2. **Plan B (Alternativa de Integración Local con PagoFlex):**  
-   Especificación de contingencia en caso de que el stakeholder/CEO decida operar el servicio en Argentina canalizando la liquidación veterinaria a través de la fintech **PagoFlex** (donde los veterinarios cobran en su billetera PagoFlex y los tutores pagan vía Mercado Pago o cualquier billetera interoperable).  
-   👉 Ver especificación técnica y evaluación de riesgos en: [`02_PAGOFLEX_INTEGRATION_PLAN_B.md`](./02_PAGOFLEX_INTEGRATION_PLAN_B.md).
+Documentación del estado actual y diseño modular de monetización para **Huellicam** como plataforma licenciable (**White-Label**).
 
 ---
 
-## 2. Mapa de Documentos de Pagos
+## 1. Estado Real en el Código
 
-| Documento | Enfoque | Rol en el Proyecto |
+Es importante distinguir lo que ya existe en el repositorio frente a lo que está planificado para la integración comercial:
+
+| Componente | Estado | Ubicación / Evidencia |
 |---|---|---|
-| [`01_WHITE_LABEL_PAYMENTS_ARCHITECTURE.md`](./01_WHITE_LABEL_PAYMENTS_ARCHITECTURE.md) | **Marca Blanca (Agnóstico)** | **PLAN A (Definición Oficial):** Contrato de interfaces (`IPaymentGateway`), modelo por consulta (*fee-per-consult*), retención de comisiones de plataforma (*take-rate*) y aislamiento de reglas de negocio. |
-| [`02_PAGOFLEX_INTEGRATION_PLAN_B.md`](./02_PAGOFLEX_INTEGRATION_PLAN_B.md) | **PagoFlex (Argentina)** | **PLAN B (Alternativa bajo revisión):** Flujo de split payment local, liquidación exclusiva en app PagoFlex para veterinarios, impacto fiscal (ARCA/AFIP) y pérdida de neutralidad de marca blanca. |
+| **Configuración de Arancel Base y Take-Rate** | **Implementado** | `GET /api/admin/pricing-settings` y `PATCH /api/admin/pricing-settings` en `backend/src/modules/admin/` + editor en `AdminExecutiveMetrics.tsx` (`baseConsultationFee`, `platformTakeRate`, moneda `ARS \| USD \| BRL \| MXN \| EUR`, auditado en `AuditLog`). |
+| **Métricas Ejecutivas Proyectadas** | **Implementado** | `GET /api/admin/executive-metrics` calcula GMV proyectado, comisión neta, pérdida estimada por cancelaciones y tasa de conversión sobre consultas. |
+| **Feature Flag Operativo (`PAYMENTS_ENABLED`)** | **Implementado** | `FeatureFlagsService` (`GET / PATCH /api/admin/feature-flags`). |
+| **Pasarela Transaccional Real (`IPaymentGateway`)** | **Diseño / Roadmap** | No hay adaptadores de cobro ni webhooks conectados todavía a Stripe, Mercado Pago o PagoFlex. Las consultas hoy operan en modalidad de guardia sin cobro bloqueante. |
 
 ---
 
-## 3. Matriz Comparativa: Marca Blanca vs. Operación Cautiva con PagoFlex
+## 2. Diseño Objetivo: Patrón Adaptador (`Plan A — Marca Blanca`)
 
-| Criterio | Plan A: Marca Blanca Universal | Plan B: Operación con PagoFlex |
-|---|---|---|
-| **Naturaleza del Negocio** | Exportación / Licenciamiento de Software | Operador de Marketplace de Servicios en Argentina |
-| **Pasarela de Cobro** | Modular y configurable por país (Stripe, Mercado Pago, etc.) | Cautiva a PagoFlex (PSP local argentino) |
-| **Cobro de Veterinarios** | Cuenta bancaria local o billetera configurada por el licenciatario | Exclusivamente a través de la app móvil PagoFlex |
-| **Pago de Clientes (Tutores)** | Tarjetas de crédito/débito, transferencias o checkout web | Mercado Pago, transferencias o billeteras con QR |
-| **Responsabilidad Fiscal** | Del licenciatario / operador final | De la empresa operadora (retenciones impositivas de ARCA, IIBB, IVA) |
-| **Escalabilidad Internacional** | Global (listo para cualquier país) | Restringida a Argentina |
+Para mantener el núcleo clínico exportable a distintos países y clientes B2B (clínicas, redes hospitalarias, aseguradoras), las reglas médicas en `consultations` no deben acoplarse a un procesador financiero específico. Toda operación futura se abstrae tras una interfaz común (`IPaymentGateway`):
+
+```mermaid
+flowchart LR
+    Consultations["Módulo Clínico\n(consultations.service)"] --> Gateway["«interface»\nIPaymentGateway"]
+    Gateway --> Stripe["StripeAdapter\n(Internacional)"]
+    Gateway --> MP["MercadoPagoAdapter\n(LATAM)"]
+    Gateway --> Free["InstitutionalAdapter\n(Guardia sin cobro / B2B)"]
+    Gateway -.-> PagoFlex["PagoFlexAdapter\n(Plan B local Argentina)"]
+```
+
+### Contrato Previsto (`IPaymentGateway`)
+- `createHold(params)` — Preautorización/retención temporal al confirmar el triage (`WAITING`).
+- `capturePayment(transactionId)` — Captura definitiva al tomar/completar la consulta (`ACTIVE` / `COMPLETED`).
+- `releaseHold(transactionId, reason)` — Liberación sin cargo ante cancelación previa o timeout de guardia (15 min).
+- `refundPayment(transactionId, amount?)` — Reembolso ante fallas técnicas o auditoría.
+- `handleWebhook(rawPayload, signatureHeader)` — Procesamiento idempotente de eventos asíncronos del PSP.
 
 ---
 
-## 4. Estructura de Licenciamiento Comercial B2B (Pricing para Ronda de Negocios)
+## 3. Alternativa Local Evaluada (`Plan B — PagoFlex Argentina`)
 
-Para rondas de negocios (ej. PromArgentina / compradores corporativos), la comercialización de la Marca Blanca se estructura en 3 modalidades:
-
-* **Tier 1 (Starter Clinic — Clínicas 1 a 5 profesionales):** Setup Fee **$1,500 USD** + **$250 USD / mes** (0% comisión transaccional, hosting administrado).
-* **Tier 2 (Hospital Network — Redes 6 a 25 profesionales):** Setup Fee **$3,500 USD** + **$450 USD / mes** + **2.5% take-rate** por consulta (dominio y app propia en Google Play).
-* **Tier 3 (Enterprise & InsurTech — Aseguradoras y Cadenas +25 profesionales):** Setup Fee **$8,000 USD** + **$1.50 USD** por consulta (infraestructura dedicada, integración ERP/HIS y SLA 99.9%).
+En caso de operar una instancia directa en Argentina canalizando liquidaciones veterinarias vía **PagoFlex**:
+- Se implementaría únicamente como un adaptador aislado (`PagoFlexAdapter`) dentro de la misma interfaz `IPaymentGateway`, sin acoplar el core ni el esquema clínico a billeteras locales ni reglas impositivas específicas de una única jurisdicción.
+- Mientras no exista definición comercial de activar cobros en vivo, la plataforma opera limpiamente bajo el modo institucional actual con parámetros configurables desde el panel de Administración.

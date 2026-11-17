@@ -28,7 +28,6 @@ out/
 *.jks
 *.p8
 *.p12
-*.key
 *.mobileprovision
 *.orig.*
 
@@ -68,11 +67,10 @@ Thumbs.db
 *.sln
 *.sw?
 
-# Repomix outputs
-repomix-output.*
-
-# Harness
-gentle-ai-harness/
+# Local dev workflow config
+AGENTS.md
+.ai/
+.agents/
 
 # Video production, captures & media
 /opencode/
@@ -81,7 +79,7 @@ video-*/
 video/
 mi-video/
 test-capture/
-spikes/hyperframes-*/
+spikes/
 *.mp4
 *.mov
 *.webm

@@ -1,62 +1,83 @@
-# 📱 VetConnect Mobile — Índice Maestro y Arquitectura (SSOT)
+# Aplicación Mobile (`mobile/`) — Huellicam
 
-> **Decisión Arquitectónica Consolidada:**  
-> La aplicación móvil de VetConnect es formalmente un **Shell / Contenedor Híbrido** basado en React Native (Expo SDK 54) con `react-native-webview`, encargado de encapsular y servir la aplicación Web responsive de VetConnect (`web/`).  
-> La lógica de negocio clínica, los flujos de tutores y veterinarios, la gestión de mascotas, el chat interactivo y las videoconsultas WebRTC (LiveKit) residen y se mantienen en la Web App, la cual está expresamente optimizada y adaptada para operar dentro del WebView móvil.
+Documentación técnica de la aplicación móvil construida con **Expo SDK 54**, **React Native 0.81.4** y **Expo Router**.
 
 ---
 
-## 1. Misión del Contenedor Mobile (WebView Shell)
+## 1. Arquitectura Actual: Híbrido con WebView para Videollamadas
 
-El contenedor móvil nativo no busca duplicar la interfaz de usuario ni las pantallas del cliente web, sino dotar a la plataforma web de capacidades y presencia de app nativa:
+La aplicación móvil opera actualmente bajo un enfoque pragmático híbrido:
+- **Flujos nativos en Expo Router (`mobile/app/`):** Inicio de sesión, registro, inicio por rol (`(app)/index.tsx` + `VetWorkspace.tsx`), gestión básica de mascotas, chat por Socket.io, notificaciones, perfil y visor de recetas.
+- **Videoconsultas sobre WebView de la Web App (`mobile/app/(app)/call/[consultationId].tsx`):** Toda videollamada WebRTC se ejecuta cargando la ruta `/call/:consultationId` de la SPA web dentro de `react-native-webview`.
 
-1. **Empaquetado y Distribución:** Distribución en Android (APK/AAB vía EAS Build) y presencia en el launcher del dispositivo.
-2. **Puente de Hardware y Permisos:** Solicitud y gestión centralizada de permisos nativos de Cámara, Micrófono y Notificaciones.
-3. **Inyección y Sincronización de Sesión (Auth Seeding):** Sincronización segura de credenciales de autenticación en `localStorage` del WebView antes del montaje de los scripts web (`injectedJavaScriptBeforeContentLoaded`).
-4. **Protocolo de Bridge Bidireccional (`window.ReactNativeWebView`):** Señalización reactiva de ciclo de vida (`page:ready`, `call:ended`), gestión de Screen WakeLock para videoconsultas, y manejo de cámara/archivos.
-5. **Notificaciones Push y Deep Linking:** Recepción de push remotas vía Expo Push Notifications y redirección inteligente a rutas internas del WebView (`vetconnect://`).
-6. **Resiliencia ante Reciclado de Memoria:** Soporte en la capa web de persistencia en `localStorage` para tolerar la destrucción y rehidratación de actividades en Android cuando el sistema operativo reclama recursos.
+> **Decisión vigente:** Mantener las videoconsultas sobre el WebView de la aplicación web permite garantizar estabilidad, paridad visual y cero duplicación de lógica LiveKit mientras se prioriza el producto web. Aunque `@livekit/react-native` figura declarado en `mobile/package.json` para una eventual evolución futura, **no está activado en runtime**.
 
 ---
 
-## 2. Mapa de Documentos — Estructura de la Sección
+## 2. Puente Nativo ↔ WebView (`mobile/src/lib/webviewBridge.ts`)
 
-Cada archivo en `docs/mobile/` posee una responsabilidad única y delimita el contrato del contenedor:
+Para que la sala de videollamada web funcione dentro del WebView móvil sin redirecciones ni bloqueos de hardware:
 
-| Archivo | Nivel | Responsabilidad Única |
-|---|---|---|
-| `README.md` | 1 | **Índice Maestro y SSOT**: Definición arquitectónica del WebView Shell, mapa de responsabilidades y verificación. |
-| `AGENT_CODING_SPEC_MOBILE.md` | 2 | **Especificación del Contenedor Nativo**: Configuración de `react-native-webview`, scripts de auth seeding, bridge bidireccional de eventos y guardrails. |
-| `01_TECH_REFERENCE_MOBILE.md` | 2 | **Contratos y Rutas Embebidas**: Endpoints nativos (Push tokens), mapeo de rutas web envueltas y protocolo de mensajería `postMessage`. |
-| `02_QA_DISTRIBUCION_Y_SEGURIDAD.md` | 3 | **Operación y Calidad**: Build EAS/local, variables de entorno (`EXPO_PUBLIC_WEB_URL`), permisos en `app.json`, debugging y seguridad. |
-| `03_ESTADO_Y_DEUDA_MOBILE.md` | — | **Diagnóstico y Hoja de Ruta**: Estado verificado del wrapper, mitigaciones implementadas (BUG-01, BUG-02, BUG-06/FEAT-05) y deuda técnica del contenedor. |
-
----
-
-## 3. Principios de Integración Web ↔ WebView
-
-Estas reglas neutralizan inconsistencias y guían el desarrollo de ambas capas:
-
-| Principio | Regla de Oro | Razón Técnica |
-|---|---|---|
-| **Cero Duplicación de UI** | Las pantallas de negocio viven exclusivamente en `web/`. El contenedor móvil provee el visor y los componentes de shell (splash, error de conexión, selector de permisos). | Evita divergencias de diseño, simplifica el mantenimiento a un solo codebase visual y unifica la experiencia. |
-| **Videollamadas WebRTC Web** | Las videoconsultas se ejecutan a través del componente web de LiveKit dentro del WebView con permisos inline concedidos. | Prohibido incluir SDK nativo de LiveKit en React Native (`@livekit/react-native`); el WebView soporta WebRTC directamente. |
-| **Auth Seeding Temprano** | Los tokens de sesión se inyectan en `window.localStorage` en `injectedJavaScriptBeforeContentLoaded`. | La aplicación web lee su token en tiempo de evaluación de módulos. Inyectar post-carga (`page:ready`) provocaría redirects erróneos al login. |
-| **Persistencia Anti-Crash** | Los formularios clave en web implementan auto-guardado en borrador (`localStorage`). | Si Android destruye la actividad del WebView al abrir la cámara o por baja memoria, el usuario no pierde datos al regresar. |
-| **Screen WakeLock** | La web solicita mantener la pantalla activa mediante mensajes al bridge (`wakelock:request`). | Evita que el dispositivo suspenda la pantalla o corte la cámara durante una videoconsulta activa. |
+1. **Inyección Temprana de Sesión (`buildAuthSeedScript`):**
+   - La SPA web lee el estado de autenticación al evaluar los módulos iniciales.
+   - El contenedor móvil inyecta el script en `injectedJavaScriptBeforeContentLoaded` antes de que se ejecute el bundle web, sembrando `accessToken` y `user` en `window.localStorage` y retornando `true;`.
+2. **Configuración Endurecida (`HARDENED_WEBVIEW_CONFIG`):**
+   - `domStorageEnabled: true`, `javaScriptEnabled: true`, `sharedCookiesEnabled: true`, `thirdPartyCookiesEnabled: true`
+   - `allowsInlineMediaPlayback: true`, `mediaPlaybackRequiresUserAction: false`
+   - `mediaCapturePermissionGrantType: 'grant'` y `allowFileAccess: true`
+   - `originWhitelist: ['http://*', 'https://*']`
+3. **Permisos y Diagnóstico (`callPermissions.ts`, `isLoopbackUrl`):**
+   - Solicita permisos nativos de cámara y micrófono vía `expo-camera` antes de montar el WebView.
+   - Detecta si `EXPO_PUBLIC_WEB_URL` apunta a `localhost`/`127.0.0.1` (error frecuente en dispositivos físicos reales) mostrando un mensaje explícito en lugar de una pantalla en blanco.
+4. **Eventos Bidireccionales (`window.ReactNativeWebView.postMessage`):**
+   - `page:ready`: La web confirma hidratación y el shell oculta el indicador de carga.
+   - `call:ended`: Notifica finalización de consulta y retorna a la pantalla anterior.
 
 ---
 
-## 4. Comandos de Verificación del Workspace
+## 3. Autenticación, Push y Deep Linking
 
-```powershell
-# Verificación estática de tipos en el contenedor móvil
+- **Auth Dual (`mobile/src/lib/api.ts`, `authStore.ts`):** Envía el header `X-Client-Platform: mobile` para recibir el `refreshToken` en el payload JSON y almacenarlo cifrado en `expo-secure-store`, manteniendo el `accessToken` en memoria y gestionando concurrencia `401` mediante cola `failedQueue`.
+- **Push Notifications (`notifications.service.ts`):** Registra tokens en `POST /api/notifications/register-token` (validando plataforma `ios | android | web`) y escucha taps sobre notificaciones entrantes.
+- **Deep Linking (`deepLinks.ts`):** Mapea URLs del esquema de la app y payloads de notificación (`CALL_INCOMING`, `MESSAGE_NEW`, `PRESCRIPTION_NEW`) hacia rutas de Expo Router (`call`, `consultation`, `prescriptions`, `chat`, `review`).
+- **Aislamiento de React en Monorepo (`metro.config.js`):** Bloquea el `react` 18.3.1 del root (usado por `web/`) y redirige toda resolución de `react`, `react-dom` y `react-native` a `mobile/node_modules/` (React 19.1.0).
+
+---
+
+## 4. Estructura Principal del Workspace
+
+```text
+mobile/
+├── app/
+│   ├── _layout.tsx                 # Stack raíz, initAuth y listeners push
+│   ├── (auth)/                     # login.tsx, register.tsx
+│   └── (app)/                      # Tabs autenticados, gate SENASA, mascotas, chat, call/[consultationId].tsx
+├── src/
+│   ├── components/                 # IncomingCallModal, VetWorkspace, AttachmentView, Field, ScreenState, etc.
+│   ├── hooks/                      # useConsultations, usePets, useProfile
+│   ├── lib/                        # api.ts, authStore.ts, socket.ts, webviewBridge.ts, deepLinks.ts, navGuards.ts
+│   ├── services/                   # Servicios REST y señalización
+│   ├── theme/                      # tokens.ts
+│   └── validation/                 # Esquemas locales de validación
+├── app.json
+└── metro.config.js
+```
+
+---
+
+## 5. Comandos de Desarrollo y Testing
+
+```bash
+# Levantar bundler de Expo
+npm run dev:mobile
+
+# Con USB en Windows (incluye adb reverse tcp:3001 y tcp:8081)
+.\start.ps1
+
+# Validación TypeScript y suite Jest
 npm run typecheck -w mobile
-
-# Ejecución de pruebas unitarias del wrapper y utilidades de bridge
 npm test -w mobile
 
-# Validación del paquete web (que corre dentro del WebView)
-npm run typecheck -w web
-npm test -w web
+# Compilación Android (requiere EAS login o JDK 21 + Android SDK en ruta ASCII)
+npm run build:apk -w mobile
 ```

@@ -1,494 +1,107 @@
-# 📐 SYSTEM & TECHNICAL SPECIFICATION (SPEC)
-## Proyecto: VetConnect — Especificación Técnica y Arquitectónica Integral
-**Document ID:** `SPEC-VETCONNECT-2026-V2`
-**Autor:** Senior / Staff Systems Architect & Tech Lead (FAANG Tier Standards)
-**Organización:** Grupo Pinnacle / VetConnect Team
-**Fecha de Emisión:** Septiembre 2026
-**Estado:** `APPROVED (ACTIVE SYSTEM SPEC)`
-**Clasificación:** Tier-1 Engineering RFC & Implementation Specification
+# Especificación Técnica y Funcional (SPEC) — Huellicam
+
+Especificación consolidada del comportamiento funcional, máquina de estados, seguridad, requerimientos no funcionales y hoja de ruta de **Huellicam**.
 
 ---
 
-## 1. Visión General & Objetivos del Sistema
+## 1. Objetivos y Alcance del Sistema
 
-Esta especificación técnica define de manera exhaustiva la arquitectura, contratos de datos, protocolos de tiempo real, seguridad y modelos de falla para la plataforma **VetConnect v2.0**.
+Huellicam digitaliza la atención veterinaria a distancia con trazabilidad clínica, separación estricta de roles y minimización de datos personales:
 
-### 1.1 Objetivos de Ingeniería
-- **Latencia Ultra Baja:** Entrega de mensajería en tiempo real con latencia P95 $< 80\text{ ms}$ e inicio de videollamadas WebRTC P95 $< 1500\text{ ms}$.
-- **Concurrencia & Desacoplamiento:** Soporte de clustering horizontal sin estado en la capa de cómputo Node.js mediante adaptadores distribuidos Redis.
-- **Idempotencia Garantizada:** Tolerancia a reintentos en redes móviles inestables con deduplicación criptográfica de mensajes.
-- **Blindaje Legal & Sanitario:** Trazabilidad inmutable de historias clínicas y cumplimiento del 100% de la **Ley N° 25.326** y resoluciones de **SENASA**.
-
----
-
-## 2. Topología del Sistema & Arquitectura de Componentes
-
-El backend se estructura bajo el patrón **Modular Monolith (Domain-Driven Design)**, desplegado en un runtime único de **Node.js 20 LTS** con **Express 5**, desacoplado de la persistencia mediante **PostgreSQL** y **Redis**.
-
-```mermaid
-flowchart TB
-    subgraph Clients["Perímetro de Clientes (Frontend)"]
-        Mobile["📱 Mobile App (React Native / Expo 54)<br/>• Socket.io Client & Zustand Store<br/>• LiveKit Video WebView Bridge<br/>• SecureStore para Tokens"]
-        WebPro["💻 Web Pro Portal (React 18.3.1 LTS / Vite)<br/>• TanStack React Query v5<br/>• LiveKit Components React<br/>• Tailwind CSS v3 Craft Tokens"]
-        WebAdmin["🛡️ Web Admin Portal<br/>• Sala de Espera SENASA<br/>• AuditLog Explorer"]
-    end
-
-    subgraph Edge["Capa de Borde & Gateway"]
-        Traefik["🌐 Traefik Reverse Proxy (Coolify Managed)<br/>• Terminación TLS 1.3 / Let's Encrypt<br/>• Enrutamiento WSS / HTTPS<br/>• Cabeceras de Seguridad (Helmet)"]
-    end
-
-    subgraph BackendCluster["Cluster Backend (Node.js 20 / Express 5)"]
-        subgraph Modules["Módulos de Dominio (Modular Monolith)"]
-            AuthMod["🔑 auth/ (IAM y tokenVersion)"]
-            UserMod["👤 users/ (Perfiles y SENASA)"]
-            PetMod["🐾 pets/ (Ficha Clínica Digital)"]
-            ConsultMod["🩺 consultations/ (Triage y State Machine)"]
-            CallMod["🎥 calls/ (LiveKit Token Grants)"]
-            MediaMod["📦 media/ (Magic Bytes Inspector)"]
-            AdminMod["📜 admin/ (Fiscalización SENASA & AuditLog)"]
-        end
-        SocketGateway["⚡ Clustered Socket.io Gateway<br/>• Room Multiplexing<br/>• Deduplication Engine"]
-    end
-
-    subgraph PersistenceServices["Capa de Persistencia & Media Cloud"]
-        Postgres[("🐘 PostgreSQL (Supabase / Prisma 6)<br/>• Composite Indexed Relational Store<br/>• Soft-Deletes y PII Scrubbing")]
-        RedisStore[("🔴 Redis In-Memory Store<br/>• Socket.io Redis Adapter<br/>• Distributed Rate Limiter<br/>• Realtime State Cache")]
-        S3Storage[("🪣 Amazon S3 / Fallback Local<br/>• Cifrado en Reposo AES-256<br/>• URLs Firmadas con TTL")]
-        LiveKitServer["🎥 LiveKit Cloud SFU<br/>• WebRTC Media Relay<br/>• Adaptive Simulcast Engine"]
-    end
-
-    Mobile -->|HTTPS / WSS| Traefik
-    WebPro -->|HTTPS / WSS| Traefik
-    WebAdmin -->|HTTPS| Traefik
-
-    Traefik --> AuthMod
-    Traefik --> SocketGateway
-
-    AuthMod --> Postgres
-    UserMod --> Postgres
-    PetMod --> Postgres
-    ConsultMod --> Postgres
-    AdminMod --> Postgres
-
-    MediaMod --> S3Storage
-
-    SocketGateway -->|Redis Pub/Sub| RedisStore
-    RedisStore -->|Redis Pub/Sub| SocketGateway
-
-    CallMod -.->|Token Grants| LiveKitServer
-    Mobile -.->|RTP Media Traffic| LiveKitServer
-    WebPro -.->|RTP Media Traffic| LiveKitServer
-```
-
-### 2.3 Especificación del Cliente Frontend Web SPA (React 18.3.1 LTS + Vite)
-El cliente web se estructura como una Single Page Application (SPA) desacoplada con las siguientes especificaciones técnicas de ingeniería:
-- **Framework & Core Runtime:** React 18.3.1 (LTS / React 19 Ready) montado con Vite 6 en modo ESM nativo.
-- **Gestión de Estado Asíncrono (Server State):** TanStack Query v5 con políticas estrictas de invalidación determinista por `queryKey` (`['pets']`, `['consultations', 'mine']`, `['vets', 'pending']`), `staleTime: 5 min` y recolección de basura `gcTime: 10 min`.
-- **Gestión de Sesión & Identidad (Auth State):** `AuthContext` en React con `accessToken` almacenado **estrictamente en memoria RAM** y `refreshToken` transmitido en cookie segura `HttpOnly`, eliminando vectores de ataque XSS.
-- **Canal de Tiempo Real (Socket.io Client):** Conexión WSS persistente con reconexión exponencial automática, sincronización incremental `?after={timestamp}` y deduplicación de chat por `clientMsgId`.
-- **Motor Multimedia WebRTC (LiveKit Client):** Integración con LiveKit Cloud SFU mediante `@livekit/components-react` y `livekit-client`, configurando `<LiveKitRoom>` y `<VideoConference>` sin duplicación de `<RoomAudioRenderer>` (mitigando eco acústico), e inyección dinámica de `wsUrl`.
-- **Code-Splitting & Rendimiento:** Carga diferida con `React.lazy()` para todas las rutas autenticadas (`ConsultationRoom`, `DashboardClient`, `DashboardVet`, `AdminVets`, `PrescriptionView`), logrando un peso de bundle inicial de 20.38 kB gzip y LCP < 1.2s.
+1. **Admisión y Triaje Clínico Determinista:** Evaluación automática de severidad sin depender de que el tutor elija manualmente un color de urgencia.
+2. **Guardia y Concurrencia Segura:** Asignación atómica de consultas evitando doble toma y tolerando reconexiones multidispositivo.
+3. **Comunicación Multimodal:** Chat en tiempo real con adjuntos validados + videollamada WebRTC HD (720p adaptativa) sin exposición de PII en tokens de media.
+4. **Prescripción Verificable:** Emisión de recetas digitales con código QR de verificación pública.
+5. **Trazabilidad y Cumplimiento:** Soft-deletes legales, auditoría administrativa (`AuditLog`) y auditoría granular de consultas (`ConsultationAuditLog`).
 
 ---
 
-## 3. Modelo de Datos, Esquema Prisma & Máquinas de Estado
+## 2. Roles y Control de Acceso
 
-### 3.1 Mapeo Relacional & Convenciones de Nomenclatura
-Para prevenir desincronizaciones entre la convención de código JavaScript (`camelCase`) y la nomenclatura de base de datos SQL (`snake_case`), **todas las columnas multi-palabra están mapeadas explícitamente con `@map`**.
-
-```mermaid
-erDiagram
-    User ||--o{ Pet : "owns"
-    User ||--o{ Consultation : "participates"
-    User ||--o{ Message : "sends"
-    User ||--o{ Prescription : "issues"
-    User ||--o{ Review : "evaluates/receives"
-    User ||--o{ FavoriteVet : "favorites (v2.1+)"
-    User ||--o{ PushToken : "registers"
-    User ||--o{ Notification : "receives"
-    User ||--o{ MediaFile : "uploads"
-
-    Pet ||--o{ Consultation : "subject"
-    Consultation ||--o{ Message : "contains"
-    Consultation ||--o{ Call : "initiates"
-    Consultation ||--o{ Prescription : "generates"
-    Consultation ||--o| Review : "receives"
-    Consultation ||--o{ MediaFile : "contains"
-
-    User {
-        string id PK
-        string email UK
-        string password
-        string role
-        string vetStatus
-        int tokenVersion
-        float ratingAvg
-        int ratingCount
-        boolean isOnline
-        datetime lastSeen
-        datetime deletedAt
-    }
-
-    Pet {
-        string id PK
-        string name
-        string species
-        string breed
-        float weightKg
-        string sex
-        string microchip
-        string allergies
-        string chronicConditions
-        datetime deletedAt
-    }
-
-    Consultation {
-        string id PK
-        string clientId FK
-        string vetId FK
-        string petId FK
-        string status
-        string notes
-        string diagnosisNotes
-        datetime startedAt
-        datetime endedAt
-        datetime deletedAt
-    }
-
-    Message {
-        string id PK
-        string consultationId FK
-        string senderId FK
-        string content
-        string attachmentUrl
-        string clientMsgId UK
-        datetime createdAt
-        datetime deletedAt
-    }
-
-    Call {
-        string id PK
-        string consultationId FK
-        string roomName
-        string status
-        datetime startedAt
-        datetime endedAt
-        int durationSeconds
-        datetime createdAt
-    }
-
-    DailyUploadCounter {
-        string id PK
-        string userId FK
-        string date "YYYY-MM-DD"
-        int count "cantidad de archivos"
-        int totalBytes "volumen acumulado en bytes (máx 50 MB / 52428800)"
-    }
-
-    MediaFile {
-        string id PK
-        string ownerId FK
-        string consultationId FK "nullable"
-        string fileName
-        int fileSize
-        string mimeType
-        string localPath "nullable"
-        string s3Key "nullable"
-        datetime createdAt
-        datetime deletedAt
-    }
-
-    PushToken {
-        string id PK
-        string userId FK
-        string token UK "ExponentPushToken[...]"
-        string platform "ios | android | web"
-        datetime createdAt
-        datetime updatedAt
-    }
-
-    Notification {
-        string id PK
-        string userId FK
-        string title
-        string body
-        string type "CALL_INCOMING | MESSAGE_NEW | PRESCRIPTION_NEW | SYSTEM"
-        json data
-        boolean isRead
-        datetime readAt "nullable"
-        datetime createdAt
-    }
-
-    Prescription {
-        string id PK
-        string consultationId FK
-        string vetId FK
-        string medication
-        string dosage
-        string frequency
-        string durationDays
-        string indications
-        datetime createdAt
-    }
-
-    AuditLog {
-        string id PK
-        string adminId
-        string action
-        string targetId
-        string ipAddress
-        json details
-        datetime createdAt
-    }
-
-    Review {
-        string id PK
-        string consultationId FK
-        string clientId FK
-        string vetId FK
-        int rating "1 a 5 estrellas (ADR-023)"
-        string comment
-        datetime createdAt
-    }
-```
-
-### 3.2 Estrategia de Indexación Compuesta
-Optimizada para consultas de alta concurrencia:
-1. `users`: `@@index([role, isOnline, vetStatus, deletedAt])` — Filtrado instantáneo de veterinarios disponibles en triage.
-2. `consultations`: `@@index([clientId, status, deletedAt])` y `@@index([vetId, status, deletedAt])` — Consultas activas de dashboards.
-3. `messages`: `@@index([consultationId, createdAt])` — Paginación cronológica del chat clínico.
-4. `messages`: `@@unique([clientMsgId])` — Deduplicación atómica garantizada por motor SQL.
-5. `media_files`: `@@index([ownerId, deletedAt])` y `@@index([consultationId, deletedAt])` — Búsqueda y control de acceso de adjuntos clínicos.
-6. `push_tokens`: `@@unique([token])` y `@@index([userId])` — Registro idempotente y despacho de notificaciones push.
-7. `notifications`: `@@index([userId, isRead, createdAt])` — Consulta eficiente de bandeja in-app y badge de no leídas.
-8. `daily_upload_counters`: `@@unique([userId, date])` — Validación atómica de cuota diaria de subida (RNF-06).
+| Rol | Capacidades Principales | Restricciones de Seguridad |
+|---|---|---|
+| `CLIENT` | Gestiona sus mascotas, solicita consultas de urgencia/orientación, participa en chat y videollamada, visualiza recetas y califica consultas finalizadas. | Solo accede a sus propias mascotas y consultas. No puede editar evoluciones médicas ni emitir recetas. |
+| `VET` | Gestiona su estado de guardia (`isOnline`), revisa la cola priorizada, toma consultas (`assign`), chatea, realiza videollamadas, completa evolución médica y emite recetas. | Requiere `vetStatus = APPROVED` en producción para atender consultas (`PENDING` / `REJECTED` quedan bloqueados). |
+| `ADMIN` | Verifica matrículas profesionales (`PENDING -> APPROVED/REJECTED`), administra usuarios/mascotas, inspecciona consultas, gestiona *feature flags*, tarifas y métricas. | Toda acción crítica genera registro en `AuditLog`. |
 
 ---
 
-### 3.3 Máquinas de Estado Finitas (FSM)
+## 3. Flujos Críticos y Máquina de Estados
 
-#### A. Ciclo de Vida de la Consulta Telemática (FSM Determinista de 4 Estados — ADR-024)
+### 3.1 Ciclo de Vida de la Consulta
+
 ```mermaid
 stateDiagram-v2
-    [*] --> WAITING: Tutor solicita triage telemático
-    WAITING --> ACTIVE: Auto-asignación FIFO directa a Veterinario Online (o toma manual)
-    WAITING --> CANCELLED: Tutor cancela en cola / Timeout TTL 15m sin guardia online (TIMEOUT_NO_VET_AVAILABLE)
-
-    ACTIVE --> COMPLETED: Veterinario emite evolución médica / receta digital
-    ACTIVE --> CANCELLED: Terminación extraordinaria / Desconexión sin reconexión tras gracia de 3m (VET_DISCONNECTED_TIMEOUT)
-
+    [*] --> WAITING: Tutor envia intake clinico
+    WAITING --> ACTIVE: Veterinario aprobado toma el caso (PATCH /assign)
+    WAITING --> CANCELLED: Cancelacion del tutor o TTL 15 min sin vet
+    ACTIVE --> COMPLETED: Veterinario cierra consulta con evolucion (PATCH /complete)
+    ACTIVE --> CANCELLED: Cancelacion o desconexion sin reconexion (3 min)
     COMPLETED --> [*]
     CANCELLED --> [*]
 ```
 
-**Reglas Deterministas de Transición y Resiliencia Temporal:**
-1. **Ausencia de Guardia Online en Triage:** Si un tutor solicita triage y no hay veterinarios online (`isOnline = true`, `vetStatus = APPROVED`), el sistema informa el estado en la UI e inicia un temporizador de espera máxima con TTL de **15 minutos**. Si ningún profesional se conecta o toma la consulta al cumplirse el TTL, la consulta transiciona automáticamente a `CANCELLED` con código de auditoría `TIMEOUT_NO_VET_AVAILABLE`, notificando al tutor vía Push y WebSocket.
-2. **Ventana de Gracia por Desconexión en Consulta `ACTIVE`:** Si el veterinario pierde la conexión durante una consulta activa, el sistema abre una **ventana de gracia de 3 minutos** (basada en el socket heartbeat y presencia Redis). Si el profesional se reconecta dentro de este intervalo, la sesión continúa sin interrupción. Si se agota el tiempo de gracia, la consulta transiciona a `CANCELLED` (`VET_DISCONNECTED_TIMEOUT`) o se ofrece al tutor la opción de reencolado prioritario en `WAITING`.
+Además de los 4 estados principales (`WAITING`, `ACTIVE`, `COMPLETED`, `CANCELLED`), el enum `ConsultationStatus` contempla estados extendidos (`TRIAGE_CRITICAL_QUEUED`, `CLAIM_PENDING_SYNC`, `LIVEKIT_CONNECTING`, `IN_CALL_ACTIVE`, `AWAITING_EMERGENCY_CALLBACK`, `HANDOFF_IN_PROGRESS`) y la tabla `ConsultationAuditLog` junto con `stateVersion`, `activeDeviceId` y `transportStatus` para soportar reclamos con bloqueo de fila (`FOR UPDATE`) y recuperación de sesión entre dispositivos en `consultationConcurrency.service.ts`.
 
-#### B. Onboarding & Validación Profesional (SENASA)
-```mermaid
-stateDiagram-v2
-    [*] --> PENDING: Veterinario se registra
-    PENDING --> APPROVED: Administrador valida matricula
-    PENDING --> REJECTED: Matricula rechazada
-    APPROVED --> [*]: Habilitado para atender
-    REJECTED --> [*]: Cuenta inhabilitada
-```
+**Reglas de timeout implementadas:**
+- **Espera máxima en cola (`checkTriageTimeout`):** Si una consulta permanece en `WAITING` más de **15 minutos**, transiciona automáticamente a `CANCELLED` añadiendo `[CANCELLED_TIMEOUT_NO_VET_AVAILABLE]` y cerrando la sala LiveKit si existiera.
+- **Desconexión en consulta activa (`checkVetDisconnectTimeout`):** Ventana de gracia de **3 minutos** ante desconexión prolongada (`[VET_DISCONNECTED_TIMEOUT]`).
 
----
+### 3.2 Motor Determinista de Triaje Clínico (`clinicalTriage.engine.ts`)
 
-## 4. Contratos de API REST & Protocolo de Tiempo Real
+Inspirado en criterios de *Veterinary Triage Index (VTI)* y *Manchester Triage System (MTS)*:
+- El tutor envía mascota, lista de síntomas observables (`symptoms`), ventana temporal (`duration`: `LESS_THAN_2_HOURS`, `HOURS_2_TO_12`, `DAYS_1_TO_2`, `MORE_THAN_2_DAYS`) y relato libre (`notes`).
+- El backend evalúa de forma determinista palabras clave críticas, signos vitales comprometidos, vulnerabilidad por raza (ej. cuadros respiratorios en razas braquicéfalas) y tiempo de evolución.
+- Calcula severidad (`ROJO`, `AMARILLO`, `VERDE`), puntaje numérico (`1..10`), bandera `isEmergency` y `redFlags`, formateando un resumen estructurado para el veterinario. En la interfaz del tutor se ocultan las etiquetas técnicas internas (`parseConsultationNotes`).
 
-### 4.1 Contratos de Endpoints REST Clave
-Todos los payloads de entrada y salida se validan estrictamente mediante esquemas **Zod**.
+### 3.3 Ficha Declarativa vs. Expediente Clínico Inmutable
 
-| Método | Ruta | Descripción | Acceso | Código Éxito |
-|---|---|---|---|---|
-| `POST` | `/api/auth/register` | Registro de usuarios (CLIENT o VET PENDING) | Público | 201 Created |
-| `POST` | `/api/auth/login` | Login y JWT. Web: Cookie `HttpOnly`. Mobile (`X-Client-Platform: mobile`): Body JSON con `refreshToken` | Público | 200 OK |
-| `POST` | `/api/auth/refresh` | Renovación de access token (Web: Cookie / Mobile: Payload `{ refreshToken }`) | Público | 200 OK |
-| `POST` | `/api/auth/logout` | Revocación de sesión e invalidación de credenciales | Autenticado | 200 OK |
-| `GET` | `/api/pets` | Listado de mascotas del tutor | CLIENT / ADMIN | 200 OK |
-| `POST` | `/api/pets` | Registro de nueva ficha de mascota (microchip ISO opcional) | CLIENT / ADMIN | 201 Created |
-| `GET` | `/api/pets/:id` | Detalle clínico e historial de la mascota | Dueño / Vet asignado / ADMIN | 200 OK |
-| `POST` | `/api/consultations` | Ingreso a cola de triage (`WAITING`, TTL 15 min) | CLIENT | 201 Created |
-| `PATCH`| `/api/consultations/:id/assign` | Toma directa de guardia o auto-asignación FIFO | VET (APPROVED) / ADMIN | 200 OK |
-| `PATCH`| `/api/consultations/:id/cancel` | Cancelación voluntaria o por timeout de consulta | Participantes / ADMIN | 200 OK |
-| `PATCH`| `/api/consultations/:id/complete` | Cierre clínico con evolución y diagnóstico | VET asignado | 200 OK |
-| `POST` | `/api/consultations/:id/prescriptions` | Emisión de receta oficial con firma/QR | VET asignado | 201 Created |
-| `GET`  | `/api/consultations/:id/messages` | Historial de chat y sincronización incremental (`?after={ISO_TIMESTAMP}`) | Participantes | 200 OK |
-| `POST` | `/api/consultations/:id/messages` | Envío de mensaje en chat con deduplicación por `clientMsgId` | Participantes | 201 Created |
-| `POST` | `/api/consultations/:id/review` | Calificación de atención (1 a 5 estrellas, ADR-023) | CLIENT asignado | 201 Created |
-| `POST` | `/api/calls/:consultationId/token` | Generación de token efímero LiveKit SFU (sin PII) | Participantes | 200 OK |
-| `POST` | `/api/media` | Subida de archivos con chequeo binario de Magic Bytes y cuota diaria | Autenticado | 201 Created |
-| `GET`  | `/api/media/:id` | Descarga/streaming seguro autenticado (acceso restringido a participantes y ADMIN) | Participantes / ADMIN | 200 OK |
-| `PATCH`| `/api/admin/vets/:id/approve` | Aprobación de matrícula SENASA | ADMIN | 200 OK |
-
-### 4.2 Formato Estándar de Errores (RFC 7807 Pattern)
-```json
-{
-  "success": false,
-  "error": {
-    "code": "VET_CREDENTIALS_PENDING_APPROVAL",
-    "message": "Su matrícula se encuentra en proceso de validación por el equipo de auditoría.",
-    "details": null,
-    "timestamp": "2026-09-12T22:30:00.000Z"
-  }
-}
-```
+- **Ficha Declarativa (`Pet`):** Editable por el tutor (`name`, `species`, `breed`, `weightKg`, `sex`, `birthDate`, `microchip`, `allergies`, `chronicConditions`).
+- **Expediente Clínico (`Consultation`, `diagnosisNotes`, `Prescription`):** Registro clínico inmutable para el tutor; solo los profesionales autorizados agregan evoluciones y prescripciones.
 
 ---
 
-### 4.3 Matriz de Eventos de Tiempo Real (Socket.io)
+## 4. Seguridad, Criptografía y Privacidad
 
-| Evento | Dirección | Payload | Propósito |
-|---|---|---|---|
-| `join:consultation` | Cliente $\to$ Server | `{ consultationId: string }` | Suscribe el socket a la sala privada `consultation:{id}`. |
-| `message:send` | Cliente $\to$ Server | `{ consultationId, content, clientMsgId, attachmentUrl }` | Envío de mensaje con deduplicación idempotente. |
-| `message:new` | Server $\to$ Room | `MessageDTO` | Broadcast instantáneo a los participantes de la sala. |
-| `call:incoming` | Server $\to$ Peer | `{ consultationId, callerName, roomName }` | Dispara la alerta de timbrado en Web y Mobile. |
-| `call:answered` | Peer $\to$ Server | `{ consultationId }` | Detiene el timbrado y confirma inicio de sesión WebRTC. |
-| `call:rejected` | Peer $\to$ Server | `{ consultationId, reason }` | Cancela el timbrado en el par emisor. |
-| `prescription:new` | Server $\to$ Tutor | `PrescriptionDTO` | Notifica la emisión inmediata de la receta médica con QR. |
-
----
-
-## 5. Arquitectura de Seguridad, IAM & Criptografía
-
-### 5.1 Revocación Atómica de Sesión (`tokenVersion`)
-1. El modelo `User` almacena un entero incremental `tokenVersion` (por defecto `1`).
-2. Al firmar el JWT (HMAC-SHA256 con `JWT_SECRET`), se incluye en el payload: `{ userId: user.id, tokenVersion: user.tokenVersion }`.
-3. El middleware `auth.middleware.ts` decodifica el token y valida que `payload.tokenVersion === user.tokenVersion`.
-4. Ante cambio de password, baneo administrativo o logout global, se ejecuta `UPDATE users SET token_version = token_version + 1 WHERE id = :userId`, invalidando inmediatamente todos los tokens en circulación sin consultar listas negras pesadas.
-
-### 5.2 Inspección Binaria de Archivos (*Magic Bytes*)
-Para neutralizar la subida de ejecutables camuflados, el middleware interceptor inspecciona los primeros bytes del buffer en memoria:
-- **JPEG:** `FF D8 FF`
-- **PNG:** `89 50 4E 47 0D 0A 1A 0A`
-- **PDF:** `25 50 44 46`
-Si la firma binaria no concuerda con el MIME type declarado en la cabecera HTTP, la solicitud es rechazada de inmediato con `HTTP 400 Bad Request`.
-
-### 5.3 Soft-Delete y Anonimización Legal (Ley 25.326)
-Cuando se solicita la baja de una cuenta:
-- Se reemplaza `email` por `anon_${uuid}@deleted.vetconnect.internal`.
-- Se reemplaza `firstName` y `lastName` por `"Usuario Eliminado"`.
-- Se limpian `phone`, `bio` y `photoUrl`.
-- Se establece `deletedAt = now()`.
-- **Historias clínicas y consultas permanecen intactas**, asociadas al ID persistido para cumplir con el plazo legal de conservación médica sin exponer datos personales del tutor.
-
-### 5.4 Políticas de Seguridad en el Navegador Web & Mitigación XSS (ADR-004)
-1. **Tokens en Memoria RAM Exclusiva:** El `accessToken` reside únicamente en memoria volátil de JavaScript (`currentAccessToken` en `api.ts`), impidiendo el robo por scripts maliciosos inyectados en el DOM.
-2. **Cookies de Sesión Cross-Domain:** El `refreshToken` se envía en cookie `HttpOnly; Secure; SameSite=None` (en producción), restringiendo su acceso al motor HTTP del navegador entre `app.vetconnect.com` y `api.vetconnect.com`.
-3. **Content Security Policy (CSP) & Cabeceras:** Vercel y Traefik fuerzan cabeceras `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `X-XSS-Protection: 1; mode=block` y directivas CSP que autorizan conexiones WebSocket seguras (`wss:`) y tráfico WebRTC hacia `*.livekit.cloud`.
+1. **Autenticación y Revocación Atómica (`tokenVersion`):**
+   - Access tokens JWT de corta duración (`15m`) y refresh tokens (`7d`).
+   - En Web, el access token se mantiene en memoria y el refresh token viaja en cookie `HttpOnly; SameSite; Secure` (adaptada para desarrollo local o cross-domain productivo).
+   - En Mobile, con el header `X-Client-Platform: mobile`, el refresh token se entrega en JSON y se guarda en `expo-secure-store`.
+   - Cualquier logout, cambio/reset de contraseña o suspensión administrativa incrementa `User.tokenVersion`, invalidando tokens previos sin depender de listas negras en memoria.
+2. **Validación Binaria de Archivos y Cuotas:**
+   - Upload multipart mediante almacenamiento temporal en disco (`uploads/tmp/`) para evitar agotamiento de heap.
+   - Verificación estricta de *Magic Bytes* para JPEG (`FF D8 FF`), PNG (`89 50 4E 47`) y PDF (`25 50 44 46`).
+   - Límites aplicados: **10 MB** máximo por archivo (`413`) y **50 MB/día** acumulados por usuario en `DailyUploadCounter` (`429`).
+   - Prohibición de servir el directorio de subidas de forma estática pública: todo acceso pasa por `GET /api/media/:id` con verificación de propiedad/participación.
+3. **Cero PII en WebRTC:** Los tokens JWT de LiveKit incluyen únicamente un identificador técnico (`user.id` o `tutor_<userId>:<deviceId>`) y `user.firstName`; nunca correos, teléfonos ni matrículas.
+4. **Soft-Deletes y Anonimización:** Las bajas preservan el historial clínico médico-legal marcando `deletedAt` y desvinculando datos de contacto en bajas de cuenta.
 
 ---
 
-## 6. Requerimientos No Funcionales (NFRs) & Service Level Objectives (SLOs)
+## 5. Automatización de Correos (`NotificationsScheduler`)
 
-```
-+-----------------------------------------------------------------------------------------+
-|                                  SLI / SLO TARGET MATRIX                                |
-+------------------------------------+-----------------------------+----------------------+
-| Indicador (SLI)                    | Método de Medición          | SLO Target           |
-+------------------------------------+-----------------------------+----------------------+
-| Disponibilidad de la API           | Uptime HTTP mensual         | >= 99.9%             |
-| Latencia REST (P95)                | Tiempo respuesta endpoints  | < 120 ms             |
-| Latencia WebSockets (P95)          | Tiempo round-trip de mensaje| < 80 ms              |
-| Conexión WebRTC LiveKit (P95)      | Handshake a primer frame    | < 1500 ms            |
-| Tasa de Pérdida de Paquetes Video  | Packet loss en streaming SFU| < 2.0%               |
-| Integridad Criptográfica de Repo   | Escaneo en CI pre-merge     | 0 secretos expuestos |
-+------------------------------------+-----------------------------+----------------------+
-```
-
-### 6.1 Requerimientos No Funcionales de Almacenamiento & Media (RNF-06)
-- **Tamaño Máximo por Archivo:** 10 MB por adjunto individual. Archivos que superen este umbral son rechazados inmediatamente con `HTTP 413 Payload Too Large` (`FILE_TOO_LARGE`).
-- **Cuota Agregada Diaria por Usuario:** Máximo de **50 MB / día (52.428.800 bytes)** acumulados por usuario en una ventana móvil de 24 horas. El consumo se audita en la tabla `DailyUploadCounter` (`totalBytes`). Al superarse, se bloquea la subida retornando `HTTP 429 Too Many Requests` (`UPLOAD_QUOTA_EXCEEDED`).
-- **Inspección Binaria Obligatoria (Magic Bytes):** Verificación forzosa de los primeros 32 bytes en disco (`uploads/tmp/`) antes de procesar:
-  - JPEG: `FF D8 FF`
-  - PNG: `89 50 4E 47`
-  - PDF: `25 50 44 46`
-  Extensiones disfrazadas o payloads maliciosos son rechazados con `HTTP 400 Bad Request` (`INVALID_FILE_TYPE`).
-- **Control de Acceso Estricto (ADR-010 & ADR-020):** Prohibido el uso de `express.static()` para archivos clínicos. Las descargas se realizan exclusivamente por `GET /api/media/:id`, validando que el solicitante sea dueño de la mascota, veterinario asignado o administrador. En AWS S3 se generan presigned URLs con TTL de 300 segundos (5 minutos); en almacenamiento local se transmiten por streaming protegido.
-
-### 6.2 Máquinas de Estado en UI y Ciclos de Vida del Cliente Web
-El frontend web modela formalmente los 4 ciclos clínicos críticos de la aplicación:
-
-```mermaid
-stateDiagram-v2
-    [*] --> Idle: Usuario autenticado
-    Idle --> TriageIniciado: Tutor selecciona mascota e ingresa intake de síntomas
-    TriageIniciado --> EvaluandoTriajeIA: Envío exitoso POST /api/consultations (chips signos + duración + relato)
-    EvaluandoTriajeIA --> EsperandoGuardia: Motor de triaje infiere severidad (ROJO/AMARILLO/VERDE) y pre-triage
-    EsperandoGuardia --> Asignado: Veterinario reclama caso en cola de guardia (PATCH /assign)
-    EsperandoGuardia --> Cancelado: TTL 15 min expirado o cancelación del tutor
-    Asignado --> EnConsultaWebRTC: Handshake LiveKit SFU completado en /call/:id
-    EnConsultaWebRTC --> RecetaEmitida: Veterinario emite prescripción con QR
-    RecetaEmitida --> Completado: Cierre clínico con evolución médica (PATCH /complete)
-    Completado --> ReseñaPendiente: Tutor califica atención (1 a 5 estrellas)
-    ReseñaPendiente --> [*]
-```
-
-1. **Ciclo de Intake y Triaje Clínico AI-First (ADR-028):** Selección de mascota $\to$ Formulario guiado de signos clínicos y evolución $\to$ Clasificación interna de severidad y detección de banderas rojas $\to$ Cola de guardia con temporizador de 15 minutos.
-2. **Cola de Guardia Priorizada (Veterinario):** Lista en vivo ordenada por severidad clínica calculada por IA y hora de ingreso $\to$ Reclamo atómico (`PATCH /api/consultations/:id/assign`) $\to$ Redirección inmediata a `/call/:id`.
-3. **Sala de Consulta Híbrida (`ConsultationRoom`):** PreJoin de periféricos $\to$ Montaje WebRTC sin duplicar audio $\to$ Chat sincronizado por WebSockets $\to$ PostMessage `page:ready` si corre en WebView móvil.
-4. **Emisión de Receta Oficial:** Redacción estructurada $\to$ Envío `POST /prescriptions` $\to$ Generación de QR en Base64 $\to$ Impresión formateada vía `@media print`.
+El proceso `backend/src/jobs/notifications.scheduler.ts` se ejecuta cada hora (habilitado por defecto en `production`, opcional en desarrollo con `ENABLE_EMAIL_SCHEDULER=true`) y registra cada envío en `EmailDispatchLog` (`dedupeKey` único) para garantizar idempotencia:
+- **Recordatorio de consulta (`APPOINTMENT`):** Máximo 1 correo por consulta `WAITING` creada en las últimas 24 horas.
+- **Chequeo preventivo (`CHECKUP`):** Máximo 1 recordatorio cada 180 días para mascotas con ≥ 6 meses desde su alta y sin consultas recientes.
+- **Saludo de cumpleaños (`BIRTHDAY`):** Máximo 1 envío anual cuando `Pet.birthDate` coincide con la fecha UTC actual (contemplando años no bisiestos para el 29 de febrero).
 
 ---
 
-## 7. Análisis de Modos de Falla & Resiliencia (FMEA)
+## 6. Requerimientos No Funcionales y Resiliencia
 
-| Escenario de Falla | Componente | Detección | Impacto | Mecanismo de Mitigación / Auto-Recovery |
-|---|---|---|---|---|
-| **Caída de Redis Clúster** | Redis Store | Error de conexión en `@socket.io/redis-adapter` | Imposibilidad de sincronizar entre múltiples réplicas | Fallback automático a `Socket.io in-memory` por nodo; logs de alerta SEV-2 en APM. |
-| **Indisponibilidad de LiveKit SFU** | WebRTC Server | Error en handshake `POST /api/calls/:consultationId/token` | Falla en inicio de videoconsulta | El cliente conmuta a **Modo Chat de Contingencia con Notas de Audio e Imágenes**. |
-| **Falla en Almacenamiento S3** | Amazon S3 | Excepción en llamada a SDK AWS | Error al adjuntar exámenes clínicos | Fallback transparente a almacenamiento local en disco (`/uploads`) con permisos restringidos. |
-| **Microcortes en Red Móvil 4G** | Dispositivo Tutor | Evento `disconnect` en Socket.io | Mensaje en tránsito potencialmente perdido | Reintento automático con backoff exponencial y deduplicación por clave única `clientMsgId`. |
-| **Agotamiento Pool Postgres** | Prisma Client | Código de error P2024 | Tiempos de espera elevados en API | Connection Pooling activo en Supabase con límite estricto de conexiones concurrentes por instancia. |
-
----
-
-## 8. Despliegue en Producción & Pipeline de Integración Continua
-
-### 8.1 Arquitectura de Despliegue Productivo
-- **Backend API & Redis:** Desplegado mediante **Coolify (PaaS self-hosted)** en servidor VPS con Docker y proxy inverso Traefik.
-- **Frontend Web:** Alojado en la red Edge de **Vercel** con CDN global, compresión Brotli y certificados SSL automáticos.
-- **Frontend Mobile:** Compilado mediante **Expo EAS** generando binarios nativos optimizados para Android (AAB para Google Play y APK directo).
-
-### 8.2 Estrategia de Migraciones Zero-Downtime (Expand/Contract)
-1. **Fase de Expansión:** Se añade la nueva columna o tabla en la base de datos permitiendo valores nulos (`nullable`). El código nuevo comienza a escribir en ambas estructuras.
-2. **Fase de Sincronización:** Se migran los datos históricos en background.
-3. **Fase de Contracción:** Una vez verificado que el 100% del tráfico utiliza la nueva estructura, se deprecan y eliminan las columnas obsoletas en una migración separada.
+| Categoría | Objetivo / Mecanismo |
+|---|---|
+| **Consistencia de Chat** | Deduplicación obligatoria por `clientMsgId` único en PostgreSQL y reconciliación incremental vía `GET /api/consultations/:id/messages?after=`. |
+| **Fallback de Infraestructura** | Si Redis no está disponible en desarrollo, Socket.io opera automáticamente en modo `InMemoryAdapter`. Si S3 no está configurado (`STORAGE_DRIVER=local`), almacena de forma segura en disco local. Si `RESEND_API_KEY` no está presente en desarrollo, los correos se registran en consola sin romper flujos. |
+| **Graceful Shutdown** | Ante `SIGTERM`/`SIGINT`, el servidor cierra nuevas conexiones HTTP, desconecta Socket.io y libera conexiones Prisma antes de finalizar (timeout máximo 10s). |
+| **Accesibilidad Web** | Contraste WCAG 2.1 AA, landmarks semánticos, navegación por teclado y banner de consentimiento de cookies accesible. |
 
 ---
 
-## 9. Aprobación y Vigencia de la Especificación
+## 7. Extensión Futura (Fuera del Alcance Actual)
 
-| Rol | Ingeniero Responsable | Veredicto | Fecha |
-|---|---|---|---|
-| **Staff Systems Architect** | Antigravity AI (FAANG Spec) | `APPROVED` | 2026-09-12 |
-| **Tech Lead / Backend Lead** | Tobias Vera | `APPROVED` | 2026-09-12 |
-| **Mobile Lead** | Juan Mendoza | `APPROVED` | 2026-09-12 |
-| **Web Lead** | Damian Orellana | `APPROVED` | 2026-09-12 |
-
----
-
-## 10. Anexo: Especificación de Extensión v2.1+ (Stakeholder Requirements)
-
-Documentado en detalle en [`MINUTA_STAKEHOLDER_2026-09.md`](MINUTA_STAKEHOLDER_2026-09.md). Define la evolución de contratos para los 15 puntos acordados con el stakeholder interno:
-
-### 10.1 Extensiones del Modelo de Datos (Prisma)
-- **`Pet`:**
-  - `microchip`: Validación opcional de 15 dígitos al crear mascota (`createPetSchema`).
-  - `breed`: Soporte explícito de valor `"OTROS"` con campo auxiliar para tipificación y telemetría analítica.
-  - `isHidden`: Booleano para ocultamiento voluntario del tutor (silencia recordatorios clínicos y notificaciones sin borrar historial).
-  - `birthDate`: Fecha de nacimiento para triggers de cumpleaños.
-  - `isDeceased` y `deathDate`: Fecha de fallecimiento para cese de notificaciones, registro administrativo y trigger de correo de condolencias.
-- **`VaccinationRecord`:** Historial de dosis aplicadas, fecha de inoculación, lote y `nextDueDate` para disparo de alarmas preventivas.
-- **`MedicationSchedule`:** Prescripción y alarmas configurables (dosis, frecuencia horaria, fecha inicio/fin).
-- **`PetDocument` ("VetDrive"):** Repositorio de archivos clínicos adjuntos (estudios de laboratorio, ecografías, recetas) categorizados en S3/local.
-- **`FavoriteVet`:** Relación persistida para acceso rápido y reconsultas (programado para migración v2.1+ en Hito M5).
-
-### 10.2 Integraciones Externas & Spikes
-- **Sincronización de Calendario:** Generación de feed iCal RFC 5545 (`GET /api/pets/:id/calendar.ics`) y URLs para adición directa a Google Calendar.
-- **Spike Regulatorio SENASA/RENAPER:** Factibilidad de conexión a bases de datos de matrículas oficiales.
-- **Spike Receta Digital en Farmacias:** Análisis de integración con repositorios de farmacias bajo marco normativo argentino.
+Las siguientes capacidades están contempladas en la evolución del producto pero **no están implementadas** en la versión actual del repositorio:
+- Integración de pasarela transaccional real bajo la interfaz `IPaymentGateway` (hoy existen métricas proyectadas y settings arancelarios en Admin).
+- Modelo dedicado de libreta de vacunación (`VaccinationRecord`), agenda periódica de medicación (`MedicationSchedule`) y veterinarios favoritos (`FavoriteVet`).
+- Migración de videollamadas en la app móvil desde el WebView actual hacia `@livekit/react-native`.
+- Sincronización iCal/Google Calendar y consulta automática de matrículas contra APIs externas.

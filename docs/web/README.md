@@ -1,108 +1,60 @@
-# 🌐 Planificación Integral de Diseño Web — VetConnect
+# Frontend Web (`web/`) — Huellicam
 
-> **Directorio de Documentación Técnica:** `docs/web/`  
-> **Proyecto:** VetConnect — Plataforma Integral de Telemedicina Veterinaria & Gestión Clínica  
-> **Área:** Diseño de Experiencia de Usuario (UX), Interfaz de Usuario (UI) & Arquitectura Web Frontend  
-> **Estado:** `APPROVED & MASTERED WEB PLANNING SPECIFICATION`  
-> **Fecha:** Septiembre 2026 | **Versión:** 2.0 (Alineada Post-Auditoría FAANG)  
-> **Cumplimiento Normativo:** ISO 9241-210 (DCU), ISO 9241-11 (Usabilidad), WCAG 2.1 Nivel AA, Ley N° 25.326 y Regulaciones Sanitarias SENASA.
+Documentación técnica de la aplicación SPA web construida con **React 18.3.1 (LTS)**, **Vite 6**, **Tailwind CSS v3** y **TanStack Query v5**.
 
 ---
 
-## 🧭 1. Propósito y Alcance de este Directorio
+## 1. Stack y Decisiones Técnicas
 
-El presente directorio reúne y consolida toda la planificación estratégica, metodológica, visual y técnica del **Frontend Web de VetConnect**. 
-
-A diferencia de la aplicación móvil (orientada primordialmente al tutor de mascotas en movimiento), el **Portal Web de VetConnect** se concibe como una solución integral multi-rol que satisface con grado profesional las necesidades operativas de:
-1. **Médicos Veterinarios de Guardia (`VET`):** Consola clínica de alta productividad para gestión de turnos, videoconsultas WebRTC en alta definición (LiveKit 720p), chat sincrónico con inspección fotográfica macroscópica de pacientes, redacción de historias clínicas y emisión digital de recetas oficiales con firma electrónica y código QR para validación farmacéutica.
-2. **Administradores y Reguladores (`ADMIN`):** Panel de control para fiscalización de matrículas profesionales SENASA, monitoreo de métricas operativas y auditoría inmutable de eventos (`AuditLog`).
-3. **Tutores de Mascotas (`CLIENT`):** Portal de autoservicio web para registro de animales, solicitud de triage telemédico de urgencia, consulta de recetas históricas y agendamiento clínico.
-
-> 🔒 **Aviso de Preservación Arquitectónica:**  
-> Esta suite documental en `docs/web/` se nutre de los contratos y especificaciones canónicas maestras ubicadas en la raíz de `docs/` ([`SPEC.md`](../SPEC.md), [`PLAN_DE_PROYECTO_Y_GESTION.md`](../PLAN_DE_PROYECTO_Y_GESTION.md), [`SISTEMA_DE_DISENO.md`](../SISTEMA_DE_DISENO.md), [`DECISIONS.md`](../DECISIONS.md), [`TECH_REFERENCE.md`](../TECH_REFERENCE.md) y [`ARCHITECTURE.md`](../ARCHITECTURE.md)), sin alterar ninguno de dichos archivos fundamentales.
+| Tecnología | Versión | Rol |
+|---|---|---|
+| React / React DOM | `18.3.1` | Runtime UI fijado en LTS por compatibilidad con `@livekit/components-react`. |
+| Vite | `6.x` | Bundler ESM, dev server (puerto `5173`) y compilación productiva (`web/dist`). |
+| React Router DOM | `7.x` | Enrutamiento SPA con carga diferida (`React.lazy` + `Suspense`). |
+| TanStack React Query | `5.x` | Caché y sincronización de consultas (`staleTime: 5 min`, `retry: 1`). |
+| Axios | `1.7.x` | Cliente HTTP con interceptor de refresco concurrente (`failedQueue`). |
+| Socket.io Client | `4.8.x` | Alertas globales de llamada entrante, cola veterinaria y chat en vivo. |
+| LiveKit Components | `2.8.x` | Videoconsultas WebRTC (`<LiveKitRoom>` + `<VideoConference />`). |
+| Storybook / Vitest | `8.6.x` / `3.0.x` | Taller aislado de componentes (`ui/`) y suite unitaria/integración. |
 
 ---
 
-#### 🔬 2. Nivel de Madurez Actual de la Web: Nivel 5 / 5 (Gold Master — Alta Fidelidad Operativa)
+## 2. Mapa de Rutas (`web/src/App.tsx`)
 
-A partir de la consolidación de módulos de alta fidelidad (`ClientApp.tsx`, `vet/VetApp.tsx`, `AdminApp.tsx`, `vet/CallRoom.tsx`), se establece el estado real de ingeniería del portal web:
+Todas las vistas principales se cargan de forma perezosa y están protegidas por wrappers de rol (`ClientWrapper`, `VetWrapper`, `AdminWrapper`):
 
+| Ruta | Componente | Acceso | Propósito |
+|---|---|---|---|
+| `/` | `pages/Landing.tsx` | Público | Portada comercial, propuesta de valor y acceso a la plataforma. |
+| `/login`, `/register`, `/register/*`, `/forgot-password` | `pages/AuthExperience.tsx` | Público | Inicio de sesión, registro diferenciado (Tutor / Veterinario) y recuperación por OTP de 6 dígitos. |
+| `/client`, `/client/*` | `pages/ClientApp.tsx` | `CLIENT` | Portal del tutor: mascotas, formulario de admisión clínica (`ClinicalIntakeForm`), consultas, chat, recetas y perfil. |
+| `/vet`, `/vet/*` | `vet/VetApp.tsx` | `VET` | Consola clínica: estado de disponibilidad, cola priorizada por triaje, consultas, pacientes, agenda, mensajería y emisión de recetas. |
+| `/call/:id` | `vet/CallRoom.tsx` | `CLIENT`, `VET`, `ADMIN` | Sala híbrida de videoconsulta (LiveKit WebRTC + `ClinicalChatThread` + soporte puente WebView móvil). |
+| `/admin`, `/admin/*` | `pages/AdminApp.tsx` | `ADMIN` | Panel de administración: validación SENASA, CRUD de usuarios/mascotas, auditoría, `AdminFeatureFlagsModal` y `AdminExecutiveMetrics`. |
+| `/prescriptions/:id`, `/verify-rx` | `pages/PrescriptionView.tsx` | Público | Visor imprimible A4 y verificación pública de receta mediante código QR. |
+| `/privacy`, `/terms`, `/cookies`, `/refunds` | `pages/PrivacyPolicy.tsx`, etc. | Público | Páginas legales y gestión de preferencias de cookies. |
+| `*` | `pages/NotFound.tsx` | Público | Fallback 404. |
+
+---
+
+## 3. Gestión de Sesión, Tiempo Real y Aislamiento de Estilos
+
+- **Autenticación y Refresco (`context/AuthContext.tsx`, `services/api.ts`):**
+  - El refresco usa cookie `HttpOnly` (`withCredentials: true`).
+  - Ante respuestas `401`, el interceptor pausa peticiones concurrentes en `failedQueue`, ejecuta un único `POST /api/auth/refresh` y reintenta la cola completa.
+  - Si el backend responde `SESSION_REVOKED`, dispara el evento de terminación de sesión y muestra `SessionTerminatedModal`.
+  - Se inyecta el header `x-device-id` para trazabilidad de sesión activa entre dispositivos.
+- **Llamadas Entrantes (`components/call/GlobalCallListener.tsx`):** Escucha `call:incoming` cuando hay sesión iniciada y sintetiza timbre vía Web Audio API sin depender de archivos de audio externos.
+- **Estilos Aislados (`ScopedStyle`):** Cada portal (`landing`, `auth`, `client`, `vet`, `admin`) carga su hoja CSS acotada para evitar colisiones visuales entre el portal del tutor, la consola clínica y la landing.
+
+---
+
+## 4. Comandos del Workspace Web
+
+```bash
+npm run dev:web           # Servidor de desarrollo Vite (http://localhost:5173)
+npm run typecheck -w web  # Verificación TypeScript (tsc --noEmit)
+npm test -w web           # Suite Vitest (single-run)
+npm run build -w web      # Compilación productiva en web/dist
+npm run storybook -w web  # Catálogo de componentes UI (puerto 6006)
 ```
-[ Nivel 1: Ideación & Specs ] ──> [ Nivel 2: Scaffolding Core ] ──> [ Nivel 3: MVP Funcional ] ──> [ Nivel 4: RC ] ──> [ 📍 Nivel 5: Gold Master ]
-                                                                                                                         (ESTADO ACTUAL VERIFICADO)
-```
-
-- **Estado Actual (Nivel 5 — Gold Master):** La web cuenta con una **SPA React 18.3.1 + Tailwind CSS v3 completamente integrada y en producción**. La lógica clínica, autenticación JWT con cookies `HttpOnly`, colas de concurrencia Axios (`failedQueue`), WebSockets de chat tipo WhatsApp con persistencia, WebRTC con LiveKit SFU 720p sólido, sintetizador de llamadas Web Audio (`GlobalCallListener`), panel de administración integral con matching en tiempo real y CRUDs de pacientes/tutores están 100% operativos.
-
-> 🛑 **Aviso Crítico para Desarrolladores y Agentes de IA:**  
-> La web opera a través del orquestador en `web/src/App.tsx` sobre suites modulares dedicadas (`ClientApp`, `VetApp`, `AdminApp`, `AuthExperience`, `CallRoom`) respaldadas por inyección de estilos aislados (`ScopedStyle`). Todas las pruebas unitarias y de integración de Vitest (71 tests en web, 206 tests en el monorepo) se mantienen estrictamente en verde.
-
-#### 📊 Verificación Empírica & Estado de Producción:
-La suite completa cuenta con **71 tests pasando en web (21 test suites)** y 206 tests totales en el monorepo sin fallos, con typecheck estricto sin errores.
-
-#### ⚖️ Alineación Arquitectónica, Alcance v2.0 y Correspondencia de Código:
-El mapeo uno a uno entre especificación planificada y archivos de código fuente (`web/src/pages/`, `context/`, `services/`) está documentado en [**`00_AUDITORIA_INTEGRAL_ESTADO_REAL.md#4-contraste-empírico-planificación-vs-código-real`**](./00_AUDITORIA_INTEGRAL_ESTADO_REAL.md#4-contraste-empírico-planificación-vs-código-real).
-
-> 📌 Ver protocolo metodológico de diseño colaborativo y exportación en [06_SISTEMA_DE_DISENO_UI_KIT.md (§7)](./06_SISTEMA_DE_DISENO_UI_KIT.md#7-metodología-híbrida-storybook--figma).
-- **Modelo de Acceso en v2.0 (Guardia Institucional):** Conforme a [`docs/PLAN_DE_PROYECTO_Y_GESTION.md:214`](../PLAN_DE_PROYECTO_Y_GESTION.md#L214), la pasarela de pagos es formalmente **(v2.0: Guardia Institucional / Pasarela de Pagos ScopeOut para v2.1+)**, operando bajo modelo de guardia telemédica sin barreras arancelarias de entrada en el PMV.
-
----
-
-## 🗺️ 3. Mapa y Estructura de Documentación Web
-
-La planificación web está estructurada de manera modular y secuencial en los siguientes documentos:
-
-```
-docs/web/
-├── README.md                                         # Este documento (índice maestro, madurez y mapa metodológico)
-├── 00_AUDITORIA_INTEGRAL_ESTADO_REAL.md              # Documento canónico de auditoría técnica FAANG y preparación para producción
-├── 01_ESTRATEGIA_Y_RELEVAMIENTO.md                   # Fase 1: Brief, 10 pasos, 7 Cs, 3 principios y modelo institucional
-├── 02_INVESTIGACION_DCU_Y_DESIGN_THINKING.md          # DCU (ISO 9241-210/11), Design Thinking, mapas de empatía y ética
-├── 03_REQUERIMIENTOS_Y_PMV.md                        # Actividad 15: Requerimientos funcionales/no funcionales y PMV v2.0
-├── 04_ARQUITECTURA_DE_INFORMACION_Y_NAVEGACION.md      # Árbol web jerárquico, menús globales/dropdowns y breadcrumbs
-├── 05_WIREFRAMING_Y_PROTOTIPADO_BAJA_FIDELIDAD.md      # Actividad 25: Wireframes funcionales interactivos (Nivel 4.5)
-├── 06_SISTEMA_DE_DISENO_UI_KIT.md                    # Actividad 26: Regla 60-30-10, tokens Tailwind y arquitectura shadcn/ui
-├── 07_AUDITORIA_UX_USABILIDAD_Y_ACCESIBILIDAD.md     # Checklist de auditoría, 10 Heurísticas de Nielsen y WCAG AA
-├── 08_DESARROLLO_INTEGRACIONES_Y_ROADMAP.md          # Fases 4-7: React 18.3.1 LTS, LiveKit, Express 5, QA y Hardening
-├── 09_PLANIFICACION_UI_ALTA_FIDELIDAD_CODE_FIRST.md  # Paso 6: Especificación de alta fidelidad, tokens y puente a Figma
-├── 10_OPTIMIZACION_PERFORMANCE_SEO_Y_ACCESIBILIDAD.md # Fases 6-7: Rendimiento extremo CWV, a11y WCAG AAA y SEO Schema.org
-├── 11_INTEGRACION_STORYBOOK_Y_TESTSPRITE_QA.md       # Fases 3-7: Catálogo Storybook aislado, a11y Axe y QA Autónomo con TestSprite MCP
-└── AGENT_CODING_SPEC.md                              # 🤖 Especificación Ejecutiva Canónica para Agentes de IA (Stack, Rutas, DTOs y Guardarraíles)
-```
-
----
-
-## 🔄 4. Ciclo de Diseño y Desarrollo Web Profesional
-
-El proyecto adopta el proceso estándar de la industria estructurado en **7 Fases Principales** y **10 Pasos Operativos**:
-
-```mermaid
-flowchart LR
-    F1["Fase 1<br/>Relevamiento & Estrategia"] --> F2["Fase 2<br/>Arquitectura & Wireframes"]
-    F2 --> F3["Fase 3<br/>Diseño Visual (UI)"]
-    F3 --> F4["Fase 4<br/>Desarrollo Front-end"]
-    F4 --> F5["Fase 5<br/>Back-end & Integraciones"]
-    F5 --> F6["Fase 6<br/>Pruebas & QA"]
-    F6 --> F7["Fase 7<br/>Lanzamiento & Monitoreo"]
-```
-
-### Equivalencia Metodológica (Resumen de Fases):
-
-* **Fase 1: Relevamiento y Estrategia (Pasos 1 a 4):** Brief, público objetivo, dominio y arquitectura SPA en [`01_ESTRATEGIA_Y_RELEVAMIENTO.md (§2)](./01_ESTRATEGIA_Y_RELEVAMIENTO.md#2-los-10-pasos-para-crear-la-plataforma-web-de-vetconnect) y [`02_INVESTIGACION_DCU_Y_DESIGN_THINKING.md`](./02_INVESTIGACION_DCU_Y_DESIGN_THINKING.md).
-* **Fase 2: Arquitectura de Información & Wireframes (Paso 5):** Requerimientos, mapa del sitio y wireframes interactivos en [`03_REQUERIMIENTOS_Y_PMV.md`](./03_REQUERIMIENTOS_Y_PMV.md), [`04_ARQUITECTURA_DE_INFORMACION_Y_NAVEGACION.md`](./04_ARQUITECTURA_DE_INFORMACION_Y_NAVEGACION.md) y [`05_WIREFRAMING_Y_PROTOTIPADO_BAJA_FIDELIDAD.md`](./05_WIREFRAMING_Y_PROTOTIPADO_BAJA_FIDELIDAD.md).
-* **Fase 3: Diseño Visual UI (Paso 6):** Tokens Tailwind, UI Kit, catálogo Storybook y puente a Figma en [`06_SISTEMA_DE_DISENO_UI_KIT.md`](./06_SISTEMA_DE_DISENO_UI_KIT.md) y [`09_PLANIFICACION_UI_ALTA_FIDELIDAD_CODE_FIRST.md`](./09_PLANIFICACION_UI_ALTA_FIDELIDAD_CODE_FIRST.md).
-* **Fases 4 y 5: Desarrollo Front-end & Back-end (Paso 7):** SPA React 18 + Vite, LiveKit, Socket.io y CDD con Storybook en [`08_DESARROLLO_INTEGRACIONES_Y_ROADMAP.md`](./08_DESARROLLO_INTEGRACIONES_Y_ROADMAP.md) y [`11_INTEGRACION_STORYBOOK_Y_TESTSPRITE_QA.md`](./11_INTEGRACION_STORYBOOK_Y_TESTSPRITE_QA.md).
-* **Fase 6: Pruebas, QA & Rendimiento (Pasos 8 y 9):** Heurísticas UX, accesibilidad WCAG AAA y TestSprite MCP en [`07_AUDITORIA_UX_USABILIDAD_Y_ACCESIBILIDAD.md`](./07_AUDITORIA_UX_USABILIDAD_Y_ACCESIBILIDAD.md) y [`10_OPTIMIZACION_PERFORMANCE_SEO_Y_ACCESIBILIDAD.md`](./10_OPTIMIZACION_PERFORMANCE_SEO_Y_ACCESIBILIDAD.md).
-* **Fase 7: Lanzamiento & Monitoreo (Paso 10):** Vercel/Coolify, SSL TLS 1.3, SEO y Sentry en [`08_DESARROLLO_INTEGRACIONES_Y_ROADMAP.md`](./08_DESARROLLO_INTEGRACIONES_Y_ROADMAP.md).
-
----
-
-## ⚡ 5. Cómo Utilizar esta Documentación
-
-- **Para Agentes de IA Autónomos (Google Jules, Antigravity, Claude Code):** Consultar en primera instancia [`docs/web/AGENT_CODING_SPEC.md`](./AGENT_CODING_SPEC.md) y [`docs/TECH_REFERENCE.md`](../TECH_REFERENCE.md) conforme al **ADR-025 (Jerarquía Inmutable de Verdad - SSOT)** antes de procesar wireframes descriptivos. Si existe cualquier disparidad entre un wireframe narrativo y el esquema Prisma o endpoints REST reales, los contratos de `TECH_REFERENCE.md` y `AGENT_CODING_SPEC.md` tienen precedencia absoluta al 100%.
-- **Para Diseñadores UI/UX:** Consultar `06_SISTEMA_DE_DISENO_UI_KIT.md`, `09_PLANIFICACION_UI_ALTA_FIDELIDAD_CODE_FIRST.md` y `11_INTEGRACION_STORYBOOK_Y_TESTSPRITE_QA.md` para explorar los componentes aislados en Storybook (`http://localhost:6006`), auditar estados de UI y sincronizar con Figma vía `html.to.design`.
-- **Para Desarrolladores Frontend:** Consultar `06_SISTEMA_DE_DISENO_UI_KIT.md`, `08_DESARROLLO_INTEGRACIONES_Y_ROADMAP.md`, `10_OPTIMIZACION_PERFORMANCE_SEO_Y_ACCESIBILIDAD.md` y `11_INTEGRACION_STORYBOOK_Y_TESTSPRITE_QA.md` para el desarrollo de componentes en Storybook, integración en pantallas de React 18, accesibilidad WCAG y ejecución de TestSprite.
-- **Para Auditores y Líderes de Proyecto:** Utilizar `07_AUDITORIA_UX_USABILIDAD_Y_ACCESIBILIDAD.md`, `10_OPTIMIZACION_PERFORMANCE_SEO_Y_ACCESIBILIDAD.md` y `11_INTEGRACION_STORYBOOK_Y_TESTSPRITE_QA.md` como lista de chequeo indispensable y matriz de escenarios E2E.
-
----
-*Planificación Web VetConnect 2026 — Grupo Pinnacle.*

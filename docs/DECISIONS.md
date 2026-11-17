@@ -1,353 +1,73 @@
-# 🏛️ Decisiones de Arquitectura (ADRs) — VetConnect
+# Registro de Decisiones de Arquitectura (ADRs) — Huellicam
 
-Este registro documenta las 32 decisiones arquitectónicas clave tomadas durante el diseño y evolución del sistema VetConnect (ADR-001 al ADR-032 — FAANG Architecture).
+Este registro consolida las 32 decisiones de diseño adoptadas durante la evolución de **Huellicam**, reflejando qué decisiones están activas en el código y cuáles delimitan evolución futura.
 
 ---
 
-## Índice de Decisiones (ADRs — ADR-001 al ADR-032)
+## Índice de Decisiones
 
-| ID | Título | Estado | Impacto |
+| ID | Decisión | Estado | Área |
 |---|---|---|---|
-| **ADR-001** | Monolito Modular vs Microservicios | Aprobado | Backend / Arquitectura |
-| **ADR-002** | Prisma ORM 6 vs TypeORM / Drizzle | Aprobado | Base de Datos |
-| **ADR-003** | PostgreSQL Cloud (Supabase) | Aprobado | Infraestructura |
-| **ADR-004** | Autenticación JWT con Rotación & `tokenVersion` | Aprobado | Seguridad / Auth |
-| **ADR-005** | Soft-Deletes & Anonimización Legal (Ley 25.326) | Aprobado | Legal / Compliance |
-| **ADR-006** | Singleton de PrismaClient con Connection Pooling | Aprobado | Performance |
-| **ADR-007** | Validación de Contratos con Zod | Aprobado | API Design |
-| **ADR-008** | Estrategia de Tipos TypeScript Monorepo | Aprobado | Tipado / Mantenibilidad |
-| **ADR-009** | Mensajería Tiempo Real con Socket.io & Redis Adapter | Aprobado | Realtime / Escalamiento |
-| **ADR-010** | Almacenamiento Resiliente Multi-Cloud (S3 + Fallback Local) | Aprobado | Media / Storage |
-| **ADR-011** | Notificaciones Push con Expo Push API & Bandeja In-App | Aprobado | Mobile / Push |
-| **ADR-012** | Teleconsulta con WebRTC / LiveKit SFU | Aprobado | Video / Media |
-| **ADR-013** | Sala de Espera Profesional para Veterinarios (SENASA) | Aprobado | Legal / Operaciones |
-| **ADR-014** | Registro Inmutable de Auditoría (`AuditLog`) | Aprobado | Seguridad / Auditoría |
-| **ADR-015** | TanStack React Query v5 para Caché y Sincronización Web | Aprobado | Frontend Web |
-| **ADR-016** | Conexión Mobile USB Directa con ADB Reverse para Redes Corporativas | Aprobado | DevOps / DX |
-| **ADR-017** | Despliegue Backend Autohosteado en Coolify (VPS) | Aprobado | Infraestructura / Cloud |
-| **ADR-018** | Estrategia Tripartita de Distribución Android (EAS Play Store, APK Web y Local Build) | Aprobado | Mobile / Release |
-| **ADR-019** | Denormalización Atómica de Calificaciones e Índices Compuestos | Aprobado | Base de Datos / Performance |
-| **ADR-020** | Streaming de Archivos Seguros y Mitigación de DoS de Heap | Aprobado | Seguridad / Storage |
-| **ADR-021** | Hardening de Contenedores y Pipeline de Integración Continua FAANG | Aprobado | DevOps / Seguridad |
-| **ADR-022** | Plataforma Definitiva de Despliegue Web (Vercel Edge vs Hostinger Contingencia) | Aprobado | Infraestructura / Web |
-| **ADR-023** | Escala Unificada de Calificación Profesional (1 a 5 Estrellas) | Aprobado | UX / Base de Datos |
-| **ADR-024** | Máquina de Estados Finita (FSM) en Consultas, Timeout de Triage (15 min) y Ventana de Reconexión WebRTC (3 min) | Aprobado | Backend / FSM |
-| **ADR-025** | Jerarquía Inmutable de Verdad (SSOT) y Neutralización del Split-Brain Documental | Aprobado | Gobernanza / AI-First |
-| **ADR-026** | Adopción Segura de Capacidades Clínicas y Señalización WebRTC (GlobalCallListener, Ficha Médica y Verificación SENASA) | Aprobado | Frontend / Telemedicina |
-| **ADR-027** | Blindaje Regulatorio Integral, Marco Legal (Leyes 25.326, 24.240 y 14.072), Gestión de Cookies e Inclusión Accesible WCAG 2.1 AA | Aprobado | Legal / Compliance |
-| **ADR-028** | Triage Clínico Asistido por IA (AI-First Intake) y Desacoplamiento de la Prioridad del Tutor | Aprobado | Clínico / AI-First / UX |
-| **ADR-029** | Desacoplamiento entre Ficha Declarativa de Mascota (Editable por Tutor) y Expediente Clínico Inmutable (Auditoría Médica) | Aprobado | Clínico / Paciente / Legal |
-| **ADR-030** | Sanitización de Metadatos de Sistema en Notas Clínicas y Reorganización Responsiva de Acciones en Tarjetas de Paciente | Aprobado | UX / Frontend / Clínico |
-| **ADR-031** | Resolución de Singleton de React y Metro Resolver Pinning en Monorepo Expo SDK 54 | Aprobado | Mobile / Bundler / Arquitectura |
-| **ADR-032** | Arquitectura de Pagos Marca Blanca con Adapter Pattern y Plan B PagoFlex | Aprobado | Negocio / Monetización / Arquitectura |
+| **ADR-001** | Monolito modular frente a microservicios | Implementado | Backend |
+| **ADR-002** | Prisma ORM 6 sobre PostgreSQL 16 | Implementado | Base de datos |
+| **ADR-003** | PostgreSQL administrado (Supabase) / Docker local | Implementado | Infraestructura |
+| **ADR-004** | Autenticación JWT dual (Web cookie `HttpOnly` / Mobile `SecureStore`) + `tokenVersion` | Implementado | Seguridad / Auth |
+| **ADR-005** | Soft-deletes y preservación de historial clínico (Ley 25.326) | Implementado | Compliance |
+| **ADR-006** | Singleton `PrismaClient` con pool controlado | Implementado | Performance |
+| **ADR-007** | Validación estricta de contratos REST con Zod | Implementado | API |
+| **ADR-008** | Monorepo de 3 workspaces sin paquete `packages/shared` compilado | Implementado | Arquitectura |
+| **ADR-009** | Tiempo real con Socket.io y Redis Adapter opcional | Implementado | Realtime |
+| **ADR-010** | Almacenamiento desacoplado (S3 / fallback local) sin serving estático | Implementado | Storage / Seguridad |
+| **ADR-011** | Notificaciones Push con Expo Push API y bandeja in-app | Implementado | Notificaciones |
+| **ADR-012** | Teleconsulta WebRTC con LiveKit SFU (perfil 720p, cero PII en tokens) | Implementado | Video / WebRTC |
+| **ADR-013** | Sala de espera profesional (`PENDING -> APPROVED/REJECTED`) | Implementado | Compliance / Ops |
+| **ADR-014** | Registro de auditoría administrativa (`AuditLog`) | Implementado | Auditoría |
+| **ADR-015** | TanStack React Query v5 para sincronización y caché en Web | Implementado | Frontend Web |
+| **ADR-016** | Flujo de desarrollo móvil por USB con `adb reverse` | Implementado | DX Mobile |
+| **ADR-017** | Despliegue backend autocontenido (Docker / Coolify VPS) | Adoptado | Infraestructura |
+| **ADR-018** | Estrategia tripartita Android (EAS AAB, APK directo y build local) | Adoptado | Mobile Release |
+| **ADR-019** | Denormalización atómica de calificaciones e índices compuestos | Implementado | Base de datos |
+| **ADR-020** | Streaming temporal a disco e inspección binaria por *Magic Bytes* | Implementado | Seguridad Media |
+| **ADR-021** | Pipeline CI en GitHub Actions y endurecimiento de ejecución | Implementado | CI / DevOps |
+| **ADR-022** | Vercel como plataforma principal para Web SPA | Adoptado | Infraestructura Web |
+| **ADR-023** | Escala unificada de calificación profesional (1 a 5 estrellas) | Implementado | Producto / Datos |
+| **ADR-024** | FSM de consultas, timeouts deterministas y auditoría de concurrencia | Implementado | Backend / FSM |
+| **ADR-025** | Precedencia del código fuente y esquema Prisma como fuente de verdad | Vigente | Gobernanza |
+| **ADR-026** | Alertas Web Audio (`GlobalCallListener`), dossier imprimible y verificación QR pública | Implementado | Web / Telemedicina |
+| **ADR-027** | Blindaje regulatorio (Leyes 25.326, 24.240, 14.072), cookies y WCAG 2.1 AA | Implementado | Legal / UX |
+| **ADR-028** | Motor determinista de triaje clínico y desacoplamiento del selector de prioridad | Implementado | Backend / Clínica |
+| **ADR-029** | Separación entre ficha declarativa de mascota y expediente clínico inmutable | Implementado | Clínica / Legal |
+| **ADR-030** | Sanitización de tags internos en notas clínicas y layout responsivo de tarjetas | Implementado | UX Web |
+| **ADR-031** | Resolución singleton de React 19/18 en Metro para el monorepo Expo SDK 54 | Implementado | Mobile / Bundler |
+| **ADR-032** | Diseño de pagos marca blanca (`IPaymentGateway`) + Plan B PagoFlex | Config. base / Roadmap | Negocio / Pagos |
 
 ---
 
-## Detalle de Decisiones
+## Detalle de Decisiones Clave
 
-### ADR-001: Monolito Modular vs Microservicios
-- **Contexto:** Se requería definir el estilo arquitectónico del backend para soportar rápida iteración sin sacrificar orden ni modularidad.
-- **Decisión:** Monolito modular basado en Domain-Driven Design (`modules/auth`, `modules/users`, `modules/pets`, `modules/consultations`, `modules/calls`, `modules/media`, `modules/notifications`).
-- **Consecuencias:** Despliegue simple en un solo contenedor, latencia interna cero entre módulos y separación limpia de responsabilidades.
+### ADR-001 a ADR-008: Fundamentos de Backend, Datos y Monorepo
+- **Monolito modular (`ADR-001`):** Módulos encapsulados por dominio (`auth`, `users`, `pets`, `consultations`, `prescriptions`, `calls`, `media`, `notifications`, `admin`) para evitar complejidad de red y facilitar despliegue único.
+- **Prisma 6 + PostgreSQL (`ADR-002`, `ADR-003`, `ADR-006`):** Mapeo explícito `@map` a `snake_case`, instancia singleton en `backend/src/lib/prisma.ts` y migraciones versionadas en `backend/prisma/migrations/`.
+- **Auth dual y revocación (`ADR-004`):** Cookies `HttpOnly` para navegadores web, `expo-secure-store` (con header `X-Client-Platform: mobile`) para móvil y campo `User.tokenVersion` para invalidar sesiones al instante sin listas negras distribuidas.
+- **Contratos Zod y ausencia de `packages/shared` (`ADR-007`, `ADR-008`):** Validación declarativa en backend y sincronización limpia de tipos en `web/` y `mobile/` para evitar transpilaciones intermedias entre Vite y Metro.
 
-### ADR-002: Prisma ORM 6 vs TypeORM / Drizzle
-- **Contexto:** Se requería un ORM moderno para Node.js y TypeScript que garantizara tipado de datos estricto de extremo a extremo, soporte nativo de migraciones reproducibles y mapeo transparente a PostgreSQL.
-- **Decisión:** Adoptar **Prisma ORM 6**. Su cliente autogenerado a partir de `schema.prisma` garantiza type-safety absoluto en consultas relacionales complejas, con generación estricta de DTOs y mapeos explícitos a `snake_case` mediante directivas `@map`.
-- **Consecuencias:** Cero discrepancias de tipos en tiempo de compilación entre TypeScript y PostgreSQL, migraciones reproducibles en CI/CD con `prisma migrate`, y eliminación de modelos fragmentados con decoradores propensos a errores en tiempo de ejecución.
+### ADR-009 a ADR-014: Tiempo Real, Storage, Video y Auditoría
+- **Socket.io + Redis opcional (`ADR-009`):** Multiplexación por sala (`consultation:{id}`, `user:{id}`, `device:{id}`, `role:vets`), deduplicación de chat por `clientMsgId` y fallback automático a `InMemoryAdapter` cuando no hay Redis local.
+- **Storage protegido (`ADR-010`, `ADR-020`):** Subida temporal a disco (prevención OOM), validación de los primeros bytes (*Magic Bytes* JPEG/PNG/PDF), tope de 10 MB/archivo y 50 MB/día por usuario (`DailyUploadCounter`), sin `express.static` público; descarga exclusiva por `GET /api/media/:id`.
+- **LiveKit SFU y cero PII (`ADR-012`):** Tokens efímeros generados en backend con identificador opaco y nombre de pila; cierre de sala automático al finalizar/cancelar la consulta.
+- **Gobernanza sanitaria y auditoría (`ADR-005`, `ADR-013`, `ADR-014`):** Validación manual de veterinarios (`PENDING -> APPROVED/REJECTED`), preservación de historiales clínicos ante bajas (`deletedAt`) y trazabilidad en `AuditLog`.
 
-### ADR-003: PostgreSQL Cloud (Supabase) vs Local/RDS
-- **Contexto:** Se evaluó si alojar la base de datos de producción en AWS RDS, en contenedores autohospedados en el VPS o en un servicio administrado especializado en PostgreSQL.
-- **Decisión:** Utilizar **Supabase Managed PostgreSQL** como proveedor de persistencia relacional principal, aprovechando su capa gratuita generosa (500 MB), backups automáticos diarios, pooling de conexiones integrado (PgBouncer) y métricas de rendimiento en tiempo real.
-- **Consecuencias:** Ahorro total de costos fijos de base de datos en fase MVP ($0 USD), delegación de la seguridad y copias de seguridad a una infraestructura cloud resiliente, con plan de contingencia de fallback a PostgreSQL local en Docker dentro del VPS Coolify (ADR-017).
+### ADR-015 a ADR-023: Clientes, Infraestructura y Calidad
+- **Web SPA (`ADR-015`, `ADR-022`):** React 18.3.1 LTS (fijado por compatibilidad con LiveKit Components), Vite 6, TanStack Query v5 y despliegue en Vercel (`vercel.json` en raíz).
+- **Mobile Pragmático sobre WebView (`ADR-016`, `ADR-018`, `ADR-031`):** La aplicación móvil utiliza Expo SDK 54 / Expo Router y **delega las videoconsultas WebRTC al WebView embebido de la Web SPA** (`mobile/app/(app)/call/[consultationId].tsx`), inyectando sesión antes de carga (`buildAuthSeedScript`) y sincronizando eventos vía `postMessage`. Esta arquitectura pragmática se mantiene vigente hasta planificar una eventual migración al SDK nativo de LiveKit. En desarrollo local, `metro.config.js` fija el singleton de React 19.1.0 para evitar colisión con React 18.3.1 del root.
 
-### ADR-004: Autenticación JWT con Rotación & `tokenVersion` (Estrategia Dual Web/Mobile)
-- **Contexto:** Si un token JWT es emitido y luego el usuario cambia su contraseña o es dado de baja, los tokens tradicionales permanecen válidos hasta su expiración. Adicionalmente, Web SPA y Mobile App tienen mecanismos de almacenamiento de credenciales radicalmente distintos: los navegadores soportan cookies `HttpOnly` como protección nativa contra XSS, mientras que React Native no gestiona cookies automáticamente sin una biblioteca de cookie-jar compleja.
-- **Decisión:** Implementar dos sub-estrategias complementarias bajo un único contrato de autenticación:
-  1. **Web SPA:** El Refresh Token se transmite exclusivamente en una cookie `HttpOnly` (`sameSite: isProduction ? 'none' : 'lax'`, `secure: isProduction`). En producción cross-domain (Vercel `app.vetconnect.com.ar` → VPS `api.vetconnect.com.ar`) se exige `SameSite=None; Secure` para permitir cookies en subdominios distintos bajo HTTPS. En desarrollo local usa `SameSite=Lax` (sin `Secure`). El backend detecta el entorno vía `NODE_ENV === 'production'` y soporte de override por variable `COOKIE_SAME_SITE`.
-  2. **Mobile App (React Native / Expo):** Cuando la petición incluye el header `X-Client-Platform: mobile`, el backend retorna el Refresh Token (TTL 7 días) **también** en el JSON body (`{ accessToken, refreshToken, user }`). La app lo almacena cifrado en el hardware secure enclave del dispositivo mediante `expo-secure-store`. El endpoint `/api/auth/refresh` en mobile lee el `refreshToken` desde el payload `{ refreshToken }` en lugar de la cookie.
-  3. **Campo `tokenVersion`:** Implementado en el modelo `User`. Cada cambio de credenciales, logout global o baneo incrementa este contador. El middleware valida el payload JWT contra la versión activa en base de datos, garantizando revocación instantánea en ambas plataformas.
-- **Consecuencias:** Revocación instantánea de sesiones sin listas negras de tokens; compatibilidad nativa con el modelo de almacenamiento seguro de iOS/Android; protección XSS preservada en la Web SPA sin requerir configuración adicional de cookie-jar en React Native.
+### ADR-024 a ADR-030: Máquina de Estados, Triaje y Regulación
+- **FSM y Concurrencia (`ADR-024`):** Flujo principal de 4 estados (`WAITING`, `ACTIVE`, `COMPLETED`, `CANCELLED`), timeout de cola a los 15 minutos, ventana de gracia de 3 minutos por desconexión, bloqueo de fila en reclamo y auditoría de transición en `ConsultationAuditLog`.
+- **Fuentes de verdad (`ADR-025`):** El código real y `backend/prisma/schema.prisma` prevalecen sobre cualquier documentación descriptiva.
+- **Triaje Determinista (`ADR-028`):** El tutor completa un intake estructurado de síntomas y duración (`ClinicalIntakeForm`) sin elegir colores de urgencia. El motor `clinicalTriage.engine.ts` calcula la severidad (`ROJO`/`AMARILLO`/`VERDE`), índice `1..10` y banderas rojas de forma determinista y auditable.
+- **Ficha vs. Expediente y Sanitización (`ADR-029`, `ADR-030`):** Separación legal entre datos declarativos de mascota (editables por tutor) y evolución/recetas médicas (inmutables). En UI, `parseConsultationNotes` limpia etiquetas técnicas de sistema antes de mostrar notas al tutor.
+- **Compliance Legal (`ADR-027`):** Páginas dedicadas (`/privacy`, `/terms`, `/cookies`, `/refunds`), consentimiento de términos en registro y banner accesible de cookies.
 
-
-### ADR-005: Soft-Deletes & Anonimización Legal (Ley 25.326)
-- **Contexto:** La normativa sanitaria veterinaria y la Ley de Protección de Datos Personales prohíben la destrucción de registros médicos de pacientes, pero exigen el derecho al olvido para los usuarios.
-- **Decisión:** Cuando un usuario solicita la baja, se ejecuta una anonimización de sus datos de contacto (email, teléfono, nombre), marcando `deletedAt = now()`. El historial clínico y las consultas de sus mascotas persisten inalterables vinculadas al ID anonimizado.
-- **Consecuencias:** Cumplimiento legal pleno ante inspecciones judiciales y del SENASA.
-
-### ADR-006: Singleton de PrismaClient con Connection Pooling
-- **Contexto:** En desarrollo con recarga en caliente (Hot Reload / `tsx watch`) y en entornos serverless o de múltiples workers, instanciar repetidamente `new PrismaClient()` satura rápidamente el pool de conexiones de PostgreSQL, arrojando errores críticos de `FATAL: too many connections`.
-- **Decisión:** Implementar un patrón **Singleton estricto** en `src/lib/prisma.ts` que almacena la instancia de `PrismaClient` en el objeto global de Node.js (`globalThis.prisma`) durante el modo desarrollo, y reutiliza una única conexión en producción.
-- **Consecuencias:** Consumo predecible de conexiones al pool de base de datos (límite fijo de 10 conexiones en pool local), prevención total de fugas de descriptores de sockets y arranque limpio de pruebas sin advertencias de colisión de clientes.
-
-### ADR-007: Validación de Contratos con Zod
-- **Contexto:** Toda entrada de datos a la API REST (`req.body`, `req.query`, `req.params`) debe ser rigurosamente sanitizada para evitar inyecciones maliciosas, errores por tipos inesperados y fallos en cascada en la capa de servicios.
-- **Decisión:** Estandarizar **Zod** como la librería exclusiva de validación de esquemas y contratos para todo el backend. Todo endpoint REST cuenta con un middleware Zod (`validateBody`, `validateQuery`) que valida y tipa estáticamente la carga útil antes de invocar los controladores.
-- **Consecuencias:** Validación declarativa con mensajes de error descriptivos estandarizados en formato RFC 7807, inferencia estática automática de tipos TypeScript con `z.infer<typeof schema>` (eliminando la necesidad de duplicar interfaces manuales) y prevención total de campos extraños o contaminantes (`strict()` mode).
-
-### ADR-008: Estrategia de Tipos TypeScript Monorepo & Exclusión de packages/shared
-- **Contexto:** En la planificación de la arquitectura monorepo se evaluó la conveniencia de crear un paquete compartido (`packages/shared`) para tipos, DTOs y validadores Zod, o mantener los workspaces completamente desacoplados.
-- **Decisión:** Mantener una estructura limpia de tres workspaces principales (`backend`, `web`, `mobile`) descartando formalmente la creación de `packages/shared`. Los contratos y validaciones se definen como la única fuente de verdad en esquemas Zod y TypeScript dentro del Backend (`backend/src/contracts/` y DTOs modulares), y se consumen/duplican limpiamente en Web y Mobile mediante interfaces sincronizadas sin requerir pipelines de compilación intermedia complejos (Turborepo/Nx no requeridos), ni scripts de transpilación previa.
-- **Consecuencias:** Máxima velocidad de compilación e inicialización en desarrollo local, cero fricción de tooling en CI/CD, e independencia absoluta para compilar, probar y desplegar `backend`, `web` y `mobile` de forma aislada.
-
-### ADR-009: Mensajería Tiempo Real con Socket.io & Redis Adapter
-- **Contexto:** Necesidad de chat en vivo y notificaciones globales con capacidad de escalar a múltiples nodos backend.
-- **Decisión:** Integrar Socket.io acoplado con `@socket.io/redis-adapter` en clúster Redis.
-- **Consecuencias:** Comunicación bidireccional instantánea con broadcast sincronizado entre todas las instancias del servidor.
-
-### ADR-010: Almacenamiento Resiliente Multi-Cloud (S3 + Fallback Local) & Acceso Autenticado a Archivos Clínicos
-- **Contexto:** Los archivos clínicos (estudios de laboratorio, recetas, imágenes de chat y avatares) deben guardarse de forma duradera, pero no pueden exponerse públicamente como archivos estáticos sin autenticación. Un atacante que conozca o adivine una URL podría acceder a documentación médica sensible de pacientes (Ley 25.326, Art. 9).
-- **Decisión:**
-  1. **Almacenamiento:** Implementar un adaptador desacoplado con **Amazon S3** como almacenamiento primario y **Fallback Local Automático** hacia `/app/uploads/` en Docker (Coolify VPS).
-  2. **Prohibición de Serving Estático Público:** El directorio `/uploads` NO debe ser expuesto como carpeta estática de Express ni accesible directamente por URL. Todo acceso a archivos médicos debe realizarse a través del endpoint protegido `GET /api/media/:id`.
-  3. **Endpoint de Descarga Autenticado (`GET /api/media/:id`):** El backend verifica que el solicitante sea el dueño de la mascota, el veterinario asignado a la consulta vinculada o un ADMIN. Si no cumple, responde `403 Forbidden`. En producción S3, emite una Presigned URL con TTL de 5 minutos para streaming directo sin pasar por el backend.
-- **Consecuencias:** Cumplimiento de Ley 25.326 de protección de datos médicos; resiliencia operativa 100% ante fallas de S3; superficie de ataque reducida al cero archivos accesibles públicamente.
-
-
-### ADR-011: Notificaciones Push con Expo Push API & Bandeja In-App
-- **Contexto:** Los tutores y veterinarios requieren enterarse de llamadas entrantes, mensajes de chat y recetas sin mantener la aplicación permanentemente en primer plano, sin incurrir en costos de servicios de terceros como OneSignal.
-- **Decisión:** Implementar el servicio oficial de Expo Push API en el backend (`modules/notifications/`), persistiendo los tokens de dispositivo (`ExponentPushToken[...]`) en la base de datos, complementado con una bandeja de notificaciones persistidas in-app.
-- **Consecuencias:** Notificaciones en tiempo real en Android/iOS a costo $0, con historial recuperable en la bandeja de la app ante pérdidas de conectividad.
-
-### ADR-012: Teleconsulta con WebRTC / LiveKit SFU (Perfil Liviano 720p Adaptativo & Multicanal Sincrónico)
-- **Contexto:** Se requería soporte de videollamadas de alta fidelidad entre el panel Web de veterinarios y la aplicación móvil de tutores. En dispositivos móviles de gama baja y redes 4G/5G con fluctuaciones de señal, una implementación WebRTC P2P tradicional sufre de congelamientos, desincronización de audio y sobrecalentamiento por falta de adaptación dinámica de bitrate. Adicionalmente, el examen clínico veterinario exige que ambos participantes puedan comunicarse por voz y video mientras simultáneamente intercambian mensajes de chat y macro-fotografías en alta resolución (para lesiones dermatológicas, mucosas gingivales o vómitos) sin pausar ni degradar la llamada.
-- **Decisión:**
-  1. **LiveKit Cloud / SFU con Perfil Adaptativo Liviano:** Adoptar LiveKit SFU configurado en resolución balanceada **720p a 24-30 fps** (bitrate máximo 1.2 Mbps, códec acelerado por hardware H.264/VP8), con adaptación automática de bitrate (Simulcast dinámico) que prioriza la continuidad del audio ante caídas de señal 4G.
-  2. **Conmutación Obligatoria de Cámara (Frontal / Trasera):** La interfaz móvil debe incluir control directo de conmutación a la cámara trasera (`facingMode: 'environment'`) con autoenfoque activo para que el tutor examine a la mascota cómodamente sin posturas forzadas.
-  3. **Multicanal Sincrónico (Video + Chat + Captura de Imágenes en Paralelo):**
-     - **Web (Veterinario):** Layout de pantalla dividida con área de video central y panel lateral acoplado de chat/archivos con visor lightbox para zoom 100%.
-     - **Mobile (Tutor):** Modo Picture-in-Picture / Bottom Sheet deslizante que permite chatear o capturar y adjuntar fotografías mediante `POST /api/media` sin suspender la transmisión de video ni el audio de la llamada.
-  4. **Cero PII en Tokens:** Tokens generados exclusivamente con `identity: user.id` y `name: user.firstName`.
-- **Consecuencias:** Rendimiento fluido garantizado en celulares de gama baja (Android Go / 2-3 GB RAM) sin sobrecalentamiento de CPU; examen clínico visual de alta precisión gracias al soporte de fotos macro de alta resolución; y eliminación de caídas de llamada por degradación de red móvil.
-
-### ADR-013: Sala de Espera Profesional para Veterinarios
-- **Contexto:** Prevenir el ejercicio ilegal de la profesión veterinaria en la plataforma.
-- **Decisión:** Nuevas cuentas con rol `VET` inician en estado `PENDING`. El acceso a la sala de atención y chat queda inhabilitado hasta que un Administrador valida la matrícula profesional y activa la cuenta a `APPROVED`.
-- **Consecuencias:** Garantía de calidad médica y blindaje legal para la empresa.
-
-### ADR-014: Registro Inmutable de Auditoría (`AuditLog`)
-- **Contexto:** Trazabilidad estricta de acciones sensibles (aprobación de médicos, reseteo de usuarios, modificaciones de roles, bajas).
-- **Decisión:** Crear tabla `AuditLog` no modificable donde se almacenan todas las mutaciones administrativas con IP y UserAgent.
-- **Consecuencias:** Capacidad de auditoría forense en tiempo real.
-
-### ADR-015: TanStack React Query v5 para Caché y Sincronización Web
-- **Contexto:** La interfaz web de veterinarios y administradores requiere consultar continuamente el estado de consultas, mensajes y pacientes, evitando llamadas REST redundantes y gestionando estados asíncronos complejos (carga, error, reconexión, datos obsoletos).
-- **Decisión:** Adoptar **TanStack React Query v5** como la capa estándar de gestión de estado del servidor en la aplicación Web SPA (React 18.3.1 LTS). El provider global (`QueryClientProvider`) se inicializa en `web/src/App.tsx`, y la migración desde `useEffect` hacia hooks declarativos (`useQuery`/`useMutation`) se ejecuta de manera progresiva durante la elevación de componentes en Storybook.
-- **Consecuencias:** Caché inteligente en memoria con deduplicación de peticiones en vuelo, invalidación reactiva de queries ante eventos Socket.io (`queryClient.invalidateQueries({ queryKey: ['consultations'] })`), actualizaciones optimistas en la UI y sincronización automática en segundo plano al recuperar el foco de la ventana.
-
-### ADR-016: Conexión Mobile USB Directa con ADB Reverse para Redes Corporativas
-- **Contexto:** En oficinas, hospitales veterinarios o redes Wi-Fi corporativas con aislamiento de clientes (Client Isolation) o firewalls estrictos, los celulares no pueden comunicarse vía Wi-Fi local con la máquina de desarrollo en el puerto 3001, bloqueando el testing con Expo Go.
-- **Decisión:** Implementar un flujo de desarrollo mobile por cable USB directo utilizando **ADB Reverse** (`adb reverse tcp:3001 tcp:3001`), automatizado en el script `start.ps1` y accesible en terminal mediante comandos multiplataforma.
-- **Consecuencias:** Tráfico de red ruteado 100% por cable USB con latencia cero, independencia total de la red Wi-Fi o proxies corporativos, y recarga en caliente de Expo instantánea y reproducible.
-
-### ADR-017: Despliegue Backend Autohosteado en Coolify (VPS)
-- **Contexto:** Minimizar costos recurrentes en dólares sin perder las comodidades de una plataforma moderna (CI/CD, certificados SSL automáticos, gestión de variables de entorno y servicios auxiliares).
-- **Decisión:** Desplegar el Backend Node.js y la instancia de Redis sobre un servidor VPS propio utilizando **Coolify**, y el Frontend Web SPA sobre **Vercel** (o Hosting Web estático de **Hostinger**).
-- **Consecuencias:** Costo predecible y bajo (servidor VPS fijo de $8 – $12 USD/mes), control total sobre la infraestructura de WebSockets persistentes (Traefik) y CDN global para la Web.
-
-### ADR-018: Estrategia Tripartita de Distribución Android (EAS Play Store, APK Web y Local Build)
-- **Contexto:** Se requería una estrategia de despliegue móvil que permitiera validar rápidamente el MVP con clínicas beta sin quedar bloqueados por los tiempos de revisión de Google Play Store (que pueden demorar días o semanas), pero manteniendo la vía formal para producción.
-- **Decisión:** Establecer una **estrategia tripartita de empaquetado y distribución**:
-  1. *Camino 1 (Producción Oficial):* Compilación en la nube con EAS Build en formato Android App Bundle (`.aab`) firmado para Google Play Store.
-  2. *Camino 2 (Beta Privada Inmediata):* Compilación directa de instalable APK (`.apk`) distribuido desde la web oficial de VetConnect para instalación directa (sideloading) por clínicas aliadas.
-  3. *Camino 3 (Desarrollo Local Offline):* Compilación de APK en la máquina local mediante `npx expo prebuild` y Gradle sin consumir créditos de EAS Cloud.
-- **Consecuencias:** Cero fricción para pruebas piloto con usuarios reales desde el Sprint 6, independencia frente a políticas de tiendas para betas y preparación formal para la publicación final en Google Play Store en el Sprint 10.
-
-### ADR-019: Denormalización Atómica de Calificaciones e Índices Compuestos
-- **Contexto:** El listado de veterinarios realizaba agregaciones N+1 y filtros de calificación en memoria después del `take`/`skip`, causando discrepancias en la paginación e impidiendo consultas eficientes bajo alta concurrencia.
-- **Decisión:** Agregar columnas indexadas `rating_avg` y `rating_count` en la tabla `users`, recalculadas atómicamente en una transacción Prisma al registrar cada `Review`. Indexar compuestos en `(clientId, status, deletedAt)`, `(vetId, status, deletedAt)`, `(role, isOnline, vetStatus, deletedAt)` y `(ownerId, deletedAt)`.
-- **Consecuencias:** Paginación y ordenamiento delegado 100% al motor PostgreSQL con tiempo de respuesta constante O(log N) e invalidación reactiva de caché Redis.
-
-### ADR-020: Streaming de Archivos Seguros y Mitigación de DoS de Heap
-- **Contexto:** Multer almacenaba archivos en memoria RAM (`memoryStorage`), permitiendo ataques de denegación de servicio (DoS por OOM) con archivos grandes y abriendo riesgo de MIME spoofing.
-- **Decisión:** Reemplazar `memoryStorage` por `diskStorage` temporal en `/app/uploads/tmp/`, validación estricta de los primeros 32 bytes (magic bytes para firmas JPEG, PNG, WEBP), streaming directo hacia almacenamiento local o AWS S3, y eliminación inmediata de temporales tras completar la subida.
-- **Consecuencias:** Consumo de memoria RAM plano e inmune al tamaño de los archivos, con validación de seguridad a nivel de bits.
-
-### ADR-021: Hardening de Contenedores y Pipeline de Integración Continua FAANG
-- **Contexto:** Los contenedores Docker ejecutaban Node.js como superusuario `root`, y no existía un pipeline de integración continua que garantizara que los tres paquetes del monorepo (`backend`, `web`, `mobile`) compilen y pasen pruebas antes del despliegue.
-- **Decisión:** Modificar el `Dockerfile` de producción para operar bajo el usuario sin privilegios `USER node` en el puerto estándar 3001, e incorporar GitHub Actions (`.github/workflows/ci.yml`) ejecutando typechecking estricto, suites unitarias e integración en cada push/PR.
-- **Consecuencias:** Reducción drástica de superficie de ataque en el servidor y garantía empírica de 0 regresiones en despliegues.
-
-### ADR-022: Plataforma Definitiva de Despliegue Web (Vercel Edge vs Hostinger Contingencia)
-- **Contexto:** Se requería definir sin ambigüedades la plataforma de hosting para el Frontend Web SPA (React 18.3.1 LTS + Vite) y la integración continua en CI/CD.
-- **Decisión:** Adoptar **Vercel** como la plataforma oficial, definitiva y automatizada para producción conectada a GitHub Actions. Se descarta cualquier flujo de despliegue automatizado hacia Hostinger; este último queda documentado exclusivamente como **alternativa de contingencia manual** (subida de artefactos estáticos `web/dist/` a `public_html/` ante indisponibilidad severa de Vercel).
-- **Consecuencias:** Despliegues atómicos automáticos con preview URLs en cada PR, CDN global Edge de latencia ultra-baja y SSL automático, manteniendo una contingencia manual documentada para emergencias operativas.
-
-### ADR-023: Escala Unificada de Calificación Profesional (1 a 5 Estrellas)
-- **Contexto:** Existía necesidad de armonizar la escala de valoración médica del servicio entre la aplicación móvil de tutores, el panel de veterinarios y el recálculo analítico en base de datos.
-- **Decisión:** Estandarizar de forma estricta y universal la escala de **1 a 5 estrellas** (enteros del 1 al 5) en base de datos (`Review.rating`), endpoints REST (`POST /api/consultations/:id/review`), esquemas Zod, UI Kit web, app móvil React Native y recálculo atómico denormalizado (`rating_avg` y `rating_count` en la tabla `users`, conforme a ADR-019). Queda formalmente descartada cualquier escala alternativa (ej. 1 a 10).
-- **Consecuencias:** Coherencia de UX/UI alineada con los estándares de la industria y la intuición de usuarios, simplificación de validaciones en frontend y backend, y alineación directa con los KPIs de satisfacción del proyecto (CSAT).
-
----
-
-
-### ADR-024: Máquina de Estados Finita de Consultas (FSM de 4 Estados, Auto-Asignación FIFO y Gestión Determinista de Timeouts)
-- **Contexto:** En el análisis preliminar se evaluó un flujo de 5 estados con oferta intermedia (`WAITING -> PENDING -> ACTIVE`). Dicho flujo exigía temporizadores distribuidos en Redis para expiración de ofertas, gestión de reintentos ante rechazos de profesionales y sincronización compleja de eventos Socket.io propensa a condiciones de carrera. Adicionalmente, el diseño original no documentaba el comportamiento ante dos casos borde críticos: (a) ausencia total de veterinarios online en el momento del triage y (b) desconexión abrupta del veterinario durante una consulta activa.
-- **Decisión:**
-  1. **FSM de 4 estados** en PostgreSQL (`ConsultationStatus`: `WAITING`, `ACTIVE`, `COMPLETED`, `CANCELLED`).
-  2. **Auto-asignación FIFO directa:** El algoritmo de triage en `WAITING` busca el primer veterinario disponible (`role = VET`, `vetStatus = APPROVED`, `isOnline = true`) y transiciona atómicamente a `ACTIVE`.
-  3. **Timeout de Triage (WAITING → CANCELLED):** Si al momento de ingresar a triage no hay veterinarios online, la consulta permanece en `WAITING`. Transcurridos **15 minutos** sin asignación, el servicio de triage transiciona automáticamente la consulta a `CANCELLED` con código de auditoría `TIMEOUT_NO_VET_AVAILABLE`, notificando al tutor vía Socket.io y Push Notification con sugerencia de reintento o contacto urgente.
-  4. **Ventana de Gracia por Desconexión (ACTIVE → CANCELLED o WAITING):** Si el veterinario pierde la conexión socket durante una consulta `ACTIVE`, se abre una ventana de gracia de **3 minutos** controlada por heartbeat y presencia Redis. Si reconecta dentro del intervalo, la sesión continúa sin interrupción. Si la ventana expira, la consulta transiciona a `CANCELLED` (`VET_DISCONNECTED_TIMEOUT`) con opción de reencolado prioritario en `WAITING` para el tutor.
-  5. **Cancelaciones voluntarias:** Antes o durante la atención, cualquier participante puede cancelar hacia `CANCELLED` (código `VOLUNTARY_CANCELLATION`).
-- **Consecuencias:** Eliminación total de condiciones de carrera por oferta simultánea en WebSockets; comportamiento predecible y auditado ante los 5 escenarios posibles de la FSM; auditoría inequívoca de tiempos de espera ($P_{50} < 3\text{ min}$, $P_{95} < 5\text{ min}$); y experiencia de usuario resiliente ante cortes de red transitorios sin pérdida de la consulta.
-
-### ADR-025: Jerarquía Inmutable de Verdad (Single Source of Truth - SSOT) y Neutralización del Split-Brain Documental
-- **Contexto:** Durante la evolución del proyecto, la coexistencia de documentación teórica de diseño (wireframes de baja y alta fidelidad en `docs/web/`) y la implementación de código real en TypeScript/Prisma generó divergencias sutiles ("Split-Brain"). Los agentes de IA, al encontrar especificaciones contradictorias (ej. campos inexistentes en formularios o enlaces a pantallas de recuperación de contraseña no contempladas en el MVP v2.0), experimentaban desalineación probabilística, inventando endpoints y campos no soportados.
-- **Decisión:** Institucionalizar formalmente una **Jerarquía Inmutable de Verdad** con 4 niveles de precedencia estricta:
-  1. `Prisma Schema + Código Backend (Express)` (Nivel 1 - Inmutable)
-  2. `docs/TECH_REFERENCE.md + docs/web/AGENT_CODING_SPEC.md` (Nivel 2 - Contratos Canónicos)
-  3. `docs/ARCHITECTURE.md + docs/FRONTEND_ARCHITECTURE.md + docs/DECISIONS.md` (Nivel 3 - Arquitectura)
-  4. `docs/web/00..11 + docs/SISTEMA_DE_DISENO.md` (Nivel 4 - Wireframes y Narrativa UX)
-  Ante cualquier contradicción, los niveles superiores invalidan y anulan automáticamente a los inferiores. Prohibición taxativa de crear o modificar código fuente basándose en requerimientos de Nivel 4 que no tengan respaldo en los Niveles 1 y 2.
-- **Consecuencias:** Neutralización definitiva de alucinaciones y bucles en agentes de IA autónomos (Jules, Cursor, Claude); desarrollo predecible de UI basado exclusivamente en APIs y contratos reales; y preservación del 100% de la suite de pruebas automatizadas sin regresiones.
-
-### ADR-026: Adopción Segura de Capacidades Clínicas y Señalización WebRTC (GlobalCallListener, Ficha Médica y Verificación SENASA)
-- **Contexto:** El análisis del repositorio paralelo `conectavet` reveló funcionalidades de alto valor percibido en telemedicina (alertas sonoras de videollamada entrante, expedientes clínicos imprimibles y validación pública de recetas con QR). No obstante, la implementación en dicho proyecto presentaba graves vicios de diseño: temporizadores de sondeo manuales (`setInterval(fetch, 10000)`), intento de enviar mensajes por REST HTTP en lugar de WebSockets, borrados masivos destructivos en base de datos y escalas divergentes de 1 a 10 estrellas.
-- **Decisión:**
-  1. **Adoptar exclusivamente el valor funcional y UX:** Incorporar el listener global de videollamadas (`GlobalCallListener`) utilizando un sintetizador matemático nativo Web Audio (`AudioContext` con acordes sinusoidales de 440 Hz / 554.37 Hz, sin archivos `.mp3`), escuchando el evento Socket.io nativo `call:incoming` ya soportado en `backend/src/modules/calls/calls.service.ts`.
-  2. **Expediente Clínico y Dossier Imprimible:** Adaptar el modal de ficha médica con soporte para impresión legal (`@media print`) bajo la Ley 25.326 y alternancia a vista de línea de tiempo (Timeline), utilizando exclusivamente el endpoint canónico `GET /api/pets/:id` y `useQuery` de TanStack Query v5.
-  3. **Drawer Lateral de Paciente (`VetPatientProfile`):** Permitir al veterinario desplegar el contexto clínico del animal (alergias con badge ámbar, enfermedades crónicas con badge rojo, contacto telefónico del tutor) durante el chat o videollamada sin abandonar la pantalla.
-  4. **Verificación Pública de Recetas SENASA (`/verify-rx`):** Exponer verificación pública oficial consumiendo `GET /api/prescriptions/:id` con empty states transparentes y cero datos falsos.
-  5. **Veto estricto de antipatrones:** Quedan formalmente prohibidos el polling por temporizadores, el borrado físico de usuarios y la alteración de la escala oficial de 1 a 5 estrellas.
-- **Consecuencias:** Integración de funcionalidades críticas de telemedicina con cero degradación de la estabilidad del sistema, preservación de los 156 tests automatizados y respeto absoluto de los estándares de ingeniería FAANG.
-
-### ADR-027: Blindaje Regulatorio Integral, Marco Legal (Leyes 25.326, 24.240 y 14.072), Gestión de Cookies e Inclusión Accesible WCAG 2.1 AA
-- **Contexto:** Las plataformas de telemedicina y teleorientación veterinaria se encuentran sujetas a un riguroso marco normativo multisectorial en la República Argentina. Operar sin descargo sanitario expreso genera contingencias por mala praxis médica veterinaria (Ley Nacional 14.072); no disponer de políticas de arrepentimiento y reembolso vulnera la Ley Nacional 24.240 de Defensa del Consumidor; no regular la captura de datos ni canales ARCO transgrede la Ley Nacional 25.326 y expone a multas de la Agencia de Acceso a la Información Pública (AAIP); el uso no regulado de telemetría colisiona con estándares de cookies; la presencia de métricas no fundamentadas ("8 médicos en guardia", "~2 min 40 seg") constituye publicidad engañosa sancionable; y la falta de accesibilidad vulnera los estándares de inclusión digital del Estado Argentino y WCAG 2.1.
-- **Decisión:**
-  1. **Ecosistema de Páginas Legales Desacopladas:** Implementar 4 rutas estáticas de primer nivel en la Web SPA mediante *Code-Splitting* (`React.lazy`):
-     - `/privacy`: Política de Privacidad, canal ARCO (`privacidad@vetconnect.com.ar`), minimización de datos (cero PII en WebRTC/LiveKit) y deber de conservación sanitaria con anonimización irreversible ante bajas.
-     - `/terms`: Términos de Adhesión, *Emergency Disclaimer* mandatorio (advertencia expresa de acudir a guardia 24h física en emergencias con riesgo de vida), y deslinde de responsabilidad civil hacia la matrícula profesional independiente del veterinario actuante.
-     - `/cookies`: Política de Cookies y Almacenamiento, distinguiendo cookies técnicas/estrictamente necesarias (`refreshToken` HttpOnly, sin requerimiento de opt-in según AAIP/ePrivacy) de telemetría/analíticas (Sentry, con requerimiento de opt-in previo), e incluyendo botón de revocación/reinicio de preferencias.
-     - `/refunds`: Política de Reembolsos y Cancelaciones, garantizando 100% de reintegro por cancelación voluntaria previa en estado `WAITING`, timeout de triage automático a los 15 minutos (ADR-024) y ventana de gracia por desconexión técnica del profesional de 3 minutos.
-  2. **Banner de Consentimiento de Cookies (`CookieConsentBanner`):** Componente interactivo y accesible (`role="region"`, `aria-label`) persistido en `localStorage`, con opciones granulares de *"Aceptar Todas"* o *"Solo Necesarias"*.
-  3. **Consentimiento Informado en Onboarding (`Register.tsx`):** Casilla de verificación legal obligatoria no premarcada (`acceptedTerms`), impidiendo la creación de cuentas sin manifestación inequívoca de voluntad.
-  4. **Erradicación Total de Métricas Falsas:** Sustitución de contadores estáticos o ficticios por indicadores honestos de estado de guardia ("Guardia Médica Veterinaria Activa", "Atención telemática y triaje con profesionales matriculados").
-  5. **Transparencia Societaria e Identidad del Prestador:** Incorporación de razón social responsable (**Pinnacle Group S.A.**), CUIT **30-71234567-8**, domicilio legal en CABA, canales de contacto dedicados y atribución de derechos de autor de iconografía (Lucide Icons bajo licencia MIT).
-  6. **Cumplimiento WCAG 2.1 AA:** Garantía de contraste tipográfico $\ge 4.5:1$, soporte completo de navegación por teclado (`Tab`, `Enter`, `focus-visible:ring-2`), enlaces semánticos y compatibilidad con tecnologías de asistencia.
-- **Consecuencias:** Neutralización exhaustiva de riesgos legales y pasivos contingentes; conformidad regulatoria con SENASA, AAIP y Defensa del Consumidor; experiencia de usuario ética y transparente sin reclamos por publicidad engañosa; y ampliación de la cobertura de pruebas unitarias a 167 tests automatizados en verde.
-
-### ADR-028: Triage Clínico Asistido por IA (AI-First Intake) y Desacoplamiento de la Prioridad del Tutor
-- **Contexto:** En el diseño inicial del portal de clientes (`DashboardClient.tsx`), el tutor de la mascota seleccionaba explícitamente el nivel de urgencia clínico (`VERDE`, `AMARILLO`, `ROJO`) mediante el componente `TriageSelector`. Esta práctica introduce graves distorsiones clínicas y operativas:
-  1. *Incentivo perverso de autoservicio (Tragedy of the Commons):* Ante situaciones de ansiedad o el deseo de atención inmediata, una alta proporción de usuarios selecciona "ROJO — Urgencia Vital" sin importar el cuadro real, colapsando la guardia médica y desvirtuando la cola de espera FIFO/priorizada.
-  2. *Sesgo por desconocimiento clínico y riesgo de falsos negativos:* Un tutor sin formación médica veterinaria suele subestimar urgencias letales (ej. obstrucción urinaria felina, dilatación gástrica en caninos) catalogándolas como "VERDE", o sobreestimar cuadros banales con sangre visible catalogándolos como "ROJO".
-  3. *Incompatibilidad con el estándar médico de triaje:* En medicina de urgencia veterinaria (Veterinary Triage Index - VTI) y humana (Manchester Triage System - MTS), el triaje es un acto asistencial y de admisión estructurado, nunca una decisión delegada al paciente o su acompañante.
-  4. *Diferenciación médica:* Es crucial distinguir entre *Diagnóstico Médico* (acto reservado por la Ley Nacional 14.072 al médico veterinario matriculado) y *Admisión y Triaje Asistido* (estratificación de agudeza clínica y ordenamiento de sala de espera).
-- **Decisión:**
-  1. **Desacoplar la prioridad clínica del tutor (Cero selectores de color en el cliente):**
-     - Se elimina de la vista del tutor (`/client/dashboard`) el componente `TriageSelector` y cualquier selector manual de severidad (`ROJO`, `AMARILLO`, `VERDE`).
-     - El tutor únicamente interactúa con un **Intake Clínico Guiado** (`ClinicalIntakeForm`):
-       a) Selección de la Mascota registrada.
-       b) **Signos clínicos observables (chips de selección rápida):** Dificultad respiratoria, vómitos/diarrea, heridas/sangrado, claudicación/cojera, decaimiento/apatía, convulsión/desmayo, conducta anormal, control general.
-       c) **Tiempo aproximado de evolución:** Menos de 2 horas (`LESS_THAN_2_HOURS`), hoy / 2-12 horas (`HOURS_2_TO_12`), 1 a 2 días (`DAYS_1_TO_2`), más de 2 días (`MORE_THAN_2_DAYS`).
-       d) **Descripción en lenguaje natural:** Relato guiado de los síntomas observados.
-  2. **Motor de Triaje Clínico AI-First en Backend (Pipeline de Ingesta):**
-     - Al invocar `POST /api/consultations`, el backend procesa el intake a través del **Evaluador de Triaje Clínico** (`clinical-triage.engine`).
-     - El motor combina:
-       a) Parámetros fisiológicos de la mascota (especie, raza, edad, peso, condiciones crónicas preexistentes).
-       b) Signos clínicos declarados y ventana de evolución.
-       c) Procesamiento semántico del motivo de consulta.
-     - El motor computa de forma determinista la prioridad clínica interna (`ROJO` | `AMARILLO` | `VERDE`), un índice numérico de criticidad (1 a 10) y genera un **Resumen Clínico Pre-Consulta con Banderas Rojas (Red Flags)** para el médico veterinario.
-     - La consulta ingresa a la cola de guardia (`WAITING`) ordenada prioritariamente por severidad clínica y antigüedad.
-  3. **Protocolo de Derivación Física Inmediata (Red Flags Críticas):**
-     - Si el intake detecta riesgo de vida inminente irreversible por telemedicina (ej. paro respiratorio, politraumatismo con shock, hemorragia exanguinante masiva, convulsión status epilepticus), el sistema activa un banner de alerta crítica en la UI del tutor: *"Cuadro de riesgo vital inminente detectado. Mientras te contacta el médico de guardia, trasladá inmediatamente al paciente al centro veterinario de urgencias 24hs más cercano"*.
-  4. **Visualización Restringida al Ecosistema Médico:**
-     - La clasificación de triaje (`ROJO`, `AMARILLO`, `VERDE`), el resumen de banderas rojas y el tiempo de espera transcurrido se exhiben **exclusivamente en la consola del médico veterinario (`DashboardVet.tsx`)** y en auditorías administrativas.
-     - El médico veterinario actuante conserva la facultad indelegable de reclasificar o ajustar el nivel de triaje durante la atención.
-- **Consecuencias:**
-  - Erradicación definitiva de la sobre-priorización arbitraria por parte de tutores.
-  - Tiempos de respuesta reducidos para emergencias reales en la cola de guardia.
-  - Conformidad estricta con la Ley 14.072 (el sistema asiste en la admisión y priorización, mientras el médico retiene el diagnóstico clínico y prescripción).
-  - Experiencia de usuario empática y libre de tecnicismos para el tutor en crisis.
-
-### ADR-029: Desacoplamiento entre Ficha Declarativa de Mascota (Editable por Tutor) y Expediente Clínico Inmutable (Auditoría Médica)
-- **Contexto:** En la auditoría integral de la interfaz de usuario del tutor se detectó una inconsistencia de diseño en la gestión de pacientes y su historia médica:
-  1. *Campos omitidos en el alta:* El modal "Expediente Clínico" (`PetDossierModal.tsx`) y el drawer del veterinario (`VetPatientProfile.tsx`) reservan secciones destacadas para *"Alergias Clínicas Declaradas"* y *"Condiciones Crónicas / Preexistentes"*. Sin embargo, el modal de creación de mascota (`DashboardClient.tsx`) omitía estos campos, impidiendo al tutor declarar antecedentes críticos (ej. intolerancia a penicilina, cardiopatías, diabetes o insuficiencia renal).
-  2. *Ausencia de edición para el tutor:* Una vez creada la mascota, el tutor no disponía de ninguna interfaz para actualizar datos biológicos que cambian naturalmente en la vida del animal (peso, nuevas alergias diagnosticadas, microchip recientemente implantado), a pesar de que el backend ya soportaba el endpoint canónico `PATCH /api/pets/:id`.
-  3. *Límite ético y legal de edición:* Resulta jurídicamente inviable y contrario a las Leyes 25.326 y 14.072 que un tutor pueda alterar diagnósticos, prescripciones o notas médicas previas consignadas en el expediente clínico por profesionales matriculados.
-- **Decisión:**
-  1. **Separación Conceptual Inmutable:**
-     - **Ficha Declarativa del Paciente (`Pet`):** Datos de filiación y antecedentes provistos por el tutor (`name`, `species`, `breed`, `weightKg`, `sex`, `microchip`, `allergies`, `chronicConditions`). **100% editable por el tutor** mediante el modal de gestión de mascota (`PATCH /api/pets/:id`).
-     - **Expediente e Historia Clínica (`Consultation`, `diagnosisNotes`, `Prescription`, `Call`):** Registro médico-legal oficial. **100% inmutable para el tutor**. Únicamente los veterinarios matriculados actuantes pueden incorporar evoluciones médicas y emitir recetas.
-  2. **Enriquecimiento del Modal de Mascota (`PetModal`):**
-     - Se unifica el formulario de mascota en `DashboardClient.tsx` para operar en modo **Creación** (`POST /api/pets`) y modo **Edición** (`PATCH /api/pets/:id`).
-     - Se incorporan los campos:
-       a) `sex`: Sexo biológico ('Macho' | 'Hembra').
-       b) `allergies`: Alergias clínicas conocidas declaradas por el tutor (ej. "Alérgico a penicilina, picadura de pulga").
-       c) `chronicConditions`: Patologías o antecedentes crónicos preexistentes (ej. "Soplo cardíaco grado 2, hipotiroidismo").
-  3. **Activación del Botón de Edición en el Portal del Tutor:**
-     - Cada tarjeta de mascota en `DashboardClient.tsx` incorpora el botón accesible *"Editar Datos"*, abriendo el modal precargado con la información actual de la mascota.
-     - La actualización invoca `PATCH /api/pets/:id` e invalida la caché de `api.get('/api/pets')`, actualizando en tiempo real la ficha médica, el dossier imprimible y el perfil visualizado por el veterinario de guardia.
-- **Consecuencias:**
-  - Resolución definitiva de la incongruencia de "Sin alergias declaradas" cuando el tutor en realidad deseaba reportarlas.
-  - Blindaje clínico del acto médico: el veterinario de guardia accede inmediatamente a las alergias del animal al momento de prescribir, previniendo reacciones adversas graves.
-  - Cero riesgo de adulteración del historial clínico, preservando la trazabilidad de SENASA y la validez probatoria de las recetas emitidas con QR.
-
-### ADR-030: Sanitización de Metadatos de Sistema en Notas Clínicas y Reorganización Responsiva de Acciones en Tarjetas de Paciente
-- **Contexto:** En la auditoría integral de la interfaz de usuario del portal del tutor (`http://localhost:5173/client/dashboard`) se detectaron dos fricciones de usabilidad y fidelidad visual:
-  1. *Desbordamiento de botones de acción:* En la columna de mascotas del tutor (`DashboardClient.tsx`, `lg:col-span-5`), la fila horizontal que agrupaba `Editar`, `Expediente` y `Pedir Consulta` excedía el ancho disponible del contenedor en resoluciones estándar (1280px a 1440px), provocando que el botón principal `Pedir Consulta ->` sobresaliera del margen derecho de la tarjeta.
-  2. *Fuga de metadatos de sistema en el historial de consultas:* El campo `notes` de las consultas en base de datos almacena determinísticamente prefijos de triaje (`[Prioridad: ROJO]`, `[Triage IA: X/10]`) y sufijos de máquina de estados (`[CANCELLED_TIMEOUT_NO_VET_AVAILABLE]`). Al renderizarse directamente en la tarjeta de consulta reciente, el tutor visualizaba cadenas crudas como `[Prioridad: ROJO] tiene vacunas [CANCELLED_TIMEOUT_NO_VET_AVAILABLE]`, duplicando la prioridad que ya figuraba en el badge superior y exponiendo códigos de error internos en lugar de un motivo claro y empático.
-  3. *Filtrado de tags internos en copy de producción:* Se detectaron referencias a identificadores de arquitectura (`ADR-028`, `ADR-029`) en títulos y subtítulos del formulario de admisión y modal de mascota visibles por el usuario.
-- **Decisión:**
-  1. **Barra de Acciones Inferior Integrada en `PetCard`:**
-     - Se reorganiza el layout de cada tarjeta de paciente trasladando los botones a un footer inferior integrado (`mt-3.5 pt-3 border-t border-[#E8E2D5]/70 flex flex-wrap items-center justify-between gap-2`).
-     - A la izquierda se agrupan las acciones de gestión (`Editar` y `Expediente`); a la derecha se alinea el CTA de atención (`Pedir Consulta ->`).
-     - Garantiza cero desbordamiento horizontal en cualquier resolución de pantalla (desktop, tablet y móvil).
-  2. **Sanitización Determinista de Notas Clínicas (`parseConsultationNotes`):**
-     - Se implementa una utilidad puramente tipada para el cliente que remueve las etiquetas técnicas del sistema:
-       - Remueve `[Prioridad: ROJO|AMARILLO|VERDE]` (la prioridad se representa visualmente con el badge semántico).
-       - Remueve `[Triage IA: X/10]`.
-       - Remueve `[CANCELLED_TIMEOUT_NO_VET_AVAILABLE]` y cualquier etiqueta `[CANCELLED_...]`.
-     - Retorna el texto limpio ingresado por el usuario (ej. `"tiene vacunas"`).
-     - Si la consulta fue cancelada por tiempo de espera sin veterinario disponible, se presenta un mensaje contextual legible y empático ("Tiempo de espera agotado: sin veterinarios disponibles en guardia.").
-  3. **Erradicación de Referencias a ADRs en Textos de Usuario:**
-     - Eliminación de "(ADR-028)" y "(ADR-029)" de los encabezados de formularios y modales, manteniendo copys orientados 100% al tutor.
-- **Consecuencias:**
-  - Cero desbordamiento visual en las tarjetas de pacientes.
-  - Presentación clínica limpia y profesional sin exposición de códigos internos.
-  - Comunicación clara al tutor cuando una consulta finaliza por timeout de guardia.
-
-### ADR-031: Resolución de Singleton de React y Metro Resolver Pinning en Monorepo Expo SDK 54
-- **Contexto:**
-  - Al compilar y ejecutar el bundle de la aplicación móvil (`@vetconnect/mobile`) mediante Expo Go en entorno de desarrollo local, Metro emitía un fallo catastrófico en tiempo de ejecución:
-    ```
-    ERROR Warning: Invalid hook call. Hooks can only be called inside of the body of a function component.
-    1. You might have mismatching versions of React and the renderer (such as React DOM)
-    2. You might be breaking the Rules of Hooks
-    3. You might have more than one copy of React in the same app
-    ERROR [TypeError: Cannot read property 'useId' of null]
-    ```
-  - **Diagnóstico y Causa Raíz:**
-    1. *Coexistencia de versiones heterogéneas de React en el Monorepo:* El workspace web (`@vetconnect/web`) requiere React 18.3.1 (LTS) por compatibilidad de peer-dependencies con LiveKit Components y testing libraries (ADR-008 y AGENTS.md §4.3). Por ello, `node_modules/react` en la raíz del monorepo contiene **React 18.3.1**. En contraste, `@vetconnect/mobile` utiliza Expo SDK 54, cuya arquitectura exige **React 19.1.0** y **React Native 0.81.4**.
-    2. *Resolución permisiva ascendente en Metro:* En la configuración previa de `mobile/metro.config.js`, `config.resolver.blockList` excluía copias duplicadas de `react-native`, pero no bloqueaba las rutas de `react` o `react-dom` del monorepo raíz.
-    3. *Fallo de Dispatcher nulo:* Dependencias hoisted en la raíz (ej. `expo-keep-awake`, `@expo/metro-runtime`) resolvían sus imports a través de `VetConnect/node_modules/react` (React 18). Al ejecutarse dentro del renderer de React Native Fabric (montado con el dispatcher de React 19), la invocación de `useKeepAwake` -> `useId` accedía al dispatcher de la copia de React 18 (`ReactCurrentDispatcher.current`), el cual permanecía en `null`, disparando `Cannot read property 'useId' of null`.
-- **Decisión:**
-  1. **Aislamiento Estricto mediante `blockList`:**
-     - Se incorporan a la lista de exclusión de Metro (`config.resolver.blockList`) las rutas de `node_modules/react` y `node_modules/react-dom` de la raíz del monorepo y paquetes secundarios (`nativewind`).
-  2. **Intercepción Determinista en `resolveRequest` (Singleton Pinning):**
-     - Se implementa un hook de resolución personalizada en Metro (`config.resolver.resolveRequest`) que intercepta cualquier resolución de `react`, `react/*`, `react-dom`, `react-dom/*`, `react-native` y `react-native/*`.
-     - Todos los módulos que requieran React se redirigen de manera determinista e inmutable al path local de la copia canónica: `mobile/node_modules/react` y `mobile/node_modules/react-native`.
-  3. **Preservación del Ecosistema Web en React 18.3.1:**
-     - Se mantiene el frontend web aislado en React 18.3.1, garantizando que ninguna actualización de bundler en mobile vulnere la estabilidad de la telemedicina WebRTC de LiveKit en la web.
-- **Consecuencias:**
-  - Garantía absoluta de copia única (singleton) de React 19.1.0 durante el bundling y hot-reloading de Expo Go.
-  - Eliminación definitiva del error `Invalid hook call` y `Cannot read property 'useId' of null`.
-  - Respeto del principio de no-regresión en el workspace web.
-
-### ADR-032: Arquitectura de Pagos Marca Blanca con Adapter Pattern y Plan de Contingencia PagoFlex (Plan B)
-- **Contexto:**
-  - Se planteó la necesidad de definir el modelo de cobro y monetización para consultas veterinarias (fee-per-consultation), evaluando una propuesta de colaboración local con la fintech argentina PagoFlex (donde veterinarios cobran exclusivamente en la app PagoFlex y clientes pagan vía Mercado Pago u otras billeteras).
-  - La vinculación rígida con un PSP local amenazaba con desvirtuar la naturaleza de software exportable y marca blanca neutral de la plataforma, acarreando además responsabilidades fiscales de operador de marketplace en Argentina.
-- **Decisión:**
-  1. **Marca Blanca Agnóstica como Estándar Core (Plan A):**
-     - Huellicam / VetConnect se define formalmente como software Marca Blanca (White-Label) exportable y multi-organización.
-     - Se establece la interfaz desacoplada `IPaymentGateway` mediante el Adapter Pattern, permitiendo conectar cualquier procesador (Stripe, Mercado Pago, etc.) sin contaminar las reglas clínicas ni la máquina de estados de las consultas.
-  2. **Encapsulamiento de PagoFlex como Plan B:**
-     - La integración con PagoFlex queda clasificada como Plan B / Alternativa Local, sujeta a confirmación ejecutiva.
-     - En caso de activarse, se materializa exclusivamente en la clase `PagoFlexAdapter`, dejando intacta la arquitectura exportable del producto para terceros.
-- **Consecuencias:**
-  - Preservación del valor del activo tecnológico como software internacionalizable.
-  - Aislamiento de riesgos regulatorios e impositivos del núcleo de la aplicación.
-  - Documentación técnica detallada en `docs/payments/`.
-
-
-
-
+### ADR-032: Pagos Marca Blanca (Configuración Base / Roadmap)
+- El núcleo clínico permanece agnóstico respecto de procesadores de pago mediante el contrato conceptual `IPaymentGateway`, contemplando Stripe/Mercado Pago como adaptadores universales (Plan A) y PagoFlex como alternativa local aislada (Plan B).
+- **Estado actual:** El panel admin ya cuenta con gestión de tarifas base (`pricing-settings`), proyección ejecutiva (`executive-metrics`) y el flag `PAYMENTS_ENABLED`, mientras que la conexión efectiva con una pasarela de cobro externa queda para la siguiente etapa comercial.
