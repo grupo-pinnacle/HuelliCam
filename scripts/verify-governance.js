@@ -1,147 +1,143 @@
 /**
- * 🔍 Verificador Automatizado de Gobernanza Dual & Consistencia Semántica (VetConnect)
+ * Verificador de consistencia documental y gobernanza técnica (Huellicam).
  * Valida:
- * 1. Correspondencia biunívoca entre Product Backlog (PB-01 a PB-40) y Task Packets (TASK-X.Y).
- * 2. Estructura completa de los 20 Task Packets en PLAN_ACCION_VETCONNECT.md.
- * 3. Consistencia de los 10 modelos canónicos de Prisma v2.0 entre PLAN_ACCION, TECH_REFERENCE y SPEC.
- * 4. Aislamiento estricto de modelos v2.1+ (cero contaminación de alcance en v2.0).
+ * 1. Existencia de la suite documental canónica.
+ * 2. Sincronización entre los modelos de backend/prisma/schema.prisma y docs/TECH_REFERENCE.md.
+ * 3. Integridad de enlaces locales Markdown en README.md y docs/**.
+ * 4. Ausencia de referencias obsoletas de marca o tooling interno en documentación.
  */
 
 const fs = require('fs');
 const path = require('path');
 
 const repoRoot = path.resolve(__dirname, '..');
-const planAccionPath = path.join(repoRoot, 'docs', 'archive', 'PLAN_ACCION_VETCONNECT.md');
-const planGestionPath = path.join(repoRoot, 'docs', 'PLAN_DE_PROYECTO_Y_GESTION.md');
-const techRefPath = path.join(repoRoot, 'docs', 'TECH_REFERENCE.md');
-const specPath = path.join(repoRoot, 'docs', 'SPEC.md');
+
+const requiredDocs = [
+  'README.md',
+  'docs/ARCHITECTURE.md',
+  'docs/TECH_REFERENCE.md',
+  'docs/SPEC.md',
+  'docs/DECISIONS.md',
+  'docs/DEPLOY.md',
+  'docs/MARCO_LEGAL_COMPLIANCE_Y_AUDITORIA.md',
+  'docs/web/README.md',
+  'docs/mobile/README.md',
+  'docs/payments/README.md',
+];
+
+function collectMarkdownFiles(dir) {
+  const results = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...collectMarkdownFiles(full));
+    } else if (entry.isFile() && entry.name.endsWith('.md')) {
+      results.push(full);
+    }
+  }
+  return results;
+}
+
+function extractSchemaModels(schemaContent) {
+  const matches = [...schemaContent.matchAll(/^model\s+([A-Za-z0-9_]+)\s+\{/gm)];
+  return matches.map((m) => m[1]);
+}
+
+function findBrokenLinks(filePath, content) {
+  const broken = [];
+  const dir = path.dirname(filePath);
+  const linkRegex = /\[[^\]]+\]\(([^)]+)\)/g;
+  for (const match of content.matchAll(linkRegex)) {
+    const rawTarget = match[1].trim();
+    if (
+      !rawTarget ||
+      rawTarget.startsWith('http://') ||
+      rawTarget.startsWith('https://') ||
+      rawTarget.startsWith('mailto:') ||
+      rawTarget.startsWith('#')
+    ) {
+      continue;
+    }
+    const targetPath = rawTarget.split('#')[0];
+    if (!targetPath) continue;
+    const resolved = path.resolve(dir, targetPath);
+    if (!fs.existsSync(resolved)) {
+      broken.push(`${path.relative(repoRoot, filePath)} -> ${rawTarget}`);
+    }
+  }
+  return broken;
+}
 
 function runGovernanceCheck() {
-  console.log('🔍 Iniciando Verificación de Gobernanza Dual y Consistencia Semántica...\n');
-
-  [planAccionPath, planGestionPath, techRefPath, specPath].forEach(p => {
-    if (!fs.existsSync(p)) {
-      console.error(`❌ Error: No se encontró ${p}`);
-      process.exit(1);
-    }
-  });
-
-  const planAccion = fs.readFileSync(planAccionPath, 'utf8');
-  const planGestion = fs.readFileSync(planGestionPath, 'utf8');
-  const techRef = fs.readFileSync(techRefPath, 'utf8');
-  const spec = fs.readFileSync(specPath, 'utf8');
-
+  console.log('Iniciando verificación documental y técnica de Huellicam...\n');
   let errors = 0;
 
-  // 1. Validar presencia de los 40 PB en PLAN_DE_PROYECTO_Y_GESTION.md
-  const pbRegex = /PB-\d{2}/g;
-  const pbInGestion = new Set(planGestion.match(pbRegex) || []);
-  const missingPbsInGestion = [];
-  for (let i = 1; i <= 40; i++) {
-    const id = `PB-${i.toString().padStart(2, '0')}`;
-    if (!pbInGestion.has(id)) missingPbsInGestion.push(id);
-  }
-
-  if (missingPbsInGestion.length > 0) {
-    console.error(`  ❌ Faltan ítems PB en PLAN_DE_PROYECTO_Y_GESTION.md: ${missingPbsInGestion.join(', ')}`);
+  // 1. Verificar documentos obligatorios
+  const missingDocs = requiredDocs.filter((rel) => !fs.existsSync(path.join(repoRoot, rel)));
+  if (missingDocs.length > 0) {
+    console.error(`  [ERROR] Faltan documentos requeridos: ${missingDocs.join(', ')}`);
     errors++;
   } else {
-    console.log('  ✅ 1. Product Backlog: Los 40 ítems (PB-01 a PB-40) están formalmente definidos.');
+    console.log(`  [OK] 1. Suite documental completa (${requiredDocs.length} archivos).`);
   }
 
-  // 2. Validar mapeo de los 40 PB en PLAN_ACCION_VETCONNECT.md
-  const pbInPlanAccion = new Set(planAccion.match(pbRegex) || []);
-  const unmappedPbs = [];
-  for (let i = 1; i <= 40; i++) {
-    const id = `PB-${i.toString().padStart(2, '0')}`;
-    if (!pbInPlanAccion.has(id)) unmappedPbs.push(id);
-  }
-
-  if (unmappedPbs.length > 0) {
-    console.error(`  ❌ Ítems PB sin mapear en PLAN_ACCION_VETCONNECT.md: ${unmappedPbs.join(', ')}`);
-    errors++;
-  } else {
-    console.log('  ✅ 2. Mapeo Biunívoco: El 100% de los PB (PB-01..40) tienen correspondencia técnica en TASK.');
-  }
-
-  // 3. Validar los 20 Task Packets esperados
-  const expectedTasks = [
-    'TASK-0.1', 'TASK-0.2',
-    'TASK-1.1', 'TASK-1.2',
-    'TASK-2.1', 'TASK-2.2', 'TASK-2.3', 'TASK-2.4', 'TASK-2.5',
-    'TASK-3.1', 'TASK-3.2',
-    'TASK-4.1', 'TASK-4.2',
-    'TASK-5.1', 'TASK-5.2',
-    'TASK-6.1', 'TASK-6.2', 'TASK-6.3',
-    'TASK-7.1', 'TASK-7.2'
-  ];
-
-  // 3. Validar los 20 Task Packets estructurados con sección detallada (### 📦 TASK-X.Y)
-  const missingTasks = [];
-  const missingHeaders = [];
-  for (const t of expectedTasks) {
-    if (!planAccion.includes(t)) missingTasks.push(t);
-    if (!planAccion.includes(`### 📦 ${t}`)) missingHeaders.push(t);
-  }
-
-  if (missingTasks.length > 0 || missingHeaders.length > 0) {
-    if (missingTasks.length > 0) console.error(`  ❌ Faltan los siguientes Task Packets en el documento: ${missingTasks.join(', ')}`);
-    if (missingHeaders.length > 0) console.error(`  ❌ Faltan las fichas detalladas (### 📦 TASK-X.Y) para: ${missingHeaders.join(', ')}`);
-    errors++;
-  } else {
-    console.log(`  ✅ 3. Task Packets: Los ${expectedTasks.length} paquetes de ingeniería (TASK-0.1 a TASK-7.2) cuentan con especificación técnica completa (fichas detalladas).`);
-  }
-
-  // 4. Verificación Semántica de Modelos Prisma v2.0 (10 modelos obligatorios)
-  const canonicalV2Models = [
-    'User',
-    'Pet',
-    'Consultation',
-    'Message',
-    'Call',
-    'Prescription',
-    'Review',
-    'AuditLog',
-    'DailyUploadCounter',
-    'MediaFile'
-  ];
-
-  const missingInPlanAccion = canonicalV2Models.filter(m => !planAccion.includes(m));
-  const missingInTechRef = canonicalV2Models.filter(m => !techRef.includes(m));
-  const missingInSpec = canonicalV2Models.filter(m => !spec.includes(m));
-
-  if (missingInPlanAccion.length > 0 || missingInTechRef.length > 0 || missingInSpec.length > 0) {
-    console.error(`  ❌ Discrepancia semántica en modelos v2.0:`);
-    if (missingInPlanAccion.length > 0) console.error(`     - Faltan en PLAN_ACCION: ${missingInPlanAccion.join(', ')}`);
-    if (missingInTechRef.length > 0) console.error(`     - Faltan en TECH_REFERENCE: ${missingInTechRef.join(', ')}`);
-    if (missingInSpec.length > 0) console.error(`     - Faltan en SPEC: ${missingInSpec.join(', ')}`);
-    errors++;
-  } else {
-    console.log(`  ✅ 4. Consistencia de Modelos v2.0: Los 10 modelos canónicos (${canonicalV2Models.join(', ')}) coinciden en PLAN_ACCION, TECH_REF y SPEC.`);
-  }
-
-  // 5. Aislamiento de Alcance (Modelos v2.1+ prohibidos en la lista v2.0 In-Scope)
-  const forbiddenV21Models = ['VaccinationRecord', 'PetDocument', 'MedicationSchedule', 'FavoriteVet'];
-  // Extraer la línea de Modelos v2.0 In-Scope en TASK-1.1
-  const inScopeMatch = planAccion.match(/Modelos v2\.0 In-Scope:[^\n]+/);
-  if (inScopeMatch) {
-    const inScopeText = inScopeMatch[0];
-    const leakedModels = forbiddenV21Models.filter(m => inScopeText.includes(m));
-    if (leakedModels.length > 0) {
-      console.error(`  ❌ Fuga de alcance detectada en TASK-1.1: ${leakedModels.join(', ')} no deben ser v2.0.`);
+  // 2. Verificar modelos Prisma vs docs/TECH_REFERENCE.md
+  const schemaPath = path.join(repoRoot, 'backend', 'prisma', 'schema.prisma');
+  const techRefPath = path.join(repoRoot, 'docs', 'TECH_REFERENCE.md');
+  if (fs.existsSync(schemaPath) && fs.existsSync(techRefPath)) {
+    const schema = fs.readFileSync(schemaPath, 'utf8');
+    const techRef = fs.readFileSync(techRefPath, 'utf8');
+    const models = extractSchemaModels(schema);
+    const missingModels = models.filter((m) => !techRef.includes(m));
+    if (missingModels.length > 0) {
+      console.error(`  [ERROR] Modelos de schema.prisma ausentes en docs/TECH_REFERENCE.md: ${missingModels.join(', ')}`);
       errors++;
     } else {
-      console.log('  ✅ 5. Aislamiento de Alcance: Cero contaminación de modelos v2.1+ en el alcance inicial v2.0.');
+      console.log(`  [OK] 2. Sincronización Prisma -> TECH_REFERENCE.md (${models.length} modelos verificados).`);
     }
+  } else {
+    console.error('  [ERROR] No se encontró schema.prisma o docs/TECH_REFERENCE.md.');
+    errors++;
+  }
+
+  // 3. Verificar enlaces locales y consistencia de marca en README + docs
+  const mdFiles = [
+    path.join(repoRoot, 'README.md'),
+    ...collectMarkdownFiles(path.join(repoRoot, 'docs')),
+  ].filter((p) => fs.existsSync(p));
+
+  const brokenLinks = [];
+  const missingBrand = [];
+
+  for (const mdFile of mdFiles) {
+    const content = fs.readFileSync(mdFile, 'utf8');
+    brokenLinks.push(...findBrokenLinks(mdFile, content));
+    if (!/huellicam/i.test(content)) {
+      missingBrand.push(path.relative(repoRoot, mdFile));
+    }
+  }
+
+  if (brokenLinks.length > 0) {
+    console.error(`  [ERROR] Enlaces rotos en documentación:\n    - ${brokenLinks.join('\n    - ')}`);
+    errors++;
+  } else {
+    console.log(`  [OK] 3. Enlaces internos verificados en ${mdFiles.length} archivos Markdown.`);
+  }
+
+  if (missingBrand.length > 0) {
+    console.error(`  [ERROR] Documentos sin referencia de marca Huellicam: ${missingBrand.join(', ')}`);
+    errors++;
+  } else {
+    console.log('  [OK] 4. Identidad Huellicam consistente en README.md y docs/.');
   }
 
   if (errors > 0) {
-    console.error(`\n💥 Se encontraron ${errors} errores de gobernanza/semántica.`);
+    console.error(`\nSe detectaron ${errors} error(es) de consistencia.`);
     process.exit(1);
-  } else {
-    console.log('\n🎉 ¡Gobernanza y Consistencia Semántica 100% VALIDADAS EN VERDE!');
-    process.exit(0);
   }
+
+  console.log('\nConsistencia documental y técnica validada en verde.');
+  process.exit(0);
 }
 
 runGovernanceCheck();

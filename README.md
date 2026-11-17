@@ -1,229 +1,170 @@
 <div align="center">
 
-# 🐾 Huellicam v2.0 (anteriormente VetConnect)
-### *Plataforma Marca Blanca de Telemedicina Veterinaria & Gestión Clínica de Alta Disponibilidad*
-**Arquitectura Nivel 4.5: Pre-Gold Master & Agent-First | Software Marca Blanca (White-Label) Exportable**
+# Huellicam
+### *Plataforma Marca Blanca de Telemedicina Veterinaria y Gestión Clínica*
 
 [![Node.js](https://img.shields.io/badge/Node.js-20.x_LTS-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.9+-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7+-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-18.3.1_LTS-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev)
 [![React Native / Expo](https://img.shields.io/badge/Expo-SDK_54-000020?style=for-the-badge&logo=expo&logoColor=white)](https://expo.dev)
 [![Prisma ORM](https://img.shields.io/badge/Prisma-6.x-2D3748?style=for-the-badge&logo=prisma&logoColor=white)](https://www.prisma.io)
 [![LiveKit](https://img.shields.io/badge/LiveKit-WebRTC_SFU-00D1B2?style=for-the-badge&logo=webrtc&logoColor=white)](https://livekit.io)
-[![Google Jules](https://img.shields.io/badge/Agent--First-Jules_Ready-4285F4?style=for-the-badge&logo=google&logoColor=white)](.jules/instructions.md)
-[![Jest Suite](https://img.shields.io/badge/Tests-Meta:_120+_Tests-blue?style=for-the-badge&logo=jest&logoColor=white)](https://jestjs.io)
 
 </div>
 
 ---
 
-## 📖 Índice General de Documentación & Sistema de Agentes
+## Resumen Ejecutivo
 
-> 📌 Ver protocolo metodológico de diseño colaborativo y exportación en [06_SISTEMA_DE_DISENO_UI_KIT.md (§7)](./docs/web/06_SISTEMA_DE_DISENO_UI_KIT.md#7-metodología-híbrida-storybook--figma).
-
-Toda la documentación técnica, operativa y de agentes de VetConnect se encuentra organizada en los siguientes documentos maestros:
-
-### 🌟 Nivel 1 (Tier 1) — Fuentes Vivas de Ejecución Diaria (Single Sources of Truth - SSOT)
-> **Autoridad Suprema:** Estos documentos gobiernan el desarrollo diario. Cualquier cambio de contrato, decisión técnica o estándar debe actualizarse **únicamente** aquí:
-
-| Documento | Descripción & Rol en Desarrollo | Enlace |
-|---|---|---|
-| 📚 **Referencia Técnica & Contratos** | Contratos de API REST (Zod), Socket.io y Prisma Schema v2.0 definitivo. | [Ver TECH_REFERENCE.md](docs/TECH_REFERENCE.md) |
-| ⚖️ **Registro de Decisiones (ADRs)** | Las 32 decisiones arquitectónicas oficiales vinculantes (ADR-001 al ADR-032). | [Ver DECISIONS.md](docs/DECISIONS.md) |
-| 📐 **Especificación de Requerimientos** | Requerimientos funcionales y criterios de aceptación BDD (Gherkin). | [Ver SPEC.md](docs/SPEC.md) |
-| 🏗️ **Arquitectura Global del Sistema** | Visión del sistema, subsistemas desacoplados y topología general. | [Ver ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| 📊 **Plan de Proyecto y Gestión** | Product Backlog PB-01..40, Sprints 1..10, RACI balanceado y métricas KPIs. | [Ver PLAN_DE_PROYECTO_Y_GESTION.md](docs/PLAN_DE_PROYECTO_Y_GESTION.md) |
-| 🤖 **Agent Operating System (AOS)** | Protocolo operativo supremo, ciclo TDD, guardarraíles y antipatrones con código. | [Ver AGENTS.md](AGENTS.md) |
-| 💳 **Monetización & Pagos Marca Blanca** | Arquitectura agnóstica de pagos (Adapter Pattern), cobro por consulta y Plan B PagoFlex. | [Ver Sistema de Pagos](docs/payments/README.md) |
-| 📱 **Documentación Mobile (WebView Shell)** | Arquitectura del contenedor nativo (Expo 54), auth seeding y bridge. | [Ver Docs Mobile](docs/mobile/README.md) |
-| 💻 **Documentación Web Frontend** | Arquitectura de la SPA responsive (React 18), estados y flujos clínicos. | [Ver Docs Web](docs/web/README.md) |
-| ⚖️ **Marco Legal & Compliance** | Blindaje regulatorio, Ley 25.326, términos, privacidad y accesibilidad. | [Ver Marco Legal](docs/MARCO_LEGAL_COMPLIANCE_Y_AUDITORIA.md) |
-
-### 🧊 Nivel 2 (Tier 2) — Baselines de Inicio & Archivo Histórico (Read-Only Post-Kickoff)
-> **Línea Base Congelada:** Documentos aprobados para la fase de inicio que actúan como registro estático o de referencia contextual. No requieren mantenimiento diario sincronizado:
-
-| Documento | Rol y Estado Post-Kickoff | Enlace |
-|---|---|---|
-| 📄 **Product & Project Brief** | Brief ejecutivo de producto, modelo de negocio y OKRs (Aprobado). | [Ver Brief de Producto](docs/BRIEF.md) |
-| 📜 **Project Charter** | Carta fundacional y visión del proyecto *(Congelado al 01/Oct/2026)*. | [Ver Project Charter](docs/PROJECT_CHARTER.md) |
-| 📦 **Archivo Histórico de Proyecto** | Baselines pre-kickoff, minutas, dossiers y acuerdos consolidados. | [Ver Archivo Histórico](docs/archive/) |
-
-
-
-| 📘 **Guía Oficial de Buenas Prácticas** | Estándares FAANG, antipatrones con código (NO uso) y seguridad por módulo. | [Ver Guía de Buenas Prácticas](docs/GUIA_OFICIAL_BUENAS_PRACTICAS_Y_SISTEMA.md) |
-| 🎥 **Auditoría & Checklist LiveKit** | Guía normativa maestra y checklist preventivo de WebRTC. | [Ver LiveKit Audit](docs/LIVEKIT_AUDIT.md) |
-| 🎨 **Sistema de Diseño (Design System)** | Guía visual y UI Kit para prototipado (Actividad 26). | [Ver Sistema de Diseño](docs/SISTEMA_DE_DISENO.md) |
-| 🚀 **Guía de Despliegue & Ops** | Manual de infraestructura: Coolify (VPS) y Vercel (Edge). | [Ver Guía de Deploy & Ops](docs/DEPLOY.md) |
-
-
+**Huellicam** es una plataforma integral de telemedicina veterinaria pensada para operar tanto en clínicas individuales como en redes hospitalarias bajo esquema **marca blanca (white-label)**. Conecta a tutores de mascotas (`CLIENT`), médicos veterinarios matriculados (`VET`) y administradores (`ADMIN`) mediante triaje clínico automatizado, mensajería en tiempo real, videoconsultas WebRTC y emisión de recetas digitales verificables por código QR.
 
 ---
 
-## 🌟 Propuesta de Valor & Características Principales
+## Estado Actual de Implementación
 
-**VetConnect** es una solución telemédica integral que digitaliza la interacción clínica entre tutores de mascotas y médicos veterinarios:
+El repositorio se estructura como un monorepo con tres workspaces (`backend`, `web`, `mobile`). La siguiente tabla resume qué capacidades están operativas en código y cuáles forman parte de la hoja de ruta:
 
-- **🚨 Triage Inteligente & Cola de Atención:** Solicitud de atención inmediata o programada con auto-asignación hacia veterinarios disponibles (`isOnline = true`).
-- **💬 Chat en Vivo con Idempotencia:** Mensajería en tiempo real (<100ms) vía WebSockets, deduplicación por `clientMsgId`, imágenes clínicas con zoom y acuses de recibo.
-- **📹 Teleconsulta por Videollamada (WebRTC / LiveKit):** Transmisión de audio y video de 720p adaptativa con timbrado bidireccional y tokens criptográficos sin exposición de PII.
-- **💊 Recetas Digitales Estructuradas:** Prescripciones con dosificación, frecuencia y duración persistidas en la historia clínica del paciente.
-- **🛡️ Blindaje Legal & Sala de Espera (SENASA):** Verificación manual de matrícula profesional (`vetStatus: PENDING → APPROVED`) antes de habilitar la atención médica; cumplimiento estricto de la **Ley de Protección de Datos Personales N° 25.326** con *Soft-Deletes* y minimización de PII.
-- **📊 Registro Inmutable de Auditoría:** Registro de todas las mutaciones administrativas críticas (`AuditLog`) para trazabilidad total.
-- **🏷️ Arquitectura Marca Blanca & Monetización Modular (ADR-032):** Diseño agnóstico de pasarelas de pago (`IPaymentGateway`) con soporte multi-tenant, permitiendo cobro por consulta (*fee-per-consult*) configurable para cualquier pasarela internacional (Stripe, Mercado Pago) o adaptadores locales específicos.
+| Área / Capacidad | Estado | Implementación Actual en Código |
+|---|---|---|
+| **Auth, Sesiones y Recuperación** | Implementado | JWT + refresh rotation (`tokenVersion`), cookie `HttpOnly` en web, `expo-secure-store` en mobile, OTP de 6 dígitos por email (`PasswordResetToken`) y cambio de contraseña autenticado (`PATCH /api/users/password`). |
+| **Gestión de Mascotas e Historia Clínica** | Implementado | CRUD con soft-delete (`deletedAt`), peso, sexo, fecha de nacimiento (`birthDate`), microchip ISO (15 dígitos), alergias, condiciones crónicas y dossier imprimible. |
+| **Triaje Clínico y Cola de Guardia** | Implementado | Motor determinista basado en reglas (`clinicalTriage.engine.ts`), cola `WAITING`, asignación atómica (`consultationConcurrency.service.ts` + `ConsultationAuditLog`), timeout de espera (15 min) y ventana de gracia por desconexión (3 min). |
+| **Chat Clínico y Adjuntos** | Implementado | Socket.io con deduplicación por `clientMsgId`, sincronización incremental (`?after=`), carga multimedia con validación por *Magic Bytes* (JPEG/PNG/PDF, 10 MB/archivo, 50 MB/día) y descarga autenticada (`GET /api/media/:id`). |
+| **Videoconsultas WebRTC (LiveKit)** | Implementado | Emisión de tokens sin PII (`calls.service.ts`), timbrado (`POST /api/calls/:consultationId/ring`), sala `<LiveKitRoom>` en web (`web/src/vet/CallRoom.tsx`) y puente WebView en mobile (`mobile/app/(app)/call/[consultationId].tsx`). |
+| **Recetas Digitales y Verificación QR** | Implementado | Emisión por veterinario asignado, generación de URL pública con QR y verificación sin login (`GET /api/prescriptions/:id` y ruta `/prescriptions/:id` / `/verify-rx`). |
+| **Notificaciones Push y Emails Automáticos** | Implementado | Bandeja in-app (`Notification`), despacho a Expo Push API (`PushToken`) y scheduler automático (`notifications.scheduler.ts`) con deduplicación (`EmailDispatchLog`) para recordatorios, controles cada 180 días y cumpleaños. |
+| **Panel de Administración y Gobernanza** | Implementado | Aprobación/rechazo de matrículas (`PENDING -> APPROVED/REJECTED`), CRUD de usuarios y mascotas con restauración, inspección de consultas, `AuditLog`, *feature flags* operativos, métricas ejecutivas y configuración arancelaria base. |
+| **App Mobile (Expo SDK 54)** | Implementado (Híbrido WebView) | Navegación Expo Router, autenticación segura, notificaciones push y ejecución de videollamadas mediante `react-native-webview` conectado a la web SPA. La migración a LiveKit nativo queda planificada como fase futura. |
+| **Pasarela de Pagos Externa** | Roadmap / Diseño | Definición arquitectónica de `IPaymentGateway` y parámetros base en admin (`pricing-settings`, flag `PAYMENTS_ENABLED`); el procesamiento transaccional con PSP externo (Stripe / Mercado Pago / PagoFlex) no está conectado aún. |
 
 ---
 
-## 🏗️ Topología del Sistema (FAANG Architecture)
+## Arquitectura del Sistema
 
 ```mermaid
 flowchart TB
-    subgraph Frontend["Capas de Cliente (Monorepo Workspaces)"]
-        Mobile["📱 Mobile App (React Native 0.81 + Expo SDK 54)\n• NativeWind v4 + Tokens\n• SecureStore + Zustand\n• Tabs + Guards por rol"]
-        WebClient["💻 Web App & Pro Dashboard (React 18.3.1 LTS + Vite)\n• Layered Shadows Craft\n• GlobalCallListener\n• LiveKit Components"]
+    subgraph Clientes["Clientes (Monorepo Workspaces)"]
+        WebClient["Web SPA (React 18.3.1 + Vite)\n• Portales Tutor, Veterinario y Admin\n• LiveKit WebRTC + Socket.io\n• TanStack Query v5"]
+        MobileClient["Mobile App (Expo SDK 54 + RN 0.81)\n• Expo Router + SecureStore\n• Push Notifications\n• WebView Bridge para Videoconsultas"]
     end
 
-    subgraph Backend["Cerebro Backend (Node.js + Express 5 + TypeScript)"]
-        API["⚙️ Express REST API\n• Zod Schema Validation\n• Strict JWT + TokenVersion Rotation\n• Rate Limiting & Helmet"]
-        SocketEngine["⚡ Socket.io Clustered Engine\n• Room Multiplexing\n• Redis Adapter Sync"]
+    subgraph Backend["Backend API (Node.js 20 + Express 5 + TypeScript)"]
+        REST["Express REST API\n• Validación Zod\n• Auth JWT + tokenVersion\n• Helmet, CORS y Rate Limiting"]
+        Realtime["Socket.io Gateway\n• Multiplexación por sala y dispositivo\n• Redis Adapter opcional"]
+        Scheduler["Jobs & Servicios\n• NotificationsScheduler\n• EmailService (Resend)\n• ClinicalTriage & Concurrency"]
     end
 
-    subgraph DataLayer["Servicios de Datos & Multimedia"]
-        PostgreSQL[("🐘 PostgreSQL (Docker / Supabase)\n• Prisma ORM 6\n• Soft-Deletes & AuditLogs")]
-        RedisCache[("🔴 Redis Cache 7\n• Rate Limiter & Socket Sync")]
-        S3Bucket[("🪣 Amazon S3 / Local Fallback\n• Magic Bytes MIME Verification")]
-        LiveKitServer["🎥 LiveKit WebRTC SFU\n• Ultra Low Latency Video Engine"]
+    subgraph Data["Persistencia y Servicios Externos"]
+        Postgres[("PostgreSQL 16 + Prisma ORM 6\n15 modelos · Soft-Deletes · AuditLog")]
+        Redis[("Redis 7 (opcional en local)\nSocket.io Pub/Sub")]
+        Storage[("S3 / Almacenamiento Local\nAcceso autenticado + Magic Bytes")]
+        LiveKit["LiveKit WebRTC SFU\nStreaming adaptativo 720p"]
     end
 
-    Frontend --> Backend
-    Backend --> DataLayer
+    WebClient -->|HTTPS / WSS| Backend
+    MobileClient -->|HTTPS / WSS / WebView| Backend
+    Backend --> Postgres
+    Backend --> Redis
+    Backend --> Storage
+    Backend -.->|Token Grants / Room Teardown| LiveKit
+    WebClient -.->|RTP Media| LiveKit
 ```
 
 ---
 
-## 💻 Requisitos Previos
+## Estructura del Repositorio
 
-| Requisito | Versión Mínima | Instalación |
-|---|---|---|
-| **Node.js** | `>= 20.x LTS` | [nodejs.org](https://nodejs.org) |
-| **npm** | `>= 10.x` | Incluido con Node.js |
-| **Docker & Docker Compose** | Reciente | [docker.com](https://docker.com) |
-| **Git** | `>= 2.30` | [git-scm.com](https://git-scm.com) |
-| **Expo Go** (para Mobile) | SDK 54 | [Google Play Store](https://play.google.com/store/apps/details?id=host.exp.exponent) |
-| **ADB (Android Platform Tools)** | Opcional (dev con USB) | [developer.android.com](https://developer.android.com/tools/releases/platform-tools) |
-| **JDK 21 + Android SDK** | Solo build nativo APK (no necesario para Expo Go) | [Android Studio](https://developer.android.com/studio) o `cmdline-tools`; NDK 27 se instala solo |
-| **EAS CLI** | Opcional (builds cloud) | Incluido como devDependency en `mobile` (`npx eas`) — requiere `eas login` |
-
-> ⚠️ **Build nativo en Windows:** el proyecto debe estar en una ruta **sin caracteres no-ASCII** (una `ó` en el path rompe el toolchain NDK/clang) y el SDK necesita espacio libre. Ver receta verificada en [docs/mobile/02_QA_DISTRIBUCION_Y_SEGURIDAD.md](docs/mobile/02_QA_DISTRIBUCION_Y_SEGURIDAD.md).
+```text
+.
+├── backend/                # API REST (Express 5), Socket.io, Prisma ORM 6 y scheduler de emails
+├── web/                    # SPA Web (React 18.3.1, Vite 6, Tailwind CSS v3, Storybook, Vitest)
+├── mobile/                 # App móvil (Expo SDK 54, Expo Router, WebView bridge para llamadas)
+├── docs/                   # Documentación técnica, arquitectura, contratos y compliance
+├── scripts/                # Utilidades de assets Expo y verificación de consistencia documental
+├── .github/workflows/      # Pipeline CI (typecheck, gobernanza, Jest, Vitest)
+├── docker-compose.yml      # Servicios locales PostgreSQL 16 y Redis 7
+├── vercel.json             # Configuración de build y rewrites SPA para Vercel
+├── .env.example            # Plantilla de variables para entorno local
+└── .env.production.example # Plantilla de variables para despliegue productivo
+```
 
 ---
 
-## ⚡ Guía de Inicio Rápido (Local Setup)
+## Índice de Documentación
 
-### 1. Clonar e Iniciar Servicios de Base de Datos y Cache
+| Documento | Alcance | Enlace |
+|---|---|---|
+| **Arquitectura del Sistema** | Subsistemas, capas internas, estrategia híbrida móvil y decisiones estructurales. | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| **Referencia Técnica** | Los 15 modelos de Prisma, endpoints REST reales, eventos Socket.io y tests. | [TECH_REFERENCE.md](docs/TECH_REFERENCE.md) |
+| **Especificación Técnica** | Reglas de negocio, máquina de estados, triaje determinista, seguridad y SLOs. | [SPEC.md](docs/SPEC.md) |
+| **Decisiones de Arquitectura** | Registro consolidado de ADRs (`ADR-001` a `ADR-032`). | [DECISIONS.md](docs/DECISIONS.md) |
+| **Guía de Despliegue** | Infraestructura productiva (VPS/Coolify, Vercel, PostgreSQL, Redis, LiveKit, Expo). | [DEPLOY.md](docs/DEPLOY.md) |
+| **Marco Legal y Compliance** | Ley 25.326, Ley 14.072, SENASA Res. 1442/2021, Ley 24.240 y WCAG 2.1 AA. | [MARCO_LEGAL_COMPLIANCE_Y_AUDITORIA.md](docs/MARCO_LEGAL_COMPLIANCE_Y_AUDITORIA.md) |
+| **Documentación Web** | Enrutamiento SPA, portales, manejo de sesión, Storybook y suite Vitest. | [docs/web/README.md](docs/web/README.md) |
+| **Documentación Mobile** | Arquitectura actual sobre WebView, puente nativo, permisos y roadmap nativo. | [docs/mobile/README.md](docs/mobile/README.md) |
+| **Pagos Marca Blanca** | Estado actual vs diseño modular (`IPaymentGateway`) y alternativa local PagoFlex. | [docs/payments/README.md](docs/payments/README.md) |
+
+---
+
+## Requisitos Previos y Arranque Local
+
+| Requisito | Versión Mínima | Uso |
+|---|---|---|
+| **Node.js** | `>= 20.x LTS` | Runtime del monorepo |
+| **npm** | `>= 10.x` | Gestión de workspaces |
+| **Docker & Docker Compose** | Reciente | PostgreSQL 16 y Redis 7 locales |
+| **Expo Go / Android SDK** | SDK 54 / JDK 21 | Desarrollo y build móvil |
+
 ```bash
-# 1. Iniciar PostgreSQL 16 y Redis 7 locales en Docker
+# 1. Levantar PostgreSQL y Redis locales
 docker compose up -d
 
-# 2. Instalar dependencias en todo el monorepo
+# 2. Instalar dependencias del monorepo
 npm install
 
-# 3. Configurar variables de entorno iniciales
+# 3. Configurar variables de entorno
 cp .env.example backend/.env
-# Ajusta en backend/.env: DATABASE_URL (docker: postgresql://postgres:postgrespassword@localhost:5432/vetconnect_dev),
-# JWT_SECRET y JWT_REFRESH_SECRET (mín. 32 caracteres)
 
-# 4. Aplicar migraciones y datos iniciales
-cd backend && npx prisma migrate dev && npm run seed
-cd ..
+# 4. Aplicar migraciones y cargar datos iniciales
+cd backend && npx prisma migrate deploy && npm run seed && cd ..
+
+# 5. Iniciar Backend (puerto 3001) y Web (puerto 5173)
+npm run dev
+
+# 6. Iniciar Mobile bundler (en otra terminal)
+npm run dev:mobile
 ```
 
-
-> 🌐 **Desarrollo Multiplataforma (macOS, Linux y Windows):**  
-> Si desarrollas en macOS o Linux, puedes iniciar todo el entorno con los comandos universales de npm:  
-> ```bash
-> # Terminal 1: Iniciar Backend (3001) y Web (5173) concurrentemente
-> npm run dev
-> 
-> # Terminal 2: Conectar dispositivo Android por USB e iniciar Mobile
-> adb reverse tcp:3001 tcp:3001 && npm run dev:mobile
-> ```
-
-### 2. Ejecutar la Plataforma en Modo Desarrollo
-
-#### Opción A: Inicio Automatizado (Scripts DX)
-- **Backend y Web (Terminal 1):**
-  ```powershell
-  .\run.bat
-  # O mediante npm: npm run dev
-  ```
-  *Inicia el backend en el puerto 3001 y la Web en el puerto 5173 simultáneamente.*
-
-- **Mobile App (Terminal 2):**
-  ```powershell
-  .\start.ps1
-  # O mediante npm: npm run dev:mobile
-  ```
-  *Detecta automáticamente tu celular por USB, configura ADB Reverse e inicia Expo Go sin depender de Wi-Fi.*
-
-#### Opción B: Inicio por Módulo Específico
-```bash
-npm run dev:backend   # Inicia únicamente la API Express
-npm run dev:web       # Inicia únicamente la SPA Web en Vite
-npm run dev:mobile    # Inicia el bundler Metro de Expo (Expo Go SDK 54)
-```
-
-> 📱 **Variables de Mobile:** por defecto apunta a `http://localhost:3001`. Para probar en red local usa `EXPO_PUBLIC_API_URL`, `EXPO_PUBLIC_WS_URL` y `EXPO_PUBLIC_WEB_URL`. Con USB + `adb reverse` no hace falta cambiar nada (`start.ps1` lo configura solo).
-
-### 3. Build APK Android — App Mobile (verificado 2026-09-24)
-
-```powershell
-# Requiere: JDK 21 (JAVA_HOME), Android SDK + NDK 27 (ANDROID_HOME),
-# ruta del proyecto SIN caracteres no-ASCII y espacio libre en disco.
-cd mobile
-
-# Opción 1: EAS local (requiere eas login, aun en local)
-npm run build:apk
-
-# Opción 2: pipeline manual equivalente (sin cuenta Expo)
-npx expo prebuild --platform android
-cd android
-.\gradlew.bat assembleRelease
-# APK en: android\app\build\outputs\apk\release\app-release.apk
-```
-
-> Detalle completo, versiones exactas y solución de problemas en [docs/mobile/02_QA_DISTRIBUCION_Y_SEGURIDAD.md](docs/mobile/02_QA_DISTRIBUCION_Y_SEGURIDAD.md). Los artefactos (`android/`, `*.apk`) están gitignorados: el workflow es managed.
+En Windows también están disponibles los scripts [run.bat](run.bat) y [start.ps1](start.ps1) (con `adb reverse` automático para pruebas por USB).
 
 ---
 
-## 🧪 Pruebas Automatizadas & Calidad de Código
-
-El proyecto adopta desarrollo dirigido por pruebas (TDD) con una meta de más de **120 pruebas automatizadas proyectadas** (>80% de cobertura):
+## Scripts de Calidad y Verificación
 
 ```bash
-# Ejecutar la suite de pruebas en todo el monorepo
-npm test
+# Verificar consistencia entre schema.prisma y documentación
+npm run check:governance
 
-# Ejecutar typecheck estricto de TypeScript en todas las capas
+# Typecheck estricto de TypeScript en los 3 workspaces
 npm run typecheck
 
-# Por workspace (backend: jest · web: vitest · mobile: jest 9 suites / 21 tests)
-npm test -w backend
-npm test -w web
-npm test -w mobile
-npm run typecheck -w mobile
+# Ejecutar pruebas en todo el monorepo (Jest en backend/mobile, Vitest en web)
+npm test
 
-# Validar esquema relacional de Prisma
-cd backend && npx prisma validate
+# Build de producción (backend + web)
+npm run build
+
+# Pipeline completo pre-despliegue
+npm run verify:predeploy
 ```
 
 ---
 
-## 👥 Equipo de Desarrollo (4 Integrantes)
+## Equipo de Desarrollo
 
 - **Tobias Vera** — *Tech Lead & Backend Developer*
 - **Juan Mendoza** — *Mobile Lead Developer*
-- **Damian Orellana** — *Técnico Multimedial & Web Frontend Developer (UI/UX en Figma)*
+- **Damian Orellana** — *Web Frontend Developer & UI/UX*
 - **Ezequiel Charca** — *QA Automation Engineer & Product Designer*
 
-
-*VetConnect — Grupo Pinnacle 2026. Todos los derechos reservados.*
+*Huellicam — Grupo Pinnacle 2026.*
