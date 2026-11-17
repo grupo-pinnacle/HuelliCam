@@ -39,7 +39,7 @@ describe('Realtime & Chat Socket Gateway (TASK-3.1 & TASK-3.2)', () => {
 
   const mockClient = {
     id: 'user-realtime-1',
-    email: 'realtime@vetconnect.com',
+    email: 'realtime@huellicam.com',
     password: 'password',
     firstName: 'Realtime',
     lastName: 'Tester',

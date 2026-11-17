@@ -12,7 +12,7 @@ import MobileNotificationService from '../src/services/notifications.service';
  * `initialState` during the very first render of its own `NavigationContainer`
  * (`expo-router/build/global-state/router-store.js`), which is *before* this
  * component renders; when no navigator is mounted that state is dropped on the
- * floor, so a cold-start `vetconnect://call/:id` silently landed on `/` instead
+ * floor, so a cold-start `huellicam://call/:id` silently landed on `/` instead
  * of the call screen. Rendering the `<Stack>` unconditionally hands the initial
  * state to a navigator that actually exists.
  *

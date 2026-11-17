@@ -384,14 +384,24 @@ export class ConsultationsService {
             OR: [{ vetId: requester.id }, { status: ConsultationStatus.WAITING }],
             deletedAt: null,
           },
-          include: { pet: true, client: { select: userSelectFields }, review: true },
+          include: {
+            pet: true,
+            client: { select: userSelectFields },
+            review: true,
+            prescriptions: { select: { id: true, medication: true, createdAt: true }, orderBy: { createdAt: 'desc' } },
+          },
           orderBy: { createdAt: 'desc' },
         });
       }
 
       return await prisma.consultation.findMany({
         where: { clientId: requester.id, deletedAt: null },
-        include: { pet: true, vet: { select: userSelectFields }, review: true },
+        include: {
+          pet: true,
+          vet: { select: userSelectFields },
+          review: true,
+          prescriptions: { select: { id: true, medication: true, createdAt: true }, orderBy: { createdAt: 'desc' } },
+        },
         orderBy: { createdAt: 'desc' },
       });
     } catch (err: any) {

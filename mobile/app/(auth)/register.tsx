@@ -51,7 +51,7 @@ export default function RegisterScreen() {
 
   return (
     <ScrollView style={styles.wrap} contentContainerStyle={styles.container} testID="register-screen">
-      <Text style={styles.title}>Crear Cuenta en VetConnect</Text>
+      <Text style={styles.title}>Crear Cuenta en Huellicam</Text>
 
       {error && (
         <View style={styles.errorBox} testID="register-error">
@@ -68,7 +68,7 @@ export default function RegisterScreen() {
       <Text style={styles.label}>Correo Electrónico *</Text>
       <TextInput
         style={styles.input}
-        placeholder="ejemplo@vetconnect.com"
+        placeholder="ejemplo@huellicam.com"
         value={formData.email}
         onChangeText={(t) => set('email', t)}
         autoCapitalize="none"

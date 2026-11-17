@@ -1,6 +1,6 @@
 import { evaluateClinicalTriage } from '../modules/consultations/clinicalTriage.engine';
 
-describe('Clinical Triage Engine (ADR-028 AI-First Triage)', () => {
+describe('Clinical Triage Engine (ADR-028 Deterministic Triage)', () => {
   it('should classify critical respiratory distress as ROJO with red flags', () => {
     const result = evaluateClinicalTriage({
       pet: { species: 'Canine', breed: 'Bulldog Francés' },

@@ -14,6 +14,7 @@ export default function NewPetScreen() {
   const [species, setSpecies] = useState('Canine');
   const [breed, setBreed] = useState('');
   const [weightKg, setWeightKg] = useState('');
+  const [birthDate, setBirthDate] = useState('');
   const [microchip, setMicrochip] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -35,6 +36,7 @@ export default function NewPetScreen() {
         species,
         breed: breed.trim(),
         weightKg: weightKg ? parseFloat(weightKg) : null,
+        birthDate: birthDate.trim() ? birthDate.trim() : null,
         microchip: microchip.trim() ? microchip.trim() : null,
       });
 
@@ -83,6 +85,15 @@ export default function NewPetScreen() {
         keyboardType="numeric"
         value={weightKg}
         onChangeText={setWeightKg}
+      />
+
+      <Text style={styles.label}>Fecha de nacimiento (AAAA-MM-DD, Opcional)</Text>
+      <TextInput
+        style={styles.input}
+        placeholder="Ej. 2022-05-14"
+        maxLength={10}
+        value={birthDate}
+        onChangeText={setBirthDate}
       />
 
       <Text style={styles.label}>Microchip ISO (15 dígitos, Opcional)</Text>

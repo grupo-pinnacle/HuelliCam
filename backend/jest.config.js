@@ -1,9 +1,9 @@
 process.env.DATABASE_URL =
   process.env.DATABASE_URL ||
-  'postgresql://postgres:postgrespassword@localhost:5432/vetconnect_dev?schema=public';
+  'postgresql://postgres:postgrespassword@localhost:5432/huellicam_dev?schema=public';
 process.env.DIRECT_URL =
   process.env.DIRECT_URL ||
-  'postgresql://postgres:postgrespassword@localhost:5432/vetconnect_dev?schema=public';
+  'postgresql://postgres:postgrespassword@localhost:5432/huellicam_dev?schema=public';
 process.env.JWT_SECRET =
   process.env.JWT_SECRET || 'dev-jwt-secret-key-change-in-production-min-32-chars-long';
 process.env.JWT_REFRESH_SECRET =
@@ -12,7 +12,7 @@ process.env.JWT_REFRESH_SECRET =
   'dev-refresh-secret-key-change-in-production-min-32-chars-long';
 process.env.REFRESH_TOKEN_SECRET = process.env.JWT_REFRESH_SECRET;
 process.env.STORAGE_DRIVER = process.env.STORAGE_DRIVER || 'local';
-process.env.AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME || 'vetconnect-media';
+process.env.AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME || 'huellicam-media';
 
 /** @type {import('ts-jest').JestConfigWithTsJest} */
 module.exports = {

@@ -25,6 +25,7 @@ jest.mock('../lib/prisma', () => ({
     prescription: {
       create: jest.fn(),
       findUnique: jest.fn(),
+      findMany: jest.fn(),
     },
   },
 }));
@@ -38,7 +39,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-jwt-secret-key-change-in-produ
 describe('Prescriptions Module (/api/consultations/:id/prescriptions)', () => {
   const mockApprovedVet = {
     id: 'vet-uuid-1',
-    email: 'vet@vetconnect.com',
+    email: 'vet@huellicam.com',
     password: 'password',
     firstName: 'Carlos',
     lastName: 'Mendoza',
@@ -118,7 +119,7 @@ describe('Prescriptions Module (/api/consultations/:id/prescriptions)', () => {
         consultation: {
           clientId: 'client-uuid-1',
           pet: { id: 'pet-uuid-1', name: 'Milo' },
-          client: { id: 'client-uuid-1', firstName: 'Lara', lastName: 'Bouso', email: 'lara@vetconnect.com' },
+          client: { id: 'client-uuid-1', firstName: 'Lara', lastName: 'Bouso', email: 'lara@huellicam.com' },
         } as any,
       });
 
@@ -137,11 +138,11 @@ describe('Prescriptions Module (/api/consultations/:id/prescriptions)', () => {
       expect(res.body.success).toBe(true);
       expect(res.body.data.medication).toBe('Amoxicilina 250mg');
       expect(res.body.data.qrCodeDataUrl).toContain('data:image/png;base64');
-      expect(res.body.data.verifyUrl).toBe('https://app.vetconnect.com.ar/prescriptions/prescription-uuid-1');
+      expect(res.body.data.verifyUrl).toBe('https://app.huellicam.com.ar/prescriptions/prescription-uuid-1');
 
       expect(emailService.sendPrescriptionEmail).toHaveBeenCalledWith(
         expect.objectContaining({
-          to: 'lara@vetconnect.com',
+          to: 'lara@huellicam.com',
           clientName: 'Lara',
           petName: 'Milo',
           vetName: 'Dr. Carlos Mendoza',
@@ -151,7 +152,7 @@ describe('Prescriptions Module (/api/consultations/:id/prescriptions)', () => {
           frequency: 'Cada 12 hs',
           durationDays: 7,
           indications: 'Administrar junto con alimentos',
-          verifyUrl: 'https://app.vetconnect.com.ar/prescriptions/prescription-uuid-1',
+          verifyUrl: 'https://app.huellicam.com.ar/prescriptions/prescription-uuid-1',
         })
       );
     });
@@ -232,6 +233,80 @@ describe('Prescriptions Module (/api/consultations/:id/prescriptions)', () => {
       expect(res.status).toBe(403);
       expect(res.body.error.code).toBe('VET_NOT_APPROVED');
       expect(emailService.sendPrescriptionEmail).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('GET /api/prescriptions & QR URL generation', () => {
+    it('should return vet prescriptions with real qrCodeDataUrl and verifyUrl', async () => {
+      mockPrismaUser.findUnique.mockResolvedValue(mockApprovedVet);
+      mockPrismaPrescription.findMany.mockResolvedValue([
+        {
+          id: 'rx-vet-1',
+          consultationId: 'cons-1',
+          vetId: mockApprovedVet.id,
+          medication: 'Meloxicam 1,5 mg/ml',
+          dosage: '0,2 ml',
+          frequency: 'Cada 24 hs',
+          durationDays: 5,
+          indications: 'Con alimento',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          vet: mockApprovedVet as any,
+          consultation: {
+            petId: 'pet-1',
+            pet: { id: 'pet-1', name: 'Milo' },
+            client: { id: 'client-1', firstName: 'Lara', lastName: 'Bouso' },
+          } as any,
+        } as any,
+      ]);
+
+      const res = await request(app)
+        .get('/api/prescriptions')
+        .set('Authorization', `Bearer ${approvedVetToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data).toHaveLength(1);
+      expect(res.body.data[0].qrCodeDataUrl).toContain('data:image/png;base64');
+      expect(res.body.data[0].verifyUrl).toBe('https://app.huellicam.com.ar/prescriptions/rx-vet-1');
+    });
+
+    it('should point verifyUrl to http://localhost:5173 in development when CLIENT_URL is unset', async () => {
+      const prevNodeEnv = process.env.NODE_ENV;
+      const prevClientUrl = process.env.CLIENT_URL;
+      const prevFrontendUrl = process.env.FRONTEND_URL;
+      process.env.NODE_ENV = 'development';
+      delete process.env.CLIENT_URL;
+      delete process.env.FRONTEND_URL;
+
+      try {
+        mockPrismaPrescription.findUnique.mockResolvedValue({
+          id: 'rx-dev-1',
+          consultationId: 'cons-1',
+          vetId: mockApprovedVet.id,
+          medication: 'Cefalexina',
+          dosage: '1 comp',
+          frequency: 'Cada 12 hs',
+          durationDays: 7,
+          indications: 'Completar ciclo',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          vet: mockApprovedVet as any,
+          consultation: {
+            pet: { id: 'pet-1', name: 'Milo' },
+            client: { id: 'client-1', firstName: 'Lara', lastName: 'Bouso' },
+          } as any,
+        } as any);
+
+        const res = await request(app).get('/api/prescriptions/rx-dev-1');
+        expect(res.status).toBe(200);
+        expect(res.body.data.verifyUrl).toBe('http://localhost:5173/prescriptions/rx-dev-1');
+        expect(res.body.data.qrCodeDataUrl).toContain('data:image/png;base64');
+      } finally {
+        process.env.NODE_ENV = prevNodeEnv;
+        if (prevClientUrl !== undefined) process.env.CLIENT_URL = prevClientUrl;
+        if (prevFrontendUrl !== undefined) process.env.FRONTEND_URL = prevFrontendUrl;
+      }
     });
   });
 });

@@ -8,14 +8,14 @@ export interface EmailOptions {
   text?: string;
 }
 
-const RESEND_FALLBACK_FROM = 'VetConnect <onboarding@resend.dev>';
+const RESEND_FALLBACK_FROM = 'Huellicam <onboarding@resend.dev>';
 
 export class EmailService {
   private resend: Resend | null = null;
   private readonly fromEmail: string;
 
   constructor() {
-    this.fromEmail = config.EMAIL_FROM && !config.EMAIL_FROM.includes('vetconnect.com.ar') ? config.EMAIL_FROM : RESEND_FALLBACK_FROM;
+    this.fromEmail = config.EMAIL_FROM && !config.EMAIL_FROM.includes('huellicam.com.ar') ? config.EMAIL_FROM : RESEND_FALLBACK_FROM;
     if (config.RESEND_API_KEY) {
       this.resend = new Resend(config.RESEND_API_KEY);
     }
@@ -76,7 +76,7 @@ export class EmailService {
   }
 
   public async sendPasswordResetCode(to: string, userName: string, code: string): Promise<boolean> {
-    const subject = `${code} es tu código de recuperación de VetConnect`;
+    const subject = `${code} es tu código de recuperación de Huellicam`;
     const html = `
       <!DOCTYPE html>
       <html>
@@ -92,14 +92,14 @@ export class EmailService {
       </head>
       <body>
         <div class="container">
-          <div class="logo">🐾 VetConnect</div>
+          <div class="logo">🐾 Huellicam</div>
           <h2>Recuperación de contraseña</h2>
           <p>Hola <strong>${userName}</strong>,</p>
           <p>Recibimos una solicitud para restablecer la contraseña de tu cuenta. Ingresá este código de 6 dígitos en la aplicación:</p>
           <div class="code-box">${code}</div>
           <p>Este código expira en <strong>15 minutos</strong>. Si no solicitaste este cambio, podés ignorar este correo; tu cuenta sigue segura.</p>
           <div class="footer">
-            © ${new Date().getFullYear()} VetConnect · Telemedicina y Cuidado Veterinario Integral
+            © ${new Date().getFullYear()} Huellicam · Telemedicina y Cuidado Veterinario Integral
           </div>
         </div>
       </body>
@@ -122,7 +122,7 @@ export class EmailService {
     verifyUrl: string;
   }): Promise<boolean> {
     const { to, clientName, petName, vetName, medication, dosage, frequency, durationDays, licenseNumber, indications, verifyUrl } = params;
-    const subject = `Receta médica emitida para ${petName} - VetConnect`;
+    const subject = `Receta médica emitida para ${petName} - Huellicam`;
     const html = `
       <!DOCTYPE html>
       <html>
@@ -204,13 +204,13 @@ export class EmailService {
       </head>
       <body>
         <div class="container">
-          <div style="font-size: 20px; font-weight: 800; color: #183c3a; margin-bottom: 20px;">🐾 VetConnect</div>
+          <div style="font-size: 20px; font-weight: 800; color: #183c3a; margin-bottom: 20px;">🐾 Huellicam</div>
           <h2>${title}</h2>
           <p>Hola <strong>${clientName}</strong>,</p>
           <p>${message}</p>
-          ${actionUrl ? `<a class="btn" href="${actionUrl}">Ingresar a VetConnect</a>` : ''}
+          ${actionUrl ? `<a class="btn" href="${actionUrl}">Ingresar a Huellicam</a>` : ''}
           <div style="margin-top: 32px; font-size: 12px; color: #648482; border-top: 1px solid #eef3f2; padding-top: 16px;">
-            © ${new Date().getFullYear()} VetConnect · Recordatorios automáticos de salud y bienestar
+            © ${new Date().getFullYear()} Huellicam · Recordatorios automáticos de salud y bienestar
           </div>
         </div>
       </body>

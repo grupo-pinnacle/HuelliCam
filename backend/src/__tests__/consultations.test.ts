@@ -44,7 +44,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-jwt-secret-key-change-in-produ
 describe('Consultations Module (/api/consultations)', () => {
   const mockClient = {
     id: 'client-uuid-1',
-    email: 'client@vetconnect.com',
+    email: 'client@huellicam.com',
     password: 'password',
     firstName: 'Lucia',
     lastName: 'Fernandez',
@@ -67,7 +67,7 @@ describe('Consultations Module (/api/consultations)', () => {
   const mockVet = {
     ...mockClient,
     id: 'vet-uuid-1',
-    email: 'vet@vetconnect.com',
+    email: 'vet@huellicam.com',
     role: 'VET' as const,
     vetStatus: 'APPROVED' as const,
     licenseNumber: 'MP-8921',
@@ -76,7 +76,7 @@ describe('Consultations Module (/api/consultations)', () => {
   const mockVet2 = {
     ...mockVet,
     id: 'vet-uuid-2',
-    email: 'vet2@vetconnect.com',
+    email: 'vet2@huellicam.com',
     licenseNumber: 'MP-9900',
   };
 
@@ -113,6 +113,7 @@ describe('Consultations Module (/api/consultations)', () => {
         breed: 'Golden Retriever',
         weightKg: 28,
         sex: 'Male',
+        birthDate: null,
         microchip: null,
         allergies: null,
         chronicConditions: null,
@@ -171,6 +172,7 @@ describe('Consultations Module (/api/consultations)', () => {
         breed: 'Golden Retriever',
         weightKg: 28,
         sex: 'Male',
+        birthDate: null,
         microchip: null,
         allergies: null,
         chronicConditions: null,

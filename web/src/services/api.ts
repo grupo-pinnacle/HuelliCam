@@ -20,7 +20,7 @@ const API_URL = getApiUrl();
 let currentAccessToken: string | null = null;
 try {
   if (typeof window !== 'undefined' && window.localStorage) {
-    currentAccessToken = window.localStorage.getItem('vetconnect_token');
+    currentAccessToken = window.localStorage.getItem('huellicam_token');
   }
 } catch {
   currentAccessToken = null;
@@ -31,9 +31,9 @@ export const setAccessToken = (token: string | null) => {
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
       if (token) {
-        window.localStorage.setItem('vetconnect_token', token);
+        window.localStorage.setItem('huellicam_token', token);
       } else {
-        window.localStorage.removeItem('vetconnect_token');
+        window.localStorage.removeItem('huellicam_token');
       }
     }
   } catch {}
@@ -43,10 +43,10 @@ export const getAccessToken = () => currentAccessToken;
 
 export const getDeviceId = (): string => {
   if (typeof window === 'undefined') return 'server';
-  let deviceId = window.localStorage.getItem('vetconnect_device_id');
+  let deviceId = window.localStorage.getItem('huellicam_device_id');
   if (!deviceId) {
     deviceId = `dev_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    window.localStorage.setItem('vetconnect_device_id', deviceId);
+    window.localStorage.setItem('huellicam_device_id', deviceId);
   }
   return deviceId;
 };
@@ -103,7 +103,7 @@ api.interceptors.response.use(
         setAccessToken(null);
         if (typeof window !== 'undefined') {
           window.dispatchEvent(
-            new CustomEvent('vetconnect:session_terminated', {
+            new CustomEvent('huellicam:session_terminated', {
               detail: {
                 reason: 'CONCURRENT_LOGIN',
                 message:
@@ -149,7 +149,7 @@ api.interceptors.response.use(
         const refreshErrorCode = (refreshError as AxiosError<ApiResponse>)?.response?.data?.error?.code;
         if (refreshErrorCode === 'SESSION_REVOKED' && typeof window !== 'undefined') {
           window.dispatchEvent(
-            new CustomEvent('vetconnect:session_terminated', {
+            new CustomEvent('huellicam:session_terminated', {
               detail: {
                 reason: 'CONCURRENT_LOGIN',
                 message: 'Se ha iniciado sesión desde otro dispositivo. Tu sesión ha sido finalizada.',

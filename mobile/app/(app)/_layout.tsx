@@ -54,7 +54,7 @@ export default function AppLayout() {
     };
   }, [accessToken, router]);
 
-  // A deep link lands straight on this layout (`vetconnect://call/:id` resolves
+  // A deep link lands straight on this layout (`huellicam://call/:id` resolves
   // to `/(app)/call/[consultationId]`), bypassing `app/index.tsx`. Without the
   // auth gate here, `initAuth()` would still be running and the screen would
   // mount with `user === null`.

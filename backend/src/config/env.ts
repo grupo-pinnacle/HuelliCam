@@ -57,7 +57,7 @@ if (!process.env.DIRECT_URL && process.env.DATABASE_URL) {
 // Fallback amigable para desarrollo local si aún no está definida
 if (!process.env.DATABASE_URL && process.env.NODE_ENV !== 'production') {
   process.env.DATABASE_URL =
-    'postgresql://vetconnect:vetconnect_password@localhost:5432/vetconnect?schema=public';
+    'postgresql://postgres:postgrespassword@localhost:5432/huellicam_dev?schema=public';
 }
 
 // Normalización de alias comunes para JWT y Storage (compatibilidad histórica y de templates)
@@ -99,7 +99,7 @@ const envSchema = z.object({
     .min(32, 'JWT_REFRESH_SECRET debe tener al menos 32 caracteres')
     .default('dev-refresh-secret-key-change-in-production-min-32-chars-long'),
   REDIS_URL: z.string().optional(),
-  LIVEKIT_URL: z.string().default('wss://vetconnect-dev.livekit.cloud'),
+  LIVEKIT_URL: z.string().default('wss://huellicam-dev.livekit.cloud'),
   LIVEKIT_API_KEY: z.string().default('devkey'),
   LIVEKIT_API_SECRET: z.string().default('secret'),
   STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
@@ -107,12 +107,13 @@ const envSchema = z.object({
   AWS_ACCESS_KEY_ID: z.string().optional().default(''),
   AWS_SECRET_ACCESS_KEY: z.string().optional().default(''),
   AWS_REGION: z.string().default('us-east-1'),
-  AWS_BUCKET_NAME: z.string().default('vetconnect-media'),
+  AWS_BUCKET_NAME: z.string().default('huellicam-media'),
   CORS_ORIGIN: z.string().optional(),
   FRONTEND_URL: z.string().optional(),
   CLIENT_URL: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
-  EMAIL_FROM: z.string().default('VetConnect <onboarding@resend.dev>'),
+  EMAIL_FROM: z.string().default('Huellicam <onboarding@resend.dev>'),
+  ENABLE_EMAIL_SCHEDULER: z.enum(['true', 'false']).optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -139,18 +140,19 @@ export const config = Object.freeze(
           process.env.REFRESH_TOKEN_SECRET ||
           'dev-refresh-secret-key-change-in-production-min-32-chars-long',
         REDIS_URL: undefined,
-        LIVEKIT_URL: 'wss://vetconnect-dev.livekit.cloud',
+        LIVEKIT_URL: 'wss://huellicam-dev.livekit.cloud',
         LIVEKIT_API_KEY: 'devkey',
         LIVEKIT_API_SECRET: 'secret',
         STORAGE_DRIVER: (process.env.STORAGE_DRIVER as 'local' | 's3') || 'local',
         UPLOAD_DIR: process.env.UPLOAD_DIR || './uploads',
         AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID || '',
         RESEND_API_KEY: process.env.RESEND_API_KEY,
-        EMAIL_FROM: process.env.EMAIL_FROM || 'VetConnect <onboarding@resend.dev>',
+        EMAIL_FROM: process.env.EMAIL_FROM || 'Huellicam <onboarding@resend.dev>',
+        ENABLE_EMAIL_SCHEDULER: process.env.ENABLE_EMAIL_SCHEDULER as 'true' | 'false' | undefined,
         AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY || '',
         AWS_REGION: process.env.AWS_REGION || 'us-east-1',
         AWS_BUCKET_NAME:
-          process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME || 'vetconnect-media',
+          process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME || 'huellicam-media',
         CORS_ORIGIN: process.env.CORS_ORIGIN,
         FRONTEND_URL: process.env.FRONTEND_URL || process.env.CLIENT_URL,
         CLIENT_URL: process.env.CLIENT_URL,

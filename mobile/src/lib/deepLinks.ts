@@ -2,7 +2,7 @@
  * Single source of truth for "incoming intent -> screen" mapping (WU3 / D-02).
  *
  * Deliberately free of `react-native`, `expo-router`, `expo-linking` and every
- * store, so both channels that can move the user (a `vetconnect://` URL and a
+ * store, so both channels that can move the user (a `huellicam://` URL and a
  * push-notification tap) resolve through the same table and both stay unit
  * testable without rendering anything.
  *
@@ -19,7 +19,7 @@
  * both names explicitly instead of assuming they match.
  */
 
-export const APP_SCHEME = 'vetconnect';
+export const APP_SCHEME = 'huellicam';
 
 export type DeepLinkScreen = 'call' | 'consultation' | 'prescriptions' | 'chat' | 'review';
 
@@ -59,10 +59,10 @@ function decodeSegment(segment: string): string | null {
 }
 
 /**
- * Parses `vetconnect://<screen>/<id>` into a routable target.
+ * Parses `huellicam://<screen>/<id>` into a routable target.
  *
- * Accepts both the two-slash and three-slash native forms (`vetconnect://call/x`
- * and `vetconnect:///call/x`) because `URL` parsing puts the first segment in
+ * Accepts both the two-slash and three-slash native forms (`huellicam://call/x`
+ * and `huellicam:///call/x`) because `URL` parsing puts the first segment in
  * `host` and the rest in `pathname`. Query strings and fragments are dropped:
  * they never address a different screen.
  *

@@ -96,7 +96,7 @@ describe('Legal & Compliance Pages Suite', () => {
     const acceptBtn = screen.getByTestId('cookie-accept-all');
     fireEvent.click(acceptBtn);
 
-    const saved = window.localStorage.getItem('vetconnect_cookie_consent');
+    const saved = window.localStorage.getItem('huellicam_cookie_consent');
     expect(saved).not.toBeNull();
     const parsed = JSON.parse(saved!);
     expect(parsed.analytics).toBe(true);

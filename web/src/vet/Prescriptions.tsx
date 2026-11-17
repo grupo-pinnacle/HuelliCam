@@ -1,9 +1,38 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button, EmptyState, Icon, Modal, PageHeader, Tabs, go } from "../shared";
 import api from "../services/api";
 import { useAuth } from "../context/AuthContext";
-import { getPatient, patients, type Rx } from "./data";
+import type { ApiResponse, Consultation as BackendConsultation, Prescription as BackendPrescription } from "../types";
+import { getPatient, registerPatient, type Rx } from "./data";
+import { mapBackendPetToPatient } from "./mappers";
 import { ConsultStatus, PetPhoto, useVet } from "./vetkit";
+
+type BackendPrescriptionWithConsultation = BackendPrescription & {
+  consultation?: BackendConsultation;
+};
+
+function mapBackendRxToVetRx(item: BackendPrescriptionWithConsultation): Rx {
+  if (item.consultation?.pet) {
+    registerPatient(mapBackendPetToPatient(item.consultation.pet, item.consultation.client));
+  }
+  return {
+    id: item.id,
+    petId: item.consultation?.petId || "",
+    consultationId: item.consultationId,
+    med: item.medication,
+    dose: item.dosage,
+    freq: item.frequency,
+    duration: `${item.durationDays} días`,
+    notes: item.indications,
+    status: "Emitida",
+    date: item.createdAt
+      ? new Date(item.createdAt).toLocaleDateString("es-AR", { day: "numeric", month: "short", year: "numeric" })
+      : "Hoy",
+    qrCodeDataUrl: item.qrCodeDataUrl,
+    verifyUrl: item.verifyUrl,
+  };
+}
 
 export function PrescriptionsPage() {
   const { rx } = useVet();
@@ -31,6 +60,7 @@ const required: (keyof Form)[] = ["pet", "med", "dose", "freq", "duration"];
 const labels: Record<keyof Form, string> = { pet: "Paciente", med: "Medicamento", dose: "Dosis", freq: "Frecuencia", duration: "Duración", notes: "Indicaciones" };
 
 export function NewPrescription() {
+  const queryClient = useQueryClient();
   const { rx, setRx, notify, consults, patientsList } = useVet();
   const params = new URLSearchParams(window.location.search);
   const draft = rx.find((r) => r.id === params.get("draft"));
@@ -40,32 +70,55 @@ export function NewPrescription() {
   const availablePatients = patientsList;
   const set = (k: keyof Form, v: string) => { setF({ ...f, [k]: v }); if (errors[k]) setErrors({ ...errors, [k]: undefined }); };
   const validate = (keys: (keyof Form)[]) => { const e: typeof errors = {}; keys.forEach((k) => { if (!f[k].trim()) e[k] = `Completá ${labels[k].toLowerCase()}.`; }); setErrors(e); return Object.keys(e).length === 0; };
+
   const save = async (status: Rx["status"]): Promise<string | null> => {
-    const id = draft?.id ?? `RX-${new Date().getFullYear()}-${String(430 + rx.length).padStart(4, "0")}`;
-    const entry: Rx = { id, petId: f.pet, med: f.med, dose: f.dose, freq: f.freq, duration: f.duration, notes: f.notes, status, date: "Hoy" };
-    if (status === "Emitida") {
-      const consultationId = params.get("consultationId") ?? consults.find((c) => c.petId === f.pet)?.id;
-      if (consultationId) {
-        const durationMatch = f.duration.match(/\d+/);
-        const durationDays = durationMatch ? parseInt(durationMatch[0], 10) : 7;
-        try {
-          await api.post(`/api/consultations/${consultationId}/prescriptions`, {
-            medication: f.med,
-            dosage: f.dose,
-            frequency: f.freq,
-            durationDays: durationDays > 0 ? durationDays : 7,
-            indications: f.notes.trim() || "Administrar según indicaciones profesionales.",
-          });
-        } catch (err) {
-          console.warn("Backend prescription save warning:", err);
-          notify("No pudimos emitir la receta en el servidor. Verificá tu conexión.");
-          return null;
-        }
-      }
+    if (status === "Borrador") {
+      const draftId = draft?.id ?? `DRAFT-${Date.now()}`;
+      const entry: Rx = { id: draftId, petId: f.pet, med: f.med, dose: f.dose, freq: f.freq, duration: f.duration, notes: f.notes, status: "Borrador", date: "Hoy" };
+      setRx((l) => draft ? l.map((r) => r.id === draftId ? entry : r) : [entry, ...l]);
+      return draftId;
     }
-    setRx((l) => draft ? l.map((r) => r.id === id ? entry : r) : [entry, ...l]);
-    return id;
+
+    const consultationId = params.get("consultationId") ?? consults.find((c) => c.petId === f.pet && c.status !== "Cancelada")?.id;
+    if (!consultationId) {
+      notify("Para emitir una receta oficial con QR necesitás una consulta activa o finalizada de este paciente.");
+      return null;
+    }
+
+    const durationMatch = f.duration.match(/\d+/);
+    const durationDays = durationMatch ? parseInt(durationMatch[0], 10) : 7;
+
+    try {
+      const res = await api.post<ApiResponse<BackendPrescriptionWithConsultation>>(
+        `/api/consultations/${consultationId}/prescriptions`,
+        {
+          medication: f.med,
+          dosage: f.dose,
+          frequency: f.freq,
+          durationDays: durationDays > 0 ? durationDays : 7,
+          indications: f.notes.trim() || "Administrar según indicaciones profesionales.",
+        }
+      );
+
+      if (!res.data.success || !res.data.data) {
+        notify("No pudimos emitir la receta en el servidor.");
+        return null;
+      }
+
+      const createdRx = mapBackendRxToVetRx(res.data.data);
+      setRx((list) => {
+        const withoutDraft = draft ? list.filter((item) => item.id !== draft.id) : list;
+        return [createdRx, ...withoutDraft.filter((item) => item.id !== createdRx.id)];
+      });
+      queryClient.invalidateQueries({ queryKey: ["prescriptions", "vet"] });
+      return createdRx.id;
+    } catch (err) {
+      console.warn("Backend prescription save warning:", err);
+      notify("No pudimos emitir la receta en el servidor. Verificá tu conexión.");
+      return null;
+    }
   };
+
   const p = f.pet ? getPatient(f.pet) : null;
   return <>
     <button className="back-link" onClick={() => go("/vet/prescriptions")}><Icon name="arrow" size={17}/> Volver a recetas</button>
@@ -84,38 +137,64 @@ export function NewPrescription() {
         <Button type="submit" icon="check">Emitir receta</Button>
       </div>
     </form>
-    {confirm && p && <Modal title="Confirmar receta" text={`Revisá los datos antes de emitir la receta de ${f.med} para ${p.name}.`} cancel="Volver a editar" confirm="Confirmar emisión" onClose={() => setConfirm(false)} onConfirm={async () => { const id = await save("Emitida"); setConfirm(false); if (!id) return; notify("Receta emitida correctamente."); go(`/vet/prescriptions/${id}`); }}/>}
+    {confirm && p && <Modal title="Confirmar receta" text={`Revisá los datos antes de emitir la receta de ${f.med} para ${p.name}.`} cancel="Volver a editar" confirm="Confirmar emisión" onClose={() => setConfirm(false)} onConfirm={async () => { const id = await save("Emitida"); setConfirm(false); if (!id) return; notify("Receta emitida correctamente con QR oficial."); go(`/vet/prescriptions/${id}`); }}/>}
   </>;
 }
 
-function ReferenceCode({ id }: { id: string }) {
-  const cells = useMemo(() => {
-    let h = 0; for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-    const n = 21; const out: [number, number][] = [];
-    const finder = (x: number, y: number) => (x < 8 && y < 8) || (x > 12 && y < 8) || (x < 8 && y > 12);
-    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-      if (finder(x, y)) { const lx = x % 13, ly = y % 13; const edge = lx === 0 || ly === 0 || lx === 6 || ly === 6; const core = lx >= 2 && lx <= 4 && ly >= 2 && ly <= 4; if ((lx < 7 && ly < 7) && (edge || core)) out.push([x, y]); continue; }
-      h = (h * 1103515245 + 12345) >>> 0; if ((h >> 16) & 1) out.push([x, y]);
-    }
-    return out;
-  }, [id]);
-  return <svg viewBox="0 0 21 21" role="img" aria-label="Código de referencia conceptual" className="v-qr" shapeRendering="crispEdges">{cells.map(([x, y]) => <rect key={`${x}-${y}`} x={x} y={y} width="1" height="1"/>)}</svg>;
-}
-
 export function PrescriptionDetail({ id }: { id: string }) {
-  const { rx, notify } = useVet();
+  const { rx, setRx, notify } = useVet();
   const { user } = useAuth();
   const vetName = user ? (user.lastName ? `Dr. ${user.firstName} ${user.lastName}` : (user.firstName ? `Dr. ${user.firstName}` : "Profesional")) : "Profesional";
   const licenseStr = user?.licenseNumber ? `Clínica general · MP ${user.licenseNumber}` : "Clínica general";
   const now = new Date();
   const realDate = now.toLocaleDateString("es-AR", { day: "numeric", month: "long", year: "numeric" });
-  const r = rx.find((x) => x.id === id);
+  const localMatch = rx.find((x) => x.id === id);
+
+  const [remoteRx, setRemoteRx] = useState<Rx | null>(null);
+  const [loading, setLoading] = useState<boolean>(() => !localMatch || (localMatch.status !== "Borrador" && !localMatch.qrCodeDataUrl));
+
+  useEffect(() => {
+    if (localMatch?.status === "Borrador" || (localMatch && localMatch.qrCodeDataUrl)) {
+      setLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    setLoading(true);
+    api
+      .get<ApiResponse<BackendPrescriptionWithConsultation>>(`/api/prescriptions/${id}`, { signal: controller.signal })
+      .then((res) => {
+        if (controller.signal.aborted) return;
+        if (res.data.success && res.data.data) {
+          const mapped = mapBackendRxToVetRx(res.data.data);
+          setRemoteRx(mapped);
+          setRx((list) => list.some((item) => item.id === mapped.id) ? list.map((item) => item.id === mapped.id ? mapped : item) : [mapped, ...list]);
+        }
+      })
+      .catch(() => {
+        // Error handled by fallback state
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [id, localMatch?.status, localMatch?.qrCodeDataUrl, setRx]);
+
+  const r = localMatch ?? remoteRx;
+  if (loading && !r) {
+    return <><button className="back-link" onClick={() => go("/vet/prescriptions")}><Icon name="arrow" size={17}/> Volver a recetas</button><div className="panel"><EmptyState icon="file" title="Cargando receta…" text="Obteniendo código QR oficial y datos de verificación."/></div></>;
+  }
   if (!r) return <><button className="back-link" onClick={() => go("/vet/prescriptions")}><Icon name="arrow" size={17}/> Volver a recetas</button><div className="panel"><EmptyState icon="file" title="No encontramos esta receta." text="Puede haber sido movida o no existir."/></div></>;
+
   const p = getPatient(r.petId);
   const issued = r.status !== "Borrador";
+  const publicVerifyPath = `/prescriptions/${r.id}`;
+  const displayVerifyUrl = r.verifyUrl || publicVerifyPath;
+
   return <>
     <button className="back-link" onClick={() => go("/vet/prescriptions")}><Icon name="arrow" size={17}/> Volver a recetas</button>
-    <div className="v-issued-head" role="status"><span><Icon name={issued ? "check" : "edit"} size={24}/></span><div><span className="eyebrow">{issued ? "Receta oficial" : "En preparación"}</span><h1>{issued ? "Receta emitida" : "Receta en borrador"}</h1><p>{issued ? `La receta de ${p.name} está lista para revisar.` : "Todavía no fue emitida."}</p></div></div>
+    <div className="v-issued-head" role="status"><span><Icon name={issued ? "check" : "edit"} size={24}/></span><div><span className="eyebrow">{issued ? "Receta oficial" : "En preparación"}</span><h1>{issued ? "Receta emitida" : "Receta en borrador"}</h1><p>{issued ? `La receta de ${p.name} cuenta con código QR oficial verificable.` : "Todavía no fue emitida."}</p></div></div>
     <article className="v-rx" aria-label={`Receta ${r.id}`}>
       <header><div><span className="eyebrow">Receta veterinaria</span><h2>{r.id}</h2></div><ConsultStatus status={r.status}/></header>
       <div className="v-rx__grid">
@@ -126,11 +205,29 @@ export function PrescriptionDetail({ id }: { id: string }) {
       </div>
       <div className="v-rx__med"><Icon name="pill" size={22}/><div><span className="v-label">Medicamento</span><h3>{r.med}</h3><p>{r.dose} · {r.freq} · durante {r.duration}</p></div></div>
       <div className="v-rx__notes"><span className="v-label">Indicaciones</span><p>{r.notes || "Sin indicaciones adicionales."}</p></div>
-      <footer><ReferenceCode id={r.id}/><p><b>Identificador {r.id}</b><br/>Código de referencia interno de HuelliCam, a modo ilustrativo. No constituye una validación externa.</p></footer>
+      <footer>
+        {issued && r.qrCodeDataUrl ? (
+          <>
+            <img src={r.qrCodeDataUrl} alt={`Código QR oficial de verificación para receta ${r.id}`} className="v-qr" data-testid="vet-prescription-qr"/>
+            <p>
+              <b>Validación oficial para farmacia · ID {r.id}</b><br/>
+              Escaneá el QR para abrir la receta verificable en <a href={displayVerifyUrl} target="_blank" rel="noreferrer">{displayVerifyUrl}</a>.
+            </p>
+          </>
+        ) : (
+          <p>
+            <b>{issued ? `Receta ${r.id}` : "Borrador sin emitir"}</b><br/>
+            {issued ? "No se pudo cargar la imagen del QR en este momento." : "Al emitir la receta se generará automáticamente el código QR oficial para farmacias."}
+          </p>
+        )}
+      </footer>
     </article>
     <div className="v-inline-actions v-inline-actions--left">
       <Button variant="secondary" onClick={() => go("/vet/prescriptions")}>Volver a recetas</Button>
-      <Button variant="soft" icon="paperclip" onClick={() => { void navigator.clipboard?.writeText(r.id); notify("Identificador copiado"); }}>Copiar identificador</Button>
+      {issued && (
+        <Button variant="soft" icon="qr" onClick={() => window.open(publicVerifyPath, "_blank", "noopener,noreferrer")}>Abrir vista pública QR</Button>
+      )}
+      <Button variant="soft" icon="paperclip" onClick={() => { void navigator.clipboard?.writeText(issued ? displayVerifyUrl : r.id); notify(issued ? "Enlace QR copiado" : "Identificador copiado"); }}>{issued ? "Copiar enlace QR" : "Copiar identificador"}</Button>
       {!issued && <Button onClick={() => go(`/vet/prescriptions/new?draft=${r.id}`)}>Continuar borrador</Button>}
     </div>
   </>;

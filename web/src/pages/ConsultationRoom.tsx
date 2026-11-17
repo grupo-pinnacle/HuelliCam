@@ -253,7 +253,7 @@ export const ConsultationRoom: React.FC = () => {
       switch (data.status) {
         case 'WAITING':
           setPhase('waiting');
-          // Poll every 5s until status changes — AGENTS.md / 08_DESARROLLO §2.1
+          // Poll every 5s until status changes while waiting for vet assignment
           pollingRef.current = setInterval(async () => {
             const polled = await fetchConsultation();
             if (!isMounted || !polled) return;
@@ -646,7 +646,7 @@ export const ConsultationRoom: React.FC = () => {
           </div>
           <h2 className="text-xl font-bold text-emerald-400 mt-4 mb-2">Consulta Finalizada</h2>
           <p className="text-slate-300 mb-6">
-            La consulta médica ha concluido. Gracias por utilizar VetConnect.
+            La consulta médica ha concluido. Gracias por utilizar Huellicam.
           </p>
 
           {user?.role === 'CLIENT' && reviewSubmitted && (

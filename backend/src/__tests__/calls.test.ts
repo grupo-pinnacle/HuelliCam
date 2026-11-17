@@ -23,7 +23,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-jwt-secret-key-change-in-produ
 describe('Calls Module (/api/calls)', () => {
   const mockClient = {
     id: 'client-uuid-call-1',
-    email: 'client.call@vetconnect.com',
+    email: 'client.call@huellicam.com',
     password: 'password',
     firstName: 'Sofia',
     lastName: 'Rios',

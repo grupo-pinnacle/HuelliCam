@@ -47,7 +47,7 @@ export const DashboardClient: React.FC = () => {
 
   const getInitialDraft = () => {
     try {
-      const saved = typeof window !== 'undefined' ? localStorage.getItem('vetconnect_new_pet_draft') : null;
+      const saved = typeof window !== 'undefined' ? localStorage.getItem('huellicam_new_pet_draft') : null;
       if (saved) return JSON.parse(saved);
     } catch {}
     return null;
@@ -67,6 +67,7 @@ export const DashboardClient: React.FC = () => {
     breed: initialDraft?.breed || '',
     weightKg: initialDraft?.weightKg != null ? String(initialDraft.weightKg) : '',
     sex: initialDraft?.sex || '',
+    birthDate: initialDraft?.birthDate || '',
     microchip: initialDraft?.microchip || '',
     allergies: initialDraft?.allergies || '',
     chronicConditions: initialDraft?.chronicConditions || '',
@@ -117,7 +118,7 @@ export const DashboardClient: React.FC = () => {
           photoPreview,
           isModalOpen: true,
         };
-        localStorage.setItem('vetconnect_new_pet_draft', JSON.stringify(draft));
+        localStorage.setItem('huellicam_new_pet_draft', JSON.stringify(draft));
       } catch {}
     }
   }, [showPetModal, editingPetId, petForm, unknownWeight, photoPreview]);
@@ -145,6 +146,7 @@ export const DashboardClient: React.FC = () => {
       breed: '',
       weightKg: '',
       sex: '',
+      birthDate: '',
       microchip: '',
       allergies: '',
       chronicConditions: '',
@@ -157,7 +159,7 @@ export const DashboardClient: React.FC = () => {
     setEditingPetId(pet.id);
     setUnknownWeight(pet.weightKg == null);
     setPetModalError(null);
-    const savedPhoto = typeof window !== 'undefined' ? localStorage.getItem(`vetconnect_pet_photo_${pet.id}`) : null;
+    const savedPhoto = typeof window !== 'undefined' ? localStorage.getItem(`huellicam_pet_photo_${pet.id}`) : null;
     setPhotoPreview(savedPhoto || null);
     setPetForm({
       name: pet.name || '',
@@ -165,6 +167,7 @@ export const DashboardClient: React.FC = () => {
       breed: pet.breed || '',
       weightKg: pet.weightKg != null ? String(pet.weightKg) : '',
       sex: pet.sex || '',
+      birthDate: pet.birthDate ? pet.birthDate.slice(0, 10) : '',
       microchip: pet.microchip || '',
       allergies: Array.isArray(pet.allergies as unknown)
         ? (pet.allergies as unknown as string[]).join(', ')
@@ -184,7 +187,7 @@ export const DashboardClient: React.FC = () => {
     setPetModalError(null);
     setPhotoPreview(null);
     try {
-      localStorage.removeItem('vetconnect_new_pet_draft');
+      localStorage.removeItem('huellicam_new_pet_draft');
     } catch {}
   };
 
@@ -199,6 +202,7 @@ export const DashboardClient: React.FC = () => {
         breed: petForm.breed.trim(),
         weightKg: unknownWeight || !petForm.weightKg ? undefined : parseFloat(petForm.weightKg),
         sex: petForm.sex.trim() ? petForm.sex.trim() : undefined,
+        birthDate: petForm.birthDate.trim() ? petForm.birthDate.trim() : null,
         microchip: petForm.microchip.trim() ? petForm.microchip.trim() : undefined,
         allergies: petForm.allergies.trim() ? petForm.allergies.trim() : undefined,
         chronicConditions: petForm.chronicConditions.trim() ? petForm.chronicConditions.trim() : undefined,
@@ -210,12 +214,12 @@ export const DashboardClient: React.FC = () => {
           const updated = res.data.data;
           if (photoPreview) {
             try {
-              localStorage.setItem(`vetconnect_pet_photo_${editingPetId}`, photoPreview);
+              localStorage.setItem(`huellicam_pet_photo_${editingPetId}`, photoPreview);
             } catch {}
           }
           isClosingRef.current = true;
           try {
-            localStorage.removeItem('vetconnect_new_pet_draft');
+            localStorage.removeItem('huellicam_new_pet_draft');
           } catch {}
           setPets((prev) => prev.map((p) => (p.id === editingPetId ? updated : p)));
           setSelectedDossierPet((prev) => (prev?.id === editingPetId ? updated : prev));
@@ -226,12 +230,12 @@ export const DashboardClient: React.FC = () => {
         if (res.data.success && res.data.data) {
           if (photoPreview && res.data.data.id) {
             try {
-              localStorage.setItem(`vetconnect_pet_photo_${res.data.data.id}`, photoPreview);
+              localStorage.setItem(`huellicam_pet_photo_${res.data.data.id}`, photoPreview);
             } catch {}
           }
           isClosingRef.current = true;
           try {
-            localStorage.removeItem('vetconnect_new_pet_draft');
+            localStorage.removeItem('huellicam_new_pet_draft');
           } catch {}
           setPets((prev) => [res.data.data!, ...prev]);
           handleClosePetModal();
@@ -321,7 +325,7 @@ export const DashboardClient: React.FC = () => {
                   className="text-lg sm:text-2xl font-extrabold text-[#06241D] tracking-tight truncate"
                   data-testid="header-title"
                 >
-                  VetConnect — Portal Tutor
+                  Huellicam — Portal Tutor
                 </h1>
                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-300">
                   <ShieldCheck className="w-3 h-3 text-emerald-600" />
@@ -500,6 +504,15 @@ export const DashboardClient: React.FC = () => {
                                 className="inline-flex items-center gap-1 bg-slate-100 text-slate-700 border border-slate-200 px-2 py-0.5 rounded-md font-semibold"
                               >
                                 {pet.sex}
+                              </span>
+                            )}
+                            {pet.birthDate && (
+                              <span
+                                data-testid={`pet-birthdate-${pet.id}`}
+                                className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md font-semibold"
+                              >
+                                <Calendar className="w-3 h-3 text-emerald-600" />
+                                Nac: {pet.birthDate.slice(0, 10).split('-').reverse().join('/')}
                               </span>
                             )}
                             {pet.weightKg != null ? (
@@ -777,10 +790,10 @@ export const DashboardClient: React.FC = () => {
                             </button>
                           )}
 
-                          {c.status === 'COMPLETED' && (
+                          {c.status === 'COMPLETED' && c.prescriptions && c.prescriptions.length > 0 && (
                             <button
                               type="button"
-                              onClick={() => navigate(`/prescriptions/${c.id}`)}
+                              onClick={() => navigate(`/prescriptions/${c.prescriptions![0].id}`)}
                               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all border border-slate-200 cursor-pointer"
                               title="Ver Receta Oficial SENASA"
                             >
@@ -981,19 +994,35 @@ export const DashboardClient: React.FC = () => {
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
-                    Microchip ISO
-                  </label>
-                  <input
-                    data-testid="input-pet-microchip"
-                    type="text"
-                    maxLength={15}
-                    placeholder="15 dígitos numéricos"
-                    value={petForm.microchip}
-                    onChange={(e) => setPetForm({ ...petForm, microchip: e.target.value })}
-                    className="w-full px-3 py-2.5 border border-[#E8E2D5] focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 rounded-xl text-sm font-mono transition-all"
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
+                      Fecha de nacimiento
+                    </label>
+                    <input
+                      data-testid="input-pet-birthdate"
+                      type="date"
+                      max={new Date().toISOString().slice(0, 10)}
+                      value={petForm.birthDate}
+                      onChange={(e) => setPetForm({ ...petForm, birthDate: e.target.value })}
+                      className="w-full px-3 py-2.5 border border-[#E8E2D5] focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 rounded-xl text-sm font-medium transition-all"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
+                      Microchip ISO
+                    </label>
+                    <input
+                      data-testid="input-pet-microchip"
+                      type="text"
+                      maxLength={15}
+                      placeholder="15 dígitos numéricos"
+                      value={petForm.microchip}
+                      onChange={(e) => setPetForm({ ...petForm, microchip: e.target.value })}
+                      className="w-full px-3 py-2.5 border border-[#E8E2D5] focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 rounded-xl text-sm font-mono transition-all"
+                    />
+                  </div>
                 </div>
 
                 {/* Antecedentes Clínicos Declarados (ADR-029) */}

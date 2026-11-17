@@ -8,7 +8,7 @@ describe('Mobile input validation (Zod, espejo backend)', () => {
 
   it('should require license for VET at store level but accept shape', () => {
     const parsed = registerSchema.safeParse({
-      email: 'vet@vetconnect.com',
+      email: 'vet@huellicam.com',
       password: 'Password123!',
       firstName: 'Ana',
       lastName: 'Vet',

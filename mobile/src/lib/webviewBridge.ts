@@ -14,9 +14,9 @@ import { User } from '../types';
  */
 
 /** Must match the key `web/src/services/api.ts` reads and writes. */
-export const WEB_TOKEN_STORAGE_KEY = 'vetconnect_token';
+export const WEB_TOKEN_STORAGE_KEY = 'huellicam_token';
 /** Must match the key `web/src/context/AuthContext.tsx` reads and writes. */
-export const WEB_USER_STORAGE_KEY = 'vetconnect_user';
+export const WEB_USER_STORAGE_KEY = 'huellicam_user';
 
 const STORAGE_PREFIX = 'window.localStorage';
 

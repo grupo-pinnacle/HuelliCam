@@ -14,7 +14,7 @@ jest.mock('../lib/api', () => ({
     patch: jest.fn(),
     delete: jest.fn(),
   },
-  SECURE_STORE_REFRESH_KEY: 'vetconnect_refresh_token',
+  SECURE_STORE_REFRESH_KEY: 'huellicam_refresh_token',
   getApiErrorMessage: (err: any, fallback: string) => {
     return err?.response?.data?.error?.message || err?.message || fallback;
   },

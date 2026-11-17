@@ -39,7 +39,7 @@ export default function PrescriptionScreen() {
     if (!prescription) return;
     try {
       await Share.share({
-        message: `Receta Médica Digital VetConnect SENASA\nMedicamento: ${prescription.medication}\nDosis: ${prescription.dosage}\nMatrícula Vet: ${prescription.vet?.licenseNumber || 'N/A'}`,
+        message: `Receta Médica Digital Huellicam SENASA\nMedicamento: ${prescription.medication}\nDosis: ${prescription.dosage}\nMatrícula Vet: ${prescription.vet?.licenseNumber || 'N/A'}`,
       });
     } catch (err) {
       console.warn('Share error:', err);

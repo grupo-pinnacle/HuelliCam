@@ -48,7 +48,7 @@ export function ProfilePage() {
     experience: "Profesional matriculado",
     specialties: specialties.slice(0, 3).join(", "),
     jurisdiction: "Ciudad Autónoma de Buenos Aires",
-    email: user?.email || "profesional@vetconnect.com.ar",
+    email: user?.email || "profesional@huellicam.com.ar",
     phone: user?.phone || "+54 11 5555 0100",
     bio: user?.bio || "Veterinario con experiencia en atención clínica telemática y seguimiento de pacientes."
   };

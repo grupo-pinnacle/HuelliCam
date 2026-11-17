@@ -6,7 +6,7 @@ describe('Mobile Prescription Data Formatters', () => {
       licenseNumber: 'MP-8921',
     };
 
-    const text = `Receta Médica Digital VetConnect SENASA\nMedicamento: ${rx.medication}\nDosis: ${rx.dosage}\nMatrícula Vet: ${rx.licenseNumber}`;
+    const text = `Receta Médica Digital Huellicam SENASA\nMedicamento: ${rx.medication}\nDosis: ${rx.dosage}\nMatrícula Vet: ${rx.licenseNumber}`;
 
     expect(text).toContain('Amoxicilina 250mg');
     expect(text).toContain('MP-8921');

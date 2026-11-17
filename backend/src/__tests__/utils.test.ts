@@ -156,7 +156,7 @@ describe('Utility, Error & DTO Validation Suite', () => {
         const valid = createMessageSchema.safeParse({
           content: 'Foto en alta definicion',
           clientMsgId: 'msg-uuid-client-3',
-          attachmentUrl: 'https://app.vetconnect.com.ar/uploads/sample.jpg',
+          attachmentUrl: 'https://app.huellicam.com.ar/uploads/sample.jpg',
         });
         expect(valid.success).toBe(true);
       });

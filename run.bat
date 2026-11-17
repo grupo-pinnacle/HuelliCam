@@ -1,10 +1,10 @@
 @echo off
 setlocal
 set NODE_OPTIONS=--use-system-ca
-title VetConnect v2.0 - Entorno de Desarrollo
+title Huellicam v2.0 - Entorno de Desarrollo
 
 echo ======================================================================
-echo    VetConnect v2.0 - Plataforma de Telemedicina Veterinaria
+echo    Huellicam v2.0 - Plataforma de Telemedicina Veterinaria
 echo ======================================================================
 echo.
 
@@ -99,7 +99,7 @@ goto fin
 :run_all
 echo.
 echo Lanzando Mobile App (Expo) en ventana independiente...
-start "VetConnect Mobile (Expo)" cmd /k "call npm run dev:mobile"
+start "Huellicam Mobile (Expo)" cmd /k "call npm run dev:mobile"
 echo Iniciando Backend y Web en esta consola...
 call npm run dev
 goto fin

@@ -27,7 +27,7 @@ jest.mock('expo-secure-store', () => ({
 jest.mock('../lib/api', () => ({
   __esModule: true,
   default: { post, get, patch, defaults: { headers: { common: {} } } },
-  SECURE_STORE_REFRESH_KEY: 'vetconnect_refresh_token',
+  SECURE_STORE_REFRESH_KEY: 'huellicam_refresh_token',
   resetRefreshState: jest.fn(),
   setSessionExpiredHandler: jest.fn(),
 }));

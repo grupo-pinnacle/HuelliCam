@@ -23,7 +23,7 @@ describe('Auth Module (/api/auth)', () => {
 
   const mockUser = {
     id: 'user-uuid-1',
-    email: 'test.client@vetconnect.com',
+    email: 'test.client@huellicam.com',
     password: dummyPasswordHash,
     firstName: 'Laura',
     lastName: 'Perez',
@@ -57,7 +57,7 @@ describe('Auth Module (/api/auth)', () => {
       mockPrismaUser.create.mockResolvedValue(mockUser);
 
       const res = await request(app).post('/api/auth/register').send({
-        email: 'test.client@vetconnect.com',
+        email: 'test.client@huellicam.com',
         password: 'Password123!',
         firstName: 'Laura',
         lastName: 'Perez',
@@ -66,7 +66,7 @@ describe('Auth Module (/api/auth)', () => {
 
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
-      expect(res.body.data.user.email).toBe('test.client@vetconnect.com');
+      expect(res.body.data.user.email).toBe('test.client@huellicam.com');
       expect(res.body.data.user.role).toBe('CLIENT');
       expect(res.body.data.accessToken).toBeDefined();
     });
@@ -75,7 +75,7 @@ describe('Auth Module (/api/auth)', () => {
       mockPrismaUser.findUnique.mockResolvedValue(mockUser);
 
       const res = await request(app).post('/api/auth/register').send({
-        email: 'test.client@vetconnect.com',
+        email: 'test.client@huellicam.com',
         password: 'Password123!',
         firstName: 'Laura',
         lastName: 'Perez',
@@ -92,7 +92,7 @@ describe('Auth Module (/api/auth)', () => {
       });
 
       const res = await request(app).post('/api/auth/register').send({
-        email: 'test.client@vetconnect.com',
+        email: 'test.client@huellicam.com',
         password: 'Password123!',
         firstName: 'Laura',
         lastName: 'Perez',
@@ -109,7 +109,7 @@ describe('Auth Module (/api/auth)', () => {
       const mockVetUser = {
         ...mockUser,
         id: 'vet-uuid-1',
-        email: 'test.vet@vetconnect.com',
+        email: 'test.vet@huellicam.com',
         role: 'VET' as const,
         vetStatus: 'PENDING' as const,
         licenseNumber: 'MP-1234',
@@ -119,7 +119,7 @@ describe('Auth Module (/api/auth)', () => {
       mockPrismaUser.create.mockResolvedValue(mockVetUser);
 
       const res = await request(app).post('/api/auth/register').send({
-        email: 'test.vet@vetconnect.com',
+        email: 'test.vet@huellicam.com',
         password: 'Password123!',
         firstName: 'Dr. Hugo',
         lastName: 'Sanchez',
@@ -142,7 +142,7 @@ describe('Auth Module (/api/auth)', () => {
       mockPrismaUser.findUnique.mockRejectedValue(prismaInitError);
 
       const res = await request(app).post('/api/auth/register').send({
-        email: 'new.user@vetconnect.com',
+        email: 'new.user@huellicam.com',
         password: 'Password123!',
         firstName: 'Carlos',
         lastName: 'Gomez',
@@ -161,7 +161,7 @@ describe('Auth Module (/api/auth)', () => {
       mockPrismaUser.findUnique.mockResolvedValue(mockUser);
 
       const res = await request(app).post('/api/auth/login').send({
-        email: 'test.client@vetconnect.com',
+        email: 'test.client@huellicam.com',
         password: 'Password123!',
       });
 
@@ -178,7 +178,7 @@ describe('Auth Module (/api/auth)', () => {
         .post('/api/auth/login')
         .set('X-Client-Platform', 'mobile')
         .send({
-          email: 'test.client@vetconnect.com',
+          email: 'test.client@huellicam.com',
           password: 'Password123!',
         });
 
@@ -191,7 +191,7 @@ describe('Auth Module (/api/auth)', () => {
       mockPrismaUser.findUnique.mockResolvedValue(mockUser);
 
       const res = await request(app).post('/api/auth/login').send({
-        email: 'test.client@vetconnect.com',
+        email: 'test.client@huellicam.com',
         password: 'Password123!',
       });
 
@@ -208,7 +208,7 @@ describe('Auth Module (/api/auth)', () => {
       mockPrismaUser.findUnique.mockResolvedValue(mockUser);
 
       const res = await request(app).post('/api/auth/login').send({
-        email: 'test.client@vetconnect.com',
+        email: 'test.client@huellicam.com',
         password: 'WrongPassword!',
       });
 
@@ -220,7 +220,7 @@ describe('Auth Module (/api/auth)', () => {
       mockPrismaUser.findUnique.mockResolvedValue(null);
 
       const res = await request(app).post('/api/auth/login').send({
-        email: 'nonexistent@vetconnect.com',
+        email: 'nonexistent@huellicam.com',
         password: 'Password123!',
       });
 
@@ -235,7 +235,7 @@ describe('Auth Module (/api/auth)', () => {
       });
 
       const res = await request(app).post('/api/auth/login').send({
-        email: 'test.client@vetconnect.com',
+        email: 'test.client@huellicam.com',
         password: 'Password123!',
       });
 
@@ -252,7 +252,7 @@ describe('Auth Module (/api/auth)', () => {
       });
 
       const res = await request(app).post('/api/auth/login').send({
-        email: 'test.client@vetconnect.com',
+        email: 'test.client@huellicam.com',
         password: 'WrongPassword!',
       });
 
@@ -268,7 +268,7 @@ describe('Auth Module (/api/auth)', () => {
       mockPrismaUser.update.mockResolvedValue({ ...mockUser, tokenVersion: 2 });
 
       const loginRes = await request(app).post('/api/auth/login').send({
-        email: 'test.client@vetconnect.com',
+        email: 'test.client@huellicam.com',
         password: 'Password123!',
       });
 

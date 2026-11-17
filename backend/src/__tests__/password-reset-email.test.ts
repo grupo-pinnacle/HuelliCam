@@ -10,10 +10,10 @@ describe('Bugfix: Entrega de correo de recuperación de contraseña y remitente 
   const envConfigCode = fs.readFileSync(envConfigPath, 'utf-8');
   const resetServiceCode = fs.readFileSync(resetServicePath, 'utf-8');
 
-  it('env.ts y email.service.ts no deben usar el dominio no verificado notificaciones@vetconnect.com.ar como default bloqueante y deben usar onboarding@resend.dev', () => {
+  it('env.ts y email.service.ts no deben usar el dominio no verificado notificaciones@huellicam.com.ar como default bloqueante y deben usar onboarding@resend.dev', () => {
     expect(envConfigCode).toMatch(/onboarding@resend\.dev/);
     expect(emailServiceCode).toMatch(/onboarding@resend\.dev/);
-    expect(emailServiceCode).not.toMatch(/this\.fromEmail\s*=\s*config\.EMAIL_FROM\s*\|\|\s*['"]VetConnect <notificaciones@vetconnect\.com\.ar>['"]/);
+    expect(emailServiceCode).not.toMatch(/this\.fromEmail\s*=\s*config\.EMAIL_FROM\s*\|\|\s*['"]Huellicam <notificaciones@huellicam\.com\.ar>['"]/);
   });
 
   it('email.service.ts debe inspeccionar response.error de Resend y aplicar fallback a onboarding@resend.dev si falla la verificación del remitente', () => {

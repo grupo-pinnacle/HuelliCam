@@ -13,40 +13,40 @@ import {
  */
 describe('deep link URL -> route mapping', () => {
   it('exposes the scheme declared in app.json', () => {
-    expect(APP_SCHEME).toBe('vetconnect');
+    expect(APP_SCHEME).toBe('huellicam');
   });
 
   it('routes a call link to the call screen', () => {
-    expect(resolveDeepLinkHref('vetconnect://call/cons-100')).toBe('/(app)/call/cons-100');
+    expect(resolveDeepLinkHref('huellicam://call/cons-100')).toBe('/(app)/call/cons-100');
   });
 
   it('routes a consultation link to the consultation detail screen', () => {
-    expect(resolveDeepLinkHref('vetconnect://consultation/cons-200')).toBe(
+    expect(resolveDeepLinkHref('huellicam://consultation/cons-200')).toBe(
       '/(app)/consultation/cons-200'
     );
   });
 
   it('routes a prescription link to the prescription screen', () => {
-    expect(resolveDeepLinkHref('vetconnect://prescriptions/rx-7')).toBe('/(app)/prescriptions/rx-7');
+    expect(resolveDeepLinkHref('huellicam://prescriptions/rx-7')).toBe('/(app)/prescriptions/rx-7');
   });
 
   it('uses the param name each screen file actually declares', () => {
     // consultation/[id].tsx reads `id`, not `consultationId`.
-    expect(parseDeepLink('vetconnect://consultation/cons-1')).toEqual({
+    expect(parseDeepLink('huellicam://consultation/cons-1')).toEqual({
       screen: 'consultation',
       param: 'id',
       id: 'cons-1',
     });
 
     // prescriptions/[id].tsx also reads `id`.
-    expect(parseDeepLink('vetconnect://prescriptions/rx-1')).toEqual({
+    expect(parseDeepLink('huellicam://prescriptions/rx-1')).toEqual({
       screen: 'prescriptions',
       param: 'id',
       id: 'rx-1',
     });
 
     // call/[consultationId].tsx reads `consultationId`.
-    expect(parseDeepLink('vetconnect://call/cons-1')).toEqual({
+    expect(parseDeepLink('huellicam://call/cons-1')).toEqual({
       screen: 'call',
       param: 'consultationId',
       id: 'cons-1',
@@ -54,30 +54,30 @@ describe('deep link URL -> route mapping', () => {
   });
 
   it('accepts the three-slash native form emitted by some Android launchers', () => {
-    expect(resolveDeepLinkHref('vetconnect:///call/cons-100')).toBe('/(app)/call/cons-100');
+    expect(resolveDeepLinkHref('huellicam:///call/cons-100')).toBe('/(app)/call/cons-100');
   });
 
   it('ignores a query string and a fragment', () => {
-    expect(resolveDeepLinkHref('vetconnect://call/cons-100?from=push#top')).toBe(
+    expect(resolveDeepLinkHref('huellicam://call/cons-100?from=push#top')).toBe(
       '/(app)/call/cons-100'
     );
   });
 
   it('tolerates surrounding whitespace and a trailing slash', () => {
-    expect(resolveDeepLinkHref('  vetconnect://call/cons-100/  ')).toBe('/(app)/call/cons-100');
+    expect(resolveDeepLinkHref('  huellicam://call/cons-100/  ')).toBe('/(app)/call/cons-100');
   });
 
   it('matches the scheme case-insensitively, as custom schemes are case-insensitive', () => {
-    expect(resolveDeepLinkHref('VetConnect://call/cons-100')).toBe('/(app)/call/cons-100');
+    expect(resolveDeepLinkHref('Huellicam://call/cons-100')).toBe('/(app)/call/cons-100');
   });
 
   it('decodes a percent-encoded id', () => {
-    expect(resolveDeepLinkHref('vetconnect://call/cons%20100')).toBe('/(app)/call/cons%20100');
+    expect(resolveDeepLinkHref('huellicam://call/cons%20100')).toBe('/(app)/call/cons%20100');
   });
 
   it('re-encodes a decoded separator so an id cannot inject an extra path segment', () => {
     // `%2F` decodes to `/` during parsing; the href must not gain a segment.
-    const href = resolveDeepLinkHref('vetconnect://call/a%2Fb');
+    const href = resolveDeepLinkHref('huellicam://call/a%2Fb');
     expect(href).toBe('/(app)/call/a%2Fb');
     expect(href?.split('/')).toHaveLength(4);
   });
@@ -89,12 +89,12 @@ describe('deep link URL -> route mapping', () => {
     ['whitespace only', '   '],
     ['a missing scheme', 'call/cons-100'],
     ['a foreign scheme', 'otherapp://call/cons-100'],
-    ['an https universal link', 'https://vetconnect.com.ar/call/cons-100'],
-    ['an unknown screen', 'vetconnect://billing/cons-100'],
-    ['a missing id', 'vetconnect://call'],
-    ['a blank id', 'vetconnect://call/%20'],
-    ['an over-deep path', 'vetconnect://call/cons-100/extra'],
-    ['malformed percent-encoding', 'vetconnect://call/%E0%A4%A'],
+    ['an https universal link', 'https://huellicam.com.ar/call/cons-100'],
+    ['an unknown screen', 'huellicam://billing/cons-100'],
+    ['a missing id', 'huellicam://call'],
+    ['a blank id', 'huellicam://call/%20'],
+    ['an over-deep path', 'huellicam://call/cons-100/extra'],
+    ['malformed percent-encoding', 'huellicam://call/%E0%A4%A'],
   ])('returns null for %s so the link falls through to +not-found', (_label, url) => {
     expect(resolveDeepLinkHref(url)).toBeNull();
   });

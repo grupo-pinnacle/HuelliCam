@@ -13,7 +13,7 @@ export const CookieConsentBanner: React.FC = () => {
 
   useEffect(() => {
     try {
-      const stored = localStorage.getItem('vetconnect_cookie_consent');
+      const stored = localStorage.getItem('huellicam_cookie_consent');
       if (!stored) {
         setShowBanner(true);
       }
@@ -30,7 +30,7 @@ export const CookieConsentBanner: React.FC = () => {
       timestamp: new Date().toISOString(),
     };
     try {
-      localStorage.setItem('vetconnect_cookie_consent', JSON.stringify(prefs));
+      localStorage.setItem('huellicam_cookie_consent', JSON.stringify(prefs));
     } catch (e) {
       console.warn('No se pudo guardar la preferencia de cookies en localStorage:', e);
     }

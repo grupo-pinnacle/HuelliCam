@@ -75,7 +75,7 @@ export interface ClientViewConsultation {
 }
 
 function mapBackendPet(p: BackendPet): ClientViewPet {
-  const customPhoto = typeof window !== "undefined" ? localStorage.getItem(`vetconnect_pet_photo_${p.id}`) : null;
+  const customPhoto = typeof window !== "undefined" ? localStorage.getItem(`huellicam_pet_photo_${p.id}`) : null;
   const defaultPhoto = p.species.toLowerCase().includes("cone") ? photos.luna
     : p.species.toLowerCase().includes("gat") || p.species.toLowerCase().includes("fel") ? photos.nube
     : p.species.toLowerCase().includes("ave") || p.species.toLowerCase().includes("loro") ? photos.kiwi
@@ -428,7 +428,7 @@ export function NewPetModal({
 
   const getInitialDraft = () => {
     try {
-      const saved = typeof window !== "undefined" ? localStorage.getItem("vetconnect_new_pet_draft") : null;
+      const saved = typeof window !== "undefined" ? localStorage.getItem("huellicam_new_pet_draft") : null;
       if (saved) return JSON.parse(saved);
     } catch {}
     return null;
@@ -452,7 +452,7 @@ export function NewPetModal({
     if (open) {
       isClosingRef.current = false;
       try {
-        const saved = localStorage.getItem("vetconnect_new_pet_draft");
+        const saved = localStorage.getItem("huellicam_new_pet_draft");
         if (saved) {
           const draft = JSON.parse(saved);
           if (draft.name !== undefined) setName(draft.name);
@@ -486,7 +486,7 @@ export function NewPetModal({
           photoPreview,
           isModalOpen: true,
         };
-        localStorage.setItem("vetconnect_new_pet_draft", JSON.stringify(draft));
+        localStorage.setItem("huellicam_new_pet_draft", JSON.stringify(draft));
       } catch {}
     }
   }, [open, name, species, sex, breed, customBreed, weightKg, unknownWeight, microchip, allergies, photoPreview]);
@@ -494,7 +494,7 @@ export function NewPetModal({
   const handleVoluntaryClose = () => {
     isClosingRef.current = true;
     try {
-      localStorage.removeItem("vetconnect_new_pet_draft");
+      localStorage.removeItem("huellicam_new_pet_draft");
     } catch {}
     setName("");
     setSpecies("Perro");
@@ -548,11 +548,11 @@ export function NewPetModal({
       queryClient.invalidateQueries({ queryKey: ['pets'] });
       if (data?.data?.id && photoPreview) {
         try {
-          localStorage.setItem(`vetconnect_pet_photo_${data.data.id}`, photoPreview);
+          localStorage.setItem(`huellicam_pet_photo_${data.data.id}`, photoPreview);
         } catch {}
       }
       try {
-        localStorage.removeItem("vetconnect_new_pet_draft");
+        localStorage.removeItem("huellicam_new_pet_draft");
       } catch {}
       setName("");
       setSpecies("Perro");
@@ -624,7 +624,7 @@ export function NewPetModal({
         <button className="button button--icon modal__close" onClick={handleVoluntaryClose} aria-label="Cerrar"><Icon name="close" size={18}/></button>
         <span className="modal__icon"><Icon name="paw"/></span>
         <h2 style={{ textAlign: "center" }}>Nueva mascota</h2>
-        <p style={{ textAlign: "center", marginBottom: 20 }}>Ingresá los datos clínicos para abrir su expediente en VetConnect.</p>
+        <p style={{ textAlign: "center", marginBottom: 20 }}>Ingresá los datos clínicos para abrir su expediente en Huellicam.</p>
         
         {errorMsg && (
           <div style={{ background: "#fcece9", border: "1px solid #e98b70", color: "#ae4d45", padding: "10px 14px", borderRadius: 12, fontSize: 13, marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -805,7 +805,7 @@ function Dashboard() {
   const { pets, consultations, petsLoading, consultationsLoading } = useClientData();
   const [modalOpen, setModalOpen] = useState(() => {
     try {
-      const saved = typeof window !== "undefined" ? localStorage.getItem("vetconnect_new_pet_draft") : null;
+      const saved = typeof window !== "undefined" ? localStorage.getItem("huellicam_new_pet_draft") : null;
       if (saved) {
         const parsed = JSON.parse(saved);
         return Boolean(parsed.isModalOpen);
@@ -914,7 +914,7 @@ function PetsPage() {
   const { pets } = useClientData();
   const [modalOpen, setModalOpen] = useState(() => {
     try {
-      const saved = typeof window !== "undefined" ? localStorage.getItem("vetconnect_new_pet_draft") : null;
+      const saved = typeof window !== "undefined" ? localStorage.getItem("huellicam_new_pet_draft") : null;
       if (saved) {
         const parsed = JSON.parse(saved);
         return Boolean(parsed.isModalOpen);
@@ -971,7 +971,7 @@ function PetDetail({ id }: { id: string }) {
 
   const [heroPhoto, setHeroPhoto] = useState<string>(() => {
     if (typeof window !== "undefined" && pet?.id) {
-      const saved = localStorage.getItem(`vetconnect_pet_photo_${pet.id}`);
+      const saved = localStorage.getItem(`huellicam_pet_photo_${pet.id}`);
       if (saved) return saved;
     }
     return pet?.photo || photos.milo;
@@ -985,7 +985,7 @@ function PetDetail({ id }: { id: string }) {
     try {
       const compressed = await compressImageFile(file);
       setHeroPhoto(compressed);
-      localStorage.setItem(`vetconnect_pet_photo_${pet.id}`, compressed);
+      localStorage.setItem(`huellicam_pet_photo_${pet.id}`, compressed);
       queryClient.invalidateQueries({ queryKey: ['pets'] });
       setToastMsg("Foto de mascota actualizada");
       setTimeout(() => setToastMsg(null), 3500);
@@ -1005,7 +1005,7 @@ function PetDetail({ id }: { id: string }) {
   // Vaccines local storage / state per pet
   const [vaccines, setVaccines] = useState<{ id: string; name: string; date: string; nextDate: string; status: "Al día" | "Próxima" | "Vencida" }[]>(() => {
     try {
-      const stored = localStorage.getItem(`vetconnect_vaccines_${pet?.id}`);
+      const stored = localStorage.getItem(`huellicam_vaccines_${pet?.id}`);
       return stored ? JSON.parse(stored) : [];
     } catch {
       return [];
@@ -1020,7 +1020,7 @@ function PetDetail({ id }: { id: string }) {
   // Documents state per pet
   const [docs, setDocs] = useState<{ id: string; name: string; type: string; date: string; size: string }[]>(() => {
     try {
-      const stored = localStorage.getItem(`vetconnect_docs_${pet?.id}`);
+      const stored = localStorage.getItem(`huellicam_docs_${pet?.id}`);
       return stored ? JSON.parse(stored) : [];
     } catch {
       return [];
@@ -1041,11 +1041,11 @@ function PetDetail({ id }: { id: string }) {
       setEditMicrochip(pet.microchip && pet.microchip !== "No informado" ? pet.microchip : "");
       setEditAllergies(pet.allergies && pet.allergies !== "Sin alergias conocidas" ? pet.allergies : "");
       try {
-        const savedPhoto = localStorage.getItem(`vetconnect_pet_photo_${pet.id}`);
+        const savedPhoto = localStorage.getItem(`huellicam_pet_photo_${pet.id}`);
         setHeroPhoto(savedPhoto || pet.photo);
-        const storedV = localStorage.getItem(`vetconnect_vaccines_${pet.id}`);
+        const storedV = localStorage.getItem(`huellicam_vaccines_${pet.id}`);
         setVaccines(storedV ? JSON.parse(storedV) : []);
-        const storedD = localStorage.getItem(`vetconnect_docs_${pet.id}`);
+        const storedD = localStorage.getItem(`huellicam_docs_${pet.id}`);
         setDocs(storedD ? JSON.parse(storedD) : []);
       } catch {
         // noop
@@ -1111,7 +1111,7 @@ function PetDetail({ id }: { id: string }) {
     };
     const updated = [...vaccines, newVac];
     setVaccines(updated);
-    if (pet?.id) localStorage.setItem(`vetconnect_vaccines_${pet.id}`, JSON.stringify(updated));
+    if (pet?.id) localStorage.setItem(`huellicam_vaccines_${pet.id}`, JSON.stringify(updated));
     setVaccineModal(false);
     setVacName("");
     setVacDate("");
@@ -1158,7 +1158,7 @@ function PetDetail({ id }: { id: string }) {
     };
     const updated = [...docs, newDoc];
     setDocs(updated);
-    if (pet?.id) localStorage.setItem(`vetconnect_docs_${pet.id}`, JSON.stringify(updated));
+    if (pet?.id) localStorage.setItem(`huellicam_docs_${pet.id}`, JSON.stringify(updated));
     setDocumentModal(false);
     setDocName("");
     setDocFile(null);
@@ -1169,7 +1169,7 @@ function PetDetail({ id }: { id: string }) {
   const handleDeleteDoc = (docId: string) => {
     const updated = docs.filter(d => d.id !== docId);
     setDocs(updated);
-    if (pet?.id) localStorage.setItem(`vetconnect_docs_${pet.id}`, JSON.stringify(updated));
+    if (pet?.id) localStorage.setItem(`huellicam_docs_${pet.id}`, JSON.stringify(updated));
     setDeleteDocId(null);
     setToastMsg("Documento eliminado");
     setTimeout(() => setToastMsg(null), 3500);
@@ -1239,7 +1239,7 @@ function PetDetail({ id }: { id: string }) {
           <Button variant="soft" icon="plus" onClick={() => go("/client/triage")}>Nueva consulta</Button>
         </div>
         <div className="timeline">
-          <div><span/><div><b>{pet.last}</b><strong>Atención registrada en sistema</strong><p>Expediente sincronizado con la red veterinaria VetConnect.</p></div></div>
+          <div><span/><div><b>{pet.last}</b><strong>Atención registrada en sistema</strong><p>Expediente sincronizado con la red veterinaria Huellicam.</p></div></div>
         </div>
       </section>
     </div>}
@@ -1819,7 +1819,7 @@ export function AppointmentsPage() {
 function getSavedChatMessages(chatId: string): WAMessageItem[] {
   try {
     if (typeof window !== "undefined" && window.localStorage) {
-      const raw = localStorage.getItem(`vetconnect_chat_${chatId}`);
+      const raw = localStorage.getItem(`huellicam_chat_${chatId}`);
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) return parsed;
@@ -1832,7 +1832,7 @@ function getSavedChatMessages(chatId: string): WAMessageItem[] {
 function saveChatMessages(chatId: string, messages: WAMessageItem[]) {
   try {
     if (typeof window !== "undefined" && window.localStorage) {
-      localStorage.setItem(`vetconnect_chat_${chatId}`, JSON.stringify(messages));
+      localStorage.setItem(`huellicam_chat_${chatId}`, JSON.stringify(messages));
     }
   } catch {}
 }
@@ -3408,7 +3408,7 @@ function ProfilePage() {
 function SettingsPage() {
   const [toggles, setToggles] = useState<boolean[]>(() => {
     try {
-      const saved = localStorage.getItem('vetconnect_notification_preferences');
+      const saved = localStorage.getItem('huellicam_notification_preferences');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length === 4) {
@@ -3433,7 +3433,7 @@ function SettingsPage() {
     setToggles((prev) => {
       const next = prev.map((v, j) => (j === index ? !v : v));
       try {
-        localStorage.setItem('vetconnect_notification_preferences', JSON.stringify(next));
+        localStorage.setItem('huellicam_notification_preferences', JSON.stringify(next));
       } catch {}
       return next;
     });

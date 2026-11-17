@@ -27,6 +27,9 @@ describe('Mobile clinical validation (espejo backend)', () => {
   it('should accept partial pet updates', () => {
     expect(petUpdateSchema.safeParse({ weightKg: 12.5 }).success).toBe(true);
     expect(petUpdateSchema.safeParse({ weightKg: -3 }).success).toBe(false);
+    expect(petUpdateSchema.safeParse({ birthDate: '2022-05-14' }).success).toBe(true);
+    expect(petUpdateSchema.safeParse({ birthDate: '2022-02-30' }).success).toBe(false);
+    expect(petUpdateSchema.safeParse({ birthDate: '2099-01-01' }).success).toBe(false);
     expect(petUpdateSchema.safeParse({}).success).toBe(true);
   });
 

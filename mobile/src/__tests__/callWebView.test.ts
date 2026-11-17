@@ -35,13 +35,13 @@ describe('web client credential seeding', () => {
 
   it('uses the storage keys the web client actually reads', () => {
     // web/src/services/api.ts and web/src/context/AuthContext.tsx
-    expect(WEB_TOKEN_STORAGE_KEY).toBe('vetconnect_token');
-    expect(WEB_USER_STORAGE_KEY).toBe('vetconnect_user');
+    expect(WEB_TOKEN_STORAGE_KEY).toBe('huellicam_token');
+    expect(WEB_USER_STORAGE_KEY).toBe('huellicam_user');
   });
 
   it('seeds both keys before the page scripts run', () => {
-    expect(script).toContain(`window.localStorage.setItem("vetconnect_token","jwt-abc")`);
-    expect(script).toContain(`window.localStorage.setItem("vetconnect_user",`);
+    expect(script).toContain(`window.localStorage.setItem("huellicam_token","jwt-abc")`);
+    expect(script).toContain(`window.localStorage.setItem("huellicam_user",`);
     expect(script).toContain('"id":"user-1"');
   });
 
@@ -61,20 +61,20 @@ describe('web client credential seeding', () => {
   it('escapes a token containing quote characters', () => {
     // Guards against breaking out of the injected string literal.
     const escaped = buildAuthSeedScript('a"b\\c', user);
-    expect(escaped).toContain('window.localStorage.setItem("vetconnect_token","a\\"b\\\\c")');
+    expect(escaped).toContain('window.localStorage.setItem("huellicam_token","a\\"b\\\\c")');
   });
 });
 
 describe('web call base URL resolution', () => {
   it('joins the base URL and the call path', () => {
-    expect(resolveWebCallUrl('https://app.vetconnect.com.ar', 'cons-1')).toBe(
-      'https://app.vetconnect.com.ar/call/cons-1'
+    expect(resolveWebCallUrl('https://app.huellicam.com.ar', 'cons-1')).toBe(
+      'https://app.huellicam.com.ar/call/cons-1'
     );
   });
 
   it('does not double the separator when the base URL has a trailing slash', () => {
-    expect(resolveWebCallUrl('https://app.vetconnect.com.ar/', 'cons-1')).toBe(
-      'https://app.vetconnect.com.ar/call/cons-1'
+    expect(resolveWebCallUrl('https://app.huellicam.com.ar/', 'cons-1')).toBe(
+      'https://app.huellicam.com.ar/call/cons-1'
     );
   });
 
@@ -85,8 +85,8 @@ describe('web call base URL resolution', () => {
   });
 
   it('encodes the consultation id', () => {
-    expect(resolveWebCallUrl('https://app.vetconnect.com.ar', 'a b')).toBe(
-      'https://app.vetconnect.com.ar/call/a%20b'
+    expect(resolveWebCallUrl('https://app.huellicam.com.ar', 'a b')).toBe(
+      'https://app.huellicam.com.ar/call/a%20b'
     );
   });
 });
@@ -100,7 +100,7 @@ describe('loopback base URL detection', () => {
   );
 
   it.each([
-    'https://app.vetconnect.com.ar',
+    'https://app.huellicam.com.ar',
     'http://192.168.1.10:5173',
     'https://localhost.example.com',
     'http://mylocalhost:5173',
@@ -115,8 +115,8 @@ describe('loopback base URL detection', () => {
 
   it('parses the host without relying on a complete URL implementation', () => {
     // Hermes ships a partial `URL`; this is regex based on purpose.
-    expect(parseHost('https://user:pw@app.vetconnect.com.ar:8443/x')).toBe(
-      'app.vetconnect.com.ar'
+    expect(parseHost('https://user:pw@app.huellicam.com.ar:8443/x')).toBe(
+      'app.huellicam.com.ar'
     );
     expect(parseHost('http://[::1]:5173')).toBe('::1');
     expect(parseHost('nonsense')).toBeNull();

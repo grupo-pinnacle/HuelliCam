@@ -24,7 +24,7 @@ describe('AdminVets Page', () => {
         data: [
           {
             id: 'vet-pending-1',
-            email: 'vet.pending@vetconnect.com',
+            email: 'vet.pending@huellicam.com',
             firstName: 'Ana',
             lastName: 'Gomez',
             role: 'VET',
@@ -58,7 +58,7 @@ describe('AdminVets Page', () => {
         data: [
           {
             id: 'vet-pending-1',
-            email: 'vet.pending@vetconnect.com',
+            email: 'vet.pending@huellicam.com',
             firstName: 'Ana',
             lastName: 'Gomez',
             role: 'VET',
@@ -96,7 +96,7 @@ describe('AdminVets Page', () => {
         data: [
           {
             id: 'vet-pending-2',
-            email: 'vet.reject@vetconnect.com',
+            email: 'vet.reject@huellicam.com',
             firstName: 'Roberto',
             lastName: 'Diaz',
             role: 'VET',
@@ -140,7 +140,7 @@ describe('AdminVets Page', () => {
         data: [
           {
             id: 'vet-pending-a',
-            email: 'carlos@vetconnect.com',
+            email: 'carlos@huellicam.com',
             firstName: 'Carlos',
             lastName: 'Tevez',
             role: 'VET',
@@ -151,7 +151,7 @@ describe('AdminVets Page', () => {
           },
           {
             id: 'vet-pending-b',
-            email: 'sofia@vetconnect.com',
+            email: 'sofia@huellicam.com',
             firstName: 'Sofia',
             lastName: 'Loren',
             role: 'VET',

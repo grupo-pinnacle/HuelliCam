@@ -20,7 +20,7 @@ jest.mock('socket.io-client', () => ({
 jest.mock('../lib/api', () => ({
   __esModule: true,
   default: { get: jest.fn() },
-  SECURE_STORE_REFRESH_KEY: 'vetconnect_refresh_token',
+  SECURE_STORE_REFRESH_KEY: 'huellicam_refresh_token',
 }));
 
 const getMock = api.get as unknown as jest.Mock<Promise<AxiosResponse<ApiResponse<Message[]>>>, [string]>;

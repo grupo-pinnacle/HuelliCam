@@ -8,7 +8,7 @@ import { notificationsService } from '../notifications/notifications.service';
 const getLiveKitConfig = () => {
   const apiKey = process.env.LIVEKIT_API_KEY || 'devkey';
   const apiSecret = process.env.LIVEKIT_API_SECRET || 'secret';
-  const rawUrl = (process.env.LIVEKIT_URL || process.env.LIVEKIT_HOST || 'wss://vetconnect-dev.livekit.cloud').trim();
+  const rawUrl = (process.env.LIVEKIT_URL || process.env.LIVEKIT_HOST || 'wss://huellicam-dev.livekit.cloud').trim();
 
   // Format httpUrl for RoomServiceClient HTTP API
   const httpUrl = rawUrl.startsWith('http')

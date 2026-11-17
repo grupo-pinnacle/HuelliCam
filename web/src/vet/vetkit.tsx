@@ -1,12 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { io, Socket } from "socket.io-client";
-import { Button, Icon, MessageBubble, Modal, Status, Toast, go } from "../shared";
+import { Button, Icon, Modal, Status, Toast, go } from "../shared";
 import api, { getAccessToken } from "../services/api";
 import { getWsUrl } from "../lib/ws";
-import { WhatsAppCheck } from "../components/call/WhatsAppCheck";
+import { ClinicalChatThread, type ClinicalChatMessage } from "../components/chat/ClinicalChatThread";
 import { useAuth } from "../context/AuthContext";
-import type { ApiResponse, Consultation as BackendConsultation, User } from "../types";
+import type { ApiResponse, Consultation as BackendConsultation, Prescription as BackendPrescription, User } from "../types";
 import { parseConsultationNotes } from "../lib/consultationNotes";
 import {
   getPatient, initialConsults, initialEvents, initialFollowUps, initialQueue, initialRx, initialThreads, quickReplies, triageMeta,
@@ -129,13 +129,62 @@ export function VetProvider({ children, forceEmpty }: { children: ReactNode; for
   const [events, setEvents] = useState<AgendaEvent[]>([]);
   const [rx, setRx] = useState<Rx[]>(() => {
     try {
-      const saved = localStorage.getItem("vetconnect_vet_rx");
-      return saved ? JSON.parse(saved) : [];
+      const saved = localStorage.getItem("huellicam_vet_rx");
+      const parsed: Rx[] = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed.filter((item) => item.status === "Borrador") : [];
     } catch {
       return [];
     }
   });
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
+
+  const vetPrescriptionsQuery = useQuery({
+    queryKey: ['prescriptions', 'vet', user?.id],
+    enabled: !forceEmpty && user?.role === "VET",
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<(BackendPrescription & { consultation?: BackendConsultation })[]>>('/api/prescriptions');
+      return (res.data.success && res.data.data) ? res.data.data : [];
+    },
+  });
+
+  useEffect(() => {
+    try {
+      const drafts = rx.filter((item) => item.status === "Borrador");
+      localStorage.setItem("huellicam_vet_rx", JSON.stringify(drafts));
+    } catch {
+      // Ignore storage errors
+    }
+  }, [rx]);
+
+  useEffect(() => {
+    if (forceEmpty || !vetPrescriptionsQuery.data) return;
+    const mappedIssued: Rx[] = vetPrescriptionsQuery.data.map((item) => {
+      if (item.consultation?.pet) {
+        registerPatient(mapBackendPetToPatient(item.consultation.pet, item.consultation.client));
+      }
+      return {
+        id: item.id,
+        petId: item.consultation?.petId || "",
+        consultationId: item.consultationId,
+        med: item.medication,
+        dose: item.dosage,
+        freq: item.frequency,
+        duration: `${item.durationDays} días`,
+        notes: item.indications,
+        status: "Emitida",
+        date: item.createdAt
+          ? new Date(item.createdAt).toLocaleDateString("es-AR", { day: "numeric", month: "short", year: "numeric" })
+          : "Hoy",
+        qrCodeDataUrl: item.qrCodeDataUrl,
+        verifyUrl: item.verifyUrl,
+      };
+    });
+
+    setRx((prev) => {
+      const drafts = prev.filter((item) => item.status === "Borrador");
+      return [...mappedIssued, ...drafts];
+    });
+  }, [vetPrescriptionsQuery.data, forceEmpty]);
 
   // Sync state when backend returns live rows
   useEffect(() => {
@@ -352,7 +401,6 @@ export function ChatPanel({
 
   const [messages, setMessages] = useState<any[]>([]);
   const [text, setText] = useState("");
-  const [quick, setQuick] = useState(false);
   const [box, setBox] = useState<number | null>(null);
   const [socket, setSocket] = useState<Socket | null>(null);
   const [connected, setConnected] = useState(false);
@@ -432,7 +480,6 @@ export function ChatPanel({
     if (!text.trim()) return;
     const content = text.trim();
     setText("");
-    setQuick(false);
 
     if (activeConsultationId) {
       const clientMsgId = `vet-msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -474,136 +521,124 @@ export function ChatPanel({
     }
   };
 
+  const handleAttachFile = async (file: File, isImage: boolean) => {
+    const localUrl = URL.createObjectURL(file);
+    if (!activeConsultationId) {
+      send(petId, { text: isImage ? `📷 ${file.name}` : `📄 ${file.name}` });
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `local-file-${Date.now()}`,
+          content: file.name,
+          senderId: user?.id,
+          createdAt: new Date().toISOString(),
+          localDoc: {
+            title: file.name,
+            sub: `${isImage ? "Imagen" : "Documento"} clínico · ${(file.size / 1024).toFixed(1)} KB`,
+            bannerTag: isImage ? "FOTO / ARCHIVO CLÍNICO" : "DOCUMENTO ADJUNTO",
+            fileUrl: localUrl,
+            isImage,
+          },
+        },
+      ]);
+      return;
+    }
+
+    let attachmentUrl: string | undefined;
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("consultationId", activeConsultationId);
+      const up = await api.post<ApiResponse<{ id?: string; url?: string }>>("/api/media", formData);
+      if (up.data?.data?.url) attachmentUrl = up.data.data.url;
+      else if (up.data?.data?.id) attachmentUrl = `/api/media/${up.data.data.id}`;
+    } catch {
+      // Fallback to local clinical attachment entry
+    }
+
+    const clientMsgId = `vet-file-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const content = `📎 Adjunto: ${file.name}`;
+    try {
+      const res = await api.post<ApiResponse<any>>(`/api/consultations/${activeConsultationId}/messages`, {
+        content,
+        clientMsgId,
+        ...(attachmentUrl ? { attachmentUrl } : {}),
+      });
+      if (res.data.success && res.data.data) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            ...res.data.data,
+            localDoc: {
+              title: file.name,
+              sub: `${isImage ? "Imagen" : "Documento"} clínico · ${(file.size / 1024).toFixed(1)} KB`,
+              bannerTag: isImage ? "FOTO / ARCHIVO CLÍNICO" : "DOCUMENTO ADJUNTO",
+              fileUrl: localUrl,
+              isImage,
+            },
+          },
+        ]);
+      }
+    } catch {
+      notify("No se pudo adjuntar el archivo.");
+    }
+  };
+
   const images = (thread?.msgs ?? []).filter((m) => m.kind === "image");
+  const mappedMessages: ClinicalChatMessage[] = messages.map((m) => {
+    const mine = m.senderId === user?.id || m.mine;
+    const time = m.createdAt
+      ? new Date(m.createdAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })
+      : m.timeStr || "Ahora";
+
+    if (m.kind === "image" && m.src) {
+      const idx = images.findIndex((i) => i.id === m.id);
+      return {
+        id: String(m.id),
+        mine,
+        time,
+        imageThumb: {
+          src: m.src,
+          caption: m.name || "Imagen clínica",
+          pos: m.pos,
+          onZoom: () => setBox(idx >= 0 ? idx : 0),
+        },
+      };
+    }
+
+    return {
+      id: String(m.id || m.clientMsgId || `${time}-${Math.random()}`),
+      mine,
+      senderName: mine ? undefined : m.sender?.firstName || pet.tutor,
+      text: m.localDoc ? undefined : m.content,
+      time,
+      doc: m.localDoc,
+    };
+  });
 
   return (
-    <section className="wa-chat-pane v-chat" style={{ display: "flex", flexDirection: "column", height: "100%", background: "#fffbef" }} aria-label={`Conversación con ${pet.tutor}`}>
-      {header && (
-        <header className="wa-chat-pane__header">
-          <div className="wa-chat-pane__header-contact">
-            {onBack && (
-              <button className="wa-icon-btn" onClick={onBack} aria-label="Volver a conversaciones">
-                <Icon name="left" size={18} />
-              </button>
-            )}
-            <div className="wa-chat-pane__header-avatar">
-              <PetPhoto pet={pet} size={40} />
-            </div>
-            <div className="wa-chat-pane__header-info">
-              <h2>{pet.tutor} · {pet.name}</h2>
-              <span className="is-online">
-                {connected || activeConsultationId ? "En línea" : "Conectado"} · {pet.kind}, {pet.breed}
-              </span>
-            </div>
-          </div>
-          <div className="wa-chat-pane__header-actions">
-            {actions}
-          </div>
-        </header>
-      )}
+    <>
+      <ClinicalChatThread
+        className="v-chat"
+        ariaLabel={`Conversación con ${pet.tutor}`}
+        showHeader={header}
+        contactName={`${pet.tutor} · ${pet.name}`}
+        avatarNode={<PetPhoto pet={pet} size={40} />}
+        statusText={`${connected || activeConsultationId ? "En línea" : "Conectado"} · ${pet.kind}, ${pet.breed}`}
+        isOnline={Boolean(connected || activeConsultationId)}
+        onBack={onBack}
+        headerActions={actions}
+        messages={mappedMessages}
+        value={text}
+        onChange={setText}
+        onSend={submit}
+        placeholder={`Escribir a ${pet.tutor}…`}
+        quickReplies={quickReplies}
+        onAttachFile={handleAttachFile}
+        endRef={endRef}
+      />
 
-      <div className="wa-chat-body" style={{ flex: 1, overflowY: "auto" }}>
-        <div className="wa-encryption-pill" style={{ alignSelf: "center", margin: "4px auto 8px" }}>
-          <span>🔒</span>
-          <span>Los mensajes y llamadas están cifrados de extremo a extremo · SENASA</span>
-        </div>
-        <div className="wa-date-pill" style={{ alignSelf: "center", margin: "0 auto 6px" }}>HOY</div>
-
-        {messages.length === 0 ? (
-          <div className="v-chat__empty" style={{ textAlign: "center", padding: "40px 16px", color: "var(--ink-soft)" }}>
-            <Icon name="message" size={24} />
-            <p style={{ marginTop: 8, fontSize: 13 }}>Todavía no hay mensajes con {pet.tutor}. Escribí abajo para comenzar.</p>
-          </div>
-        ) : (
-          messages.map((m) => {
-            const mine = m.senderId === user?.id || m.mine;
-            const time = m.createdAt
-              ? new Date(m.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-              : m.timeStr || "Ahora";
-
-            if (m.kind === "image") {
-              const idx = images.findIndex((i) => i.id === m.id);
-              return (
-                <div key={m.id} className={`wa-bubble ${mine ? "wa-bubble--sent" : "wa-bubble--received"}`} style={{ maxWidth: 280 }}>
-                  <button onClick={() => setBox(idx)} style={{ border: 0, padding: 0, background: "none", borderRadius: 8, overflow: "hidden", display: "block", cursor: "pointer" }} aria-label={`Ampliar fotografía: ${m.name}`}>
-                    <img src={m.src} alt={m.name} style={{ width: "100%", height: 160, objectFit: "cover", objectPosition: m.pos, display: "block" }} loading="lazy" />
-                  </button>
-                  <div className="wa-bubble__meta" style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4, marginTop: 4, fontSize: 10, color: "#607674" }}>
-                    <span>{m.name} · {time}</span>
-                    {mine && <WhatsAppCheck state="read" />}
-                  </div>
-                </div>
-              );
-            }
-
-            return (
-              <div
-                key={m.id || m.clientMsgId}
-                className={`wa-bubble ${mine ? "wa-bubble--sent" : "wa-bubble--received"}`}
-              >
-                {!mine && (
-                  <div className="wa-bubble__sender" style={{ fontSize: 11.5, fontWeight: 700, color: "#315f5d", marginBottom: 2 }}>
-                    {m.sender?.firstName || pet.tutor}
-                  </div>
-                )}
-                <p className="wa-bubble__text" style={{ margin: 0, fontSize: 13, lineHeight: 1.45, color: "#183c3a" }}>
-                  {m.content}
-                </p>
-                <div className="wa-bubble__meta" style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4, marginTop: 3, fontSize: 10, color: "#607674" }}>
-                  <span>{time}</span>
-                  {mine && <WhatsAppCheck state="read" />}
-                </div>
-              </div>
-            );
-          })
-        )}
-        <div ref={endRef} />
-      </div>
-
-      {quick && (
-        <div className="v-quick" role="menu" aria-label="Respuestas rápidas">
-          <span className="eyebrow">Respuestas rápidas</span>
-          {quickReplies.map((q) => (
-            <button role="menuitem" key={q} onClick={() => { setText(q); setQuick(false); }}>
-              {q}
-            </button>
-          ))}
-        </div>
-      )}
-
-      <footer className="wa-chat-footer" style={{ padding: "8px 14px", background: "#f2eddd", display: "flex", alignItems: "center", gap: 8, borderTop: "1px solid #e4dfd2" }}>
-        <button
-          className={`button button--icon v-quick-toggle ${quick ? "is-open" : ""}`}
-          onClick={() => setQuick(!quick)}
-          aria-label="Respuestas rápidas"
-          aria-expanded={quick}
-          title="Respuestas rápidas"
-          style={{ width: 38, height: 38, borderRadius: "50%" }}
-        >
-          <Icon name="zap" size={17} />
-        </button>
-        <div className="wa-input-pill" style={{ flex: 1, background: "#ffffff", borderRadius: 999, border: "1px solid #e4dfd2", height: 40, display: "flex", alignItems: "center", padding: "0 14px" }}>
-          <input
-            aria-label="Escribir mensaje"
-            placeholder={`Escribir a ${pet.tutor}…`}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submit()}
-            style={{ width: "100%", border: "none", background: "transparent", outline: "none", fontSize: 13, color: "#183c3a" }}
-          />
-        </div>
-        <button
-          className="wa-send-btn"
-          disabled={!text.trim()}
-          onClick={submit}
-          aria-label="Enviar mensaje"
-          style={{ width: 40, height: 40, borderRadius: "50%", border: "none", background: text.trim() ? "#315f5d" : "#a8b5b2", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: text.trim() ? "pointer" : "default" }}
-        >
-          <Icon name="send" size={17} />
-        </button>
-      </footer>
-
-      {box !== null && (
+      {box !== null && images[box] && (
         <Lightbox
           items={images.map((i) => ({ src: i.src!, caption: i.name!, pos: i.pos }))}
           index={box}
@@ -613,7 +648,7 @@ export function ChatPanel({
           consult={consultLabel}
         />
       )}
-    </section>
+    </>
   );
 }
 

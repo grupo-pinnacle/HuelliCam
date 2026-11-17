@@ -47,7 +47,7 @@ export const GlobalCallListener: React.FC = () => {
       setIncomingCall(null);
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
-          new CustomEvent('vetconnect:session_terminated', {
+          new CustomEvent('huellicam:session_terminated', {
             detail: data,
           })
         );
@@ -59,7 +59,7 @@ export const GlobalCallListener: React.FC = () => {
       setIncomingCall(null);
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
-          new CustomEvent('vetconnect:session_terminated', {
+          new CustomEvent('huellicam:session_terminated', {
             detail: {
               reason: data?.reason || 'MULTIPLE_DEVICES_DETECTED',
               message: data?.message || 'Tu sesión fue transferida a otro dispositivo.',

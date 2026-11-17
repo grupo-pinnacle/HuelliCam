@@ -1,12 +1,12 @@
 {
   "expo": {
-    "name": "VetConnect",
-    "slug": "vetconnect",
+    "name": "Huellicam",
+    "slug": "huellicam",
     "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "scheme": "vetconnect",
+    "scheme": "huellicam",
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
@@ -14,11 +14,11 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.vetconnect.app",
+      "bundleIdentifier": "com.huellicam.app",
       "infoPlist": {
-        "NSCameraUsageDescription": "Permite a VetConnect acceder a tu cámara para realizar videoconsultas veterinarias en vivo.",
-        "NSMicrophoneUsageDescription": "Permite a VetConnect acceder a tu micrófono para comunicarte durante la videoconsulta.",
-        "NSPhotoLibraryUsageDescription": "Permite a VetConnect adjuntar fotos y recetas clínicas de tu mascota."
+        "NSCameraUsageDescription": "Permite a Huellicam acceder a tu cámara para realizar videoconsultas veterinarias en vivo.",
+        "NSMicrophoneUsageDescription": "Permite a Huellicam acceder a tu micrófono para comunicarte durante la videoconsulta.",
+        "NSPhotoLibraryUsageDescription": "Permite a Huellicam adjuntar fotos y recetas clínicas de tu mascota."
       }
     },
     "android": {
@@ -26,7 +26,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.vetconnect.app",
+      "package": "com.huellicam.app",
       "versionCode": 2,
       "permissions": [
         "android.permission.CAMERA",
@@ -43,13 +43,13 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Permite a VetConnect acceder a tu camara para la videoconsulta medica."
+          "cameraPermission": "Permite a Huellicam acceder a tu camara para la videoconsulta medica."
         }
       ],
       [
         "expo-image-picker",
         {
-          "photosPermission": "Permite a VetConnect adjuntar fotos clínicas de tu mascota al chat médico."
+          "photosPermission": "Permite a Huellicam adjuntar fotos clínicas de tu mascota al chat médico."
         }
       ],
       [

@@ -59,7 +59,7 @@ export default function HomeScreen() {
     <View>
       <View style={styles.header}>
         <View>
-          <Text style={styles.headerTitle}>VetConnect</Text>
+          <Text style={styles.headerTitle}>Huellicam</Text>
           <Text style={styles.headerSub}>Bienvenido, {user?.firstName} {user?.lastName}</Text>
         </View>
         <TouchableOpacity

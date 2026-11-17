@@ -72,7 +72,7 @@ describe('BUG-01 (WebView Ready): Pet Image Picker & Draft Recovery', () => {
       expect(clickSpy).toHaveBeenCalled();
     });
 
-    it('persists draft to localStorage under "vetconnect_new_pet_draft" when open', async () => {
+    it('persists draft to localStorage under "huellicam_new_pet_draft" when open', async () => {
       const onClose = vi.fn();
       render(
         <QueryClientProvider client={queryClient}>
@@ -84,7 +84,7 @@ describe('BUG-01 (WebView Ready): Pet Image Picker & Draft Recovery', () => {
       fireEvent.change(nameInput, { target: { value: 'Bobby' } });
 
       await waitFor(() => {
-        const saved = localStorage.getItem('vetconnect_new_pet_draft');
+        const saved = localStorage.getItem('huellicam_new_pet_draft');
         expect(saved).not.toBeNull();
         const parsed = JSON.parse(saved!);
         expect(parsed.name).toBe('Bobby');
@@ -94,7 +94,7 @@ describe('BUG-01 (WebView Ready): Pet Image Picker & Draft Recovery', () => {
 
     it('rehydrates draft automatically from localStorage if WebView reloaded', () => {
       localStorage.setItem(
-        'vetconnect_new_pet_draft',
+        'huellicam_new_pet_draft',
         JSON.stringify({
           name: 'Toby Rehydrated',
           species: 'Perro',
@@ -116,9 +116,9 @@ describe('BUG-01 (WebView Ready): Pet Image Picker & Draft Recovery', () => {
       expect(nameInput.value).toBe('Toby Rehydrated');
     });
 
-    it('clears "vetconnect_new_pet_draft" when modal is closed voluntarily', async () => {
+    it('clears "huellicam_new_pet_draft" when modal is closed voluntarily', async () => {
       localStorage.setItem(
-        'vetconnect_new_pet_draft',
+        'huellicam_new_pet_draft',
         JSON.stringify({
           name: 'Draft to delete',
           isModalOpen: true,
@@ -136,12 +136,12 @@ describe('BUG-01 (WebView Ready): Pet Image Picker & Draft Recovery', () => {
       fireEvent.click(cancelBtn);
 
       expect(onClose).toHaveBeenCalled();
-      expect(localStorage.getItem('vetconnect_new_pet_draft')).toBeNull();
+      expect(localStorage.getItem('huellicam_new_pet_draft')).toBeNull();
     });
   });
 
   describe('DashboardClient (DashboardClient.tsx)', () => {
-    it('rehydrates open modal and form data if "vetconnect_new_pet_draft" has isModalOpen: true', async () => {
+    it('rehydrates open modal and form data if "huellicam_new_pet_draft" has isModalOpen: true', async () => {
       vi.mocked(api.get).mockImplementation((url) => {
         if (url === '/api/pets') return Promise.resolve({ data: { success: true, data: [] } } as any);
         if (url === '/api/consultations/mine') return Promise.resolve({ data: { success: true, data: [] } } as any);
@@ -149,7 +149,7 @@ describe('BUG-01 (WebView Ready): Pet Image Picker & Draft Recovery', () => {
       });
 
       localStorage.setItem(
-        'vetconnect_new_pet_draft',
+        'huellicam_new_pet_draft',
         JSON.stringify({
           name: 'Draft Pet In Dashboard',
           species: 'Canine',
@@ -179,7 +179,7 @@ describe('BUG-01 (WebView Ready): Pet Image Picker & Draft Recovery', () => {
       });
 
       localStorage.setItem(
-        'vetconnect_new_pet_draft',
+        'huellicam_new_pet_draft',
         JSON.stringify({
           name: 'Draft Pet',
           isModalOpen: true,
@@ -199,7 +199,7 @@ describe('BUG-01 (WebView Ready): Pet Image Picker & Draft Recovery', () => {
       fireEvent.click(screen.getByTestId('cancel-add-pet-button'));
 
       await waitFor(() => {
-        expect(localStorage.getItem('vetconnect_new_pet_draft')).toBeNull();
+        expect(localStorage.getItem('huellicam_new_pet_draft')).toBeNull();
       });
     });
   });

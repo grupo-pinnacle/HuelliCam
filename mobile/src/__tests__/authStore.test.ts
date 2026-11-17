@@ -23,7 +23,7 @@ jest.mock('../lib/api', () => ({
           refreshToken: 'mock-new-refresh-token',
           user: {
             id: 'user-1',
-            email: 'test@vetconnect.com',
+            email: 'test@huellicam.com',
             firstName: 'Juan',
             lastName: 'Perez',
             role: 'CLIENT',
@@ -32,7 +32,7 @@ jest.mock('../lib/api', () => ({
       },
     }),
   },
-  SECURE_STORE_REFRESH_KEY: 'vetconnect_refresh_token',
+  SECURE_STORE_REFRESH_KEY: 'huellicam_refresh_token',
   setSessionExpiredHandler: jest.fn(),
   resetRefreshState: jest.fn(),
 }));
@@ -50,17 +50,17 @@ describe('Mobile AuthStore (Zustand + SecureStore)', () => {
 
     const state = useAuthStore.getState();
     expect(state.user).toBeDefined();
-    expect(state.user?.email).toBe('test@vetconnect.com');
+    expect(state.user?.email).toBe('test@huellicam.com');
     expect(state.accessToken).toBe('mock-access-token');
     expect(state.isLoading).toBe(false);
   });
 
   it('should perform login and persist refreshToken in SecureStore', async () => {
     const login = useAuthStore.getState().login;
-    const user = await login({ email: 'test@vetconnect.com', password: 'Password123!' });
+    const user = await login({ email: 'test@huellicam.com', password: 'Password123!' });
 
-    expect(user.email).toBe('test@vetconnect.com');
-    expect(SecureStore.setItemAsync).toHaveBeenCalledWith('vetconnect_refresh_token', 'mock-new-refresh-token');
+    expect(user.email).toBe('test@huellicam.com');
+    expect(SecureStore.setItemAsync).toHaveBeenCalledWith('huellicam_refresh_token', 'mock-new-refresh-token');
   });
 
   it('should clear tokens and user state on logout', async () => {
@@ -70,7 +70,7 @@ describe('Mobile AuthStore (Zustand + SecureStore)', () => {
     const state = useAuthStore.getState();
     expect(state.user).toBeNull();
     expect(state.accessToken).toBeNull();
-    expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('vetconnect_refresh_token');
+    expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('huellicam_refresh_token');
   });
 
   it('should reset the module-level refresh state on logout', async () => {

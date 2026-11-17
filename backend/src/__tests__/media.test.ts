@@ -34,7 +34,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-jwt-secret-key-change-in-produ
 describe('Media Module (/api/media)', () => {
   const mockOwner = {
     id: 'owner-uuid-media',
-    email: 'media.owner@vetconnect.com',
+    email: 'media.owner@huellicam.com',
     password: 'password',
     firstName: 'Gabriel',
     lastName: 'Torres',
@@ -57,7 +57,7 @@ describe('Media Module (/api/media)', () => {
   const mockStranger = {
     ...mockOwner,
     id: 'stranger-uuid',
-    email: 'stranger@vetconnect.com',
+    email: 'stranger@huellicam.com',
   };
 
   const ownerToken = jwt.sign(

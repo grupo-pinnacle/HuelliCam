@@ -8,7 +8,7 @@ import { colors, spacing, radius } from '../src/theme/tokens';
  *
  * expo-router maps `+not-found` to the `*not-found` path pattern
  * (`expo-router/build/getReactNavigationConfig.js`), so any unmatched incoming
- * `vetconnect://` link renders here instead of a blank screen.
+ * `huellicam://` link renders here instead of a blank screen.
  *
  * Rendered inside the root `<Stack>`, so it deliberately carries no auth gate:
  * an unrecognised link must be reported even when there is no session.
@@ -23,7 +23,7 @@ export default function NotFoundScreen() {
     <View style={styles.container} testID="not-found-screen">
       <Text style={styles.title}>Enlace no reconocido</Text>
       <Text style={styles.body}>
-        VetConnect no puede abrir esta dirección dentro de la aplicación.
+        Huellicam no puede abrir esta dirección dentro de la aplicación.
       </Text>
       {attempted && attempted !== '/' ? (
         <View style={styles.linkBox} testID="not-found-url">

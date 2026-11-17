@@ -56,7 +56,7 @@ const URGENCY_REGEX =
   /vomit|diarrea|coje|renge|claudic|herida|corte|ojo|fiebre|decaid|apatic|no come|inapetent|dolor/i;
 
 /**
- * AI-First Clinical Triage Engine (ADR-028)
+ * Deterministic Clinical Triage Engine (ADR-028)
  * Standardizes triage severity according to the Veterinary Triage Index (VTI)
  * and Manchester Triage System (MTS) principles.
  */

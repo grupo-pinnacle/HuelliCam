@@ -99,7 +99,7 @@ export const PetDossierModal: React.FC<PetDossierModalProps> = ({ pet, isOpen, o
             <div>
               <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-slate-700">
                 <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                <span>VetConnect — Red Nacional de Telemedicina Veterinaria</span>
+                <span>Huellicam — Red Nacional de Telemedicina Veterinaria</span>
               </div>
               <h1 className="text-2xl font-black text-[#06241D] mt-1" data-testid="dossier-pet-name">
                 {pet.name}

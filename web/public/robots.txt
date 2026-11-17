@@ -1,4 +1,4 @@
-# VetConnect Robots.txt — Cumplimiento de Privacidad y SEO
+# Huellicam Robots.txt — Cumplimiento de Privacidad y SEO
 User-agent: *
 Allow: /
 Allow: /login
@@ -12,4 +12,4 @@ Disallow: /call/
 Disallow: /admin/
 Disallow: /api/
 
-Sitemap: https://app.vetconnect.com.ar/sitemap.xml
+Sitemap: https://app.huellicam.com.ar/sitemap.xml

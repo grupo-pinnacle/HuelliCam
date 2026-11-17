@@ -5,7 +5,7 @@ import { LegalLayout } from '../components/legal/LegalLayout';
 export const CookiePolicy: React.FC = () => {
   const handleResetConsent = () => {
     try {
-      localStorage.removeItem('vetconnect_cookie_consent');
+      localStorage.removeItem('huellicam_cookie_consent');
     } catch {
       // Storage blocked
     }
@@ -64,7 +64,7 @@ export const CookiePolicy: React.FC = () => {
                     <td className="p-2.5 border-b border-[#e4dfd2]">Renovación de token de sesión con rotación criptográfica. Inaccesible vía JavaScript.</td>
                   </tr>
                   <tr>
-                    <td className="p-2.5 font-mono font-bold text-[#315f5d]">vetconnect_cookie_consent</td>
+                    <td className="p-2.5 font-mono font-bold text-[#315f5d]">huellicam_cookie_consent</td>
                     <td className="p-2.5">LocalStorage</td>
                     <td className="p-2.5">1 año</td>
                     <td className="p-2.5">Registro de la decisión de consentimiento del usuario.</td>

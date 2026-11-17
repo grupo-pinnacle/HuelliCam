@@ -30,7 +30,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-jwt-secret-key-change-in-produ
 describe('Pets Module (/api/pets)', () => {
   const mockOwner = {
     id: 'owner-uuid-1',
-    email: 'owner@vetconnect.com',
+    email: 'owner@huellicam.com',
     password: 'hashedpassword',
     firstName: 'Maria',
     lastName: 'Lopez',
@@ -53,7 +53,7 @@ describe('Pets Module (/api/pets)', () => {
   const mockVet = {
     ...mockOwner,
     id: 'vet-uuid-1',
-    email: 'vet@vetconnect.com',
+    email: 'vet@huellicam.com',
     role: 'VET' as const,
     vetStatus: 'APPROVED' as const,
   };
@@ -86,6 +86,7 @@ describe('Pets Module (/api/pets)', () => {
           breed: 'Labrador',
           weightKg: 20,
           sex: 'Male',
+          birthDate: null,
           microchip: '123456789012345',
           allergies: null,
           chronicConditions: null,
@@ -118,6 +119,7 @@ describe('Pets Module (/api/pets)', () => {
         breed: 'Labrador',
         weightKg: 20,
         sex: 'Male',
+        birthDate: null,
         microchip: '123456789012345',
         allergies: null,
         chronicConditions: null,
@@ -157,6 +159,59 @@ describe('Pets Module (/api/pets)', () => {
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe('VALIDATION_ERROR');
     });
+
+    it('should create a pet with a valid birthDate and reject future birthDate', async () => {
+      mockPrismaUser.findUnique.mockResolvedValue(mockOwner);
+      mockPrismaPet.findFirst.mockResolvedValue(null);
+      mockPrismaPet.create.mockResolvedValue({
+        id: 'pet-uuid-2',
+        ownerId: mockOwner.id,
+        name: 'Luna',
+        species: 'Feline',
+        breed: 'Siames',
+        weightKg: 4,
+        sex: 'Hembra',
+        birthDate: new Date('2022-05-14T12:00:00.000Z'),
+        microchip: null,
+        allergies: null,
+        chronicConditions: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        deletedAt: null,
+      });
+
+      const okRes = await request(app)
+        .post('/api/pets')
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({
+          name: 'Luna',
+          species: 'Feline',
+          breed: 'Siames',
+          birthDate: '2022-05-14',
+        });
+
+      expect(okRes.status).toBe(201);
+      expect(mockPrismaPet.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            birthDate: new Date('2022-05-14T12:00:00.000Z'),
+          }),
+        })
+      );
+
+      const futureRes = await request(app)
+        .post('/api/pets')
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({
+          name: 'Luna',
+          species: 'Feline',
+          breed: 'Siames',
+          birthDate: '2099-01-01',
+        });
+
+      expect(futureRes.status).toBe(400);
+      expect(futureRes.body.error.code).toBe('VALIDATION_ERROR');
+    });
   });
 
   describe('GET /api/pets/:id & PII Redaction', () => {
@@ -170,6 +225,7 @@ describe('Pets Module (/api/pets)', () => {
         breed: 'Labrador',
         weightKg: 20,
         sex: 'Male',
+        birthDate: null,
         microchip: null,
         allergies: null,
         chronicConditions: null,
@@ -204,6 +260,7 @@ describe('Pets Module (/api/pets)', () => {
         breed: 'Labrador',
         weightKg: 20,
         sex: 'Male',
+        birthDate: null,
         microchip: null,
         allergies: null,
         chronicConditions: null,
@@ -220,6 +277,7 @@ describe('Pets Module (/api/pets)', () => {
         breed: 'Labrador',
         weightKg: 20,
         sex: 'Male',
+        birthDate: null,
         microchip: null,
         allergies: null,
         chronicConditions: null,

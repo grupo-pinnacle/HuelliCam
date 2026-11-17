@@ -32,7 +32,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-jwt-secret-key-change-in-produ
 describe('Notifications Module (/api/notifications)', () => {
   const mockUser = {
     id: 'user-notif-1',
-    email: 'notif@vetconnect.com',
+    email: 'notif@huellicam.com',
     password: 'password',
     firstName: 'Nicolas',
     lastName: 'Vega',

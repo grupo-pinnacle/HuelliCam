@@ -145,7 +145,7 @@ export const HamsterMascot: React.FC<HamsterMascotProps> = ({
           strokeLinejoin="round"
         />
 
-        {/* COLLAR MÉDICO VETCONNECT EN MENTA BOLD */}
+        {/* COLLAR MÉDICO HUELLICAM EN MENTA BOLD */}
         <path
           d="M 44,92 Q 70,102 96,92"
           stroke="#00C48C"

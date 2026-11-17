@@ -1,8 +1,8 @@
 {
-  "name": "vetconnect",
+  "name": "huellicam",
   "version": "2.0.0",
   "private": true,
-  "description": "VetConnect — Plataforma de Telemedicina Veterinaria (Monorepo Greenfield)",
+  "description": "Huellicam — Plataforma Marca Blanca de Telemedicina Veterinaria",
   "workspaces": [
     "backend",
     "web",

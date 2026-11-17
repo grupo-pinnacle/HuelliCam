@@ -193,7 +193,7 @@ export const DashboardVet: React.FC = () => {
                     className="text-lg sm:text-2xl font-extrabold text-[#06241D] tracking-tight truncate"
                     data-testid="header-vet-title"
                   >
-                    VetConnect — Tablero de Guardia Profesional
+                    Huellicam — Tablero de Guardia Profesional
                   </h1>
                   <span
                     data-testid="vet-status-badge"

@@ -67,6 +67,7 @@ export interface Pet {
   breed: string;
   weightKg?: number | null;
   sex?: string | null;
+  birthDate?: string | null;
   microchip?: string | null;
   allergies?: string | null;
   chronicConditions?: string | null;
@@ -262,7 +263,7 @@ export interface TriageSelectorProps extends BaseComponentProps {
 }
 
 // ============================================================
-// CLINICAL INTAKE (ADR-028 AI-FIRST TRIAGE)
+// CLINICAL INTAKE (ADR-028 DETERMINISTIC TRIAGE)
 // ============================================================
 
 export type ClinicalSymptomKey =
@@ -323,7 +324,7 @@ export interface ChatMessageProps extends BaseComponentProps {
 /**
  * HangUpButton — overlay "Finalizar Consulta" button rendered OUTSIDE <VideoConference />.
  *
- * ⚠️ GUARDRAIL (AGENTS.md §5 Anti-pattern 3):
+ * ⚠️ GUARDRAIL:
  * <VideoConference /> already includes audio/video/screenshare controls.
  * HangUpButton is the ONLY extra control allowed alongside VideoConference.
  * It must call PATCH /api/consultations/:id/complete before unmounting <CallRoom />.

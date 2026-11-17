@@ -24,7 +24,7 @@ const SM = "Profesional Veterinario";
 export const patients: Patient[] = [
   {
     id: "milo", name: "Milo", kind: "Perro", breed: "Golden Retriever", age: "8 años", weight: "29 kg", sex: "Macho castrado", chip: "032 884 912",
-    tutor: "Tutor Clínico", tutorPhone: "+54 11 5555 0182", tutorEmail: "tutor@vetconnect.com.ar", photo: photos.milo, last: "12 Jun 2025", lastDays: 33, state: "Activo",
+    tutor: "Tutor Clínico", tutorPhone: "+54 11 5555 0182", tutorEmail: "tutor@huellicam.com.ar", photo: photos.milo, last: "12 Jun 2025", lastDays: 33, state: "Activo",
     allergies: ["Polen estacional"], meds: ["Oclacitinib 16 mg · 1 comprimido cada 24 h"], history: ["Dermatitis atópica leve (2023)", "Otitis externa recurrente"],
     vaccines: [
       { name: "Séxtuple canina", date: "12 Mar 2025", next: "12 Mar 2026", state: "Al día" },
@@ -251,7 +251,20 @@ export const quickReplies = [
   "Mantené a tu mascota tranquila mientras evalúo el caso.",
 ];
 
-export type Rx = { id: string; petId: string; med: string; dose: string; freq: string; duration: string; notes: string; status: "Borrador" | "Emitida" | "Finalizada"; date: string };
+export type Rx = {
+  id: string;
+  petId: string;
+  consultationId?: string;
+  med: string;
+  dose: string;
+  freq: string;
+  duration: string;
+  notes: string;
+  status: "Borrador" | "Emitida" | "Finalizada";
+  date: string;
+  qrCodeDataUrl?: string;
+  verifyUrl?: string;
+};
 export const initialRx: Rx[] = [
   { id: "RX-2025-0421", petId: "luna", med: "Simeticona", dose: "0,2 ml", freq: "Cada 8 horas", duration: "3 días", notes: "Administrar con jeringa sin aguja. Ofrecer heno fresco.", status: "Emitida", date: "Hoy" },
   { id: "RX-2025-0418", petId: "milo", med: "Oclacitinib 16 mg", dose: "1 comprimido", freq: "Cada 24 horas", duration: "14 días", notes: "Administrar con comida. Suspender ante vómitos persistentes.", status: "Emitida", date: "12 Jun 2025" },

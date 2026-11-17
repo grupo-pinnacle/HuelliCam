@@ -4,7 +4,7 @@ import { useAuth } from "../context/AuthContext";
 import { Role } from "../types";
 import "../styles/auth.css";
 
-export const REGISTER_DRAFT_KEY = "vetconnect_register_draft";
+export const REGISTER_DRAFT_KEY = "huellicam_register_draft";
 
 export interface RegisterDraft {
   role?: Role | string;

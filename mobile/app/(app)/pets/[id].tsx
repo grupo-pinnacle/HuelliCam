@@ -45,6 +45,7 @@ export default function PetDetailScreen() {
         breed: data.breed,
         weightKg: data.weightKg,
         sex: data.sex,
+        birthDate: data.birthDate ? data.birthDate.slice(0, 10) : null,
         microchip: data.microchip,
         allergies: data.allergies,
         chronicConditions: data.chronicConditions,
@@ -136,6 +137,7 @@ export default function PetDetailScreen() {
           <InfoRow icon="ribbon-outline" label="Raza" value={pet.breed} />
           <InfoRow icon="speedometer-outline" label="Peso" value={pet.weightKg != null ? `${pet.weightKg} kg` : '—'} />
           <InfoRow icon="male-female-outline" label="Sexo" value={pet.sex || '—'} />
+          <InfoRow icon="calendar-outline" label="Nacimiento" value={pet.birthDate ? pet.birthDate.slice(0, 10) : '—'} />
           <InfoRow icon="hardware-chip-outline" label="Microchip" value={pet.microchip || '—'} />
           <InfoRow icon="warning-outline" label="Alergias" value={pet.allergies || '—'} />
           <InfoRow icon="fitness-outline" label="Crónicas" value={pet.chronicConditions || '—'} />
@@ -147,6 +149,7 @@ export default function PetDetailScreen() {
           <Field label="Raza *" value={form.breed || ''} onChangeText={(t) => set('breed', t)} testID="petdetail-breed" />
           <Field label="Peso (kg)" value={form.weightKg != null ? String(form.weightKg) : ''} onChangeText={(t) => set('weightKg', t)} keyboardType="decimal-pad" testID="petdetail-weight" />
           <Field label="Sexo" value={(form.sex as string) || ''} onChangeText={(t) => set('sex', t)} testID="petdetail-sex" />
+          <Field label="Nacimiento (AAAA-MM-DD)" value={(form.birthDate as string) || ''} onChangeText={(t) => set('birthDate', t)} placeholder="Ej. 2022-05-14" maxLength={10} testID="petdetail-birthdate" />
           <Field label="Microchip (15 dígitos)" value={(form.microchip as string) || ''} onChangeText={(t) => set('microchip', t)} keyboardType="number-pad" testID="petdetail-microchip" />
           <Field label="Alergias" value={(form.allergies as string) || ''} onChangeText={(t) => set('allergies', t)} testID="petdetail-allergies" />
           <Field label="Condiciones crónicas" value={(form.chronicConditions as string) || ''} onChangeText={(t) => set('chronicConditions', t)} testID="petdetail-chronic" />

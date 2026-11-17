@@ -2,7 +2,7 @@ import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { ApiResponse, AuthPayload } from '../types';
 
-export const SECURE_STORE_REFRESH_KEY = 'vetconnect_refresh_token';
+export const SECURE_STORE_REFRESH_KEY = 'huellicam_refresh_token';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
 

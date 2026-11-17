@@ -6,10 +6,10 @@ describe('Bugfix: Client Settings Page (Notification persistence, Action buttons
   const clientAppPath = path.resolve(__dirname, '../pages/ClientApp.tsx');
   const clientAppCode = fs.readFileSync(clientAppPath, 'utf-8');
 
-  it('Bug-03: SettingsPage debe persistir las preferencias de notificaciones en localStorage ("vetconnect_notification_preferences")', () => {
+  it('Bug-03: SettingsPage debe persistir las preferencias de notificaciones en localStorage ("huellicam_notification_preferences")', () => {
     // Debe buscar y persistir en localStorage las preferencias de notificaciones
-    expect(clientAppCode).toMatch(/localStorage\.getItem\(['"]vetconnect_notification_preferences['"]\)/);
-    expect(clientAppCode).toMatch(/localStorage\.setItem\(['"]vetconnect_notification_preferences['"]/);
+    expect(clientAppCode).toMatch(/localStorage\.getItem\(['"]huellicam_notification_preferences['"]\)/);
+    expect(clientAppCode).toMatch(/localStorage\.setItem\(['"]huellicam_notification_preferences['"]/);
   });
 
   it('Bug-02: Los botones de "Cambiar contraseña" y "Privacidad" en SettingsPage no deben ser botones muertos; deben tener onClick/navegación', () => {

@@ -22,6 +22,7 @@ export class PetsService {
         breed: dto.breed,
         weightKg: dto.weightKg || null,
         sex: dto.sex || null,
+        birthDate: dto.birthDate ?? null,
         microchip: dto.microchip || null,
         allergies: dto.allergies || null,
         chronicConditions: dto.chronicConditions || null,

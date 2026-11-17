@@ -16,7 +16,7 @@ vi.mock('../services/api', () => ({
 
 vi.mock('../context/AuthContext', () => ({
   useAuth: () => ({
-    user: { id: 'u1', firstName: 'Lara', lastName: 'Bouso', role: 'CLIENT', email: 'lara@vetconnect.com.ar' },
+    user: { id: 'u1', firstName: 'Lara', lastName: 'Bouso', role: 'CLIENT', email: 'lara@huellicam.com.ar' },
     refreshSession: vi.fn(),
     logout: vi.fn(() => Promise.resolve()),
   }),

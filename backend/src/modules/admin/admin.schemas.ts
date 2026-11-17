@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { birthDateSchema } from '../pets/pets.schemas';
 
 const emptyToNull = (val: unknown) => (typeof val === 'string' && val.trim() === '') ? null : val;
 
@@ -42,6 +43,7 @@ export const adminCreatePetSchema = z.object({
     .optional()
     .nullable(),
   sex: z.string().optional().nullable(),
+  birthDate: birthDateSchema,
   microchip: z
     .string()
     .regex(/^\d{15}$/, 'El microchip debe poseer exactamente 15 digitos numericos ISO')
@@ -63,6 +65,7 @@ export const adminUpdatePetSchema = z.object({
     .optional()
     .nullable(),
   sex: z.string().optional().nullable(),
+  birthDate: birthDateSchema,
   microchip: z
     .string()
     .regex(/^\d{15}$/, 'El microchip debe poseer exactamente 15 digitos numericos ISO')

@@ -28,7 +28,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-jwt-secret-key-change-in-produ
 describe('Admin Module (/api/admin)', () => {
   const mockAdmin = {
     id: 'admin-uuid-1',
-    email: 'admin@vetconnect.com',
+    email: 'admin@huellicam.com',
     password: 'password',
     firstName: 'Super',
     lastName: 'Admin',
@@ -57,7 +57,7 @@ describe('Admin Module (/api/admin)', () => {
   const mockPendingVet = {
     ...mockAdmin,
     id: 'vet-pending-1',
-    email: 'vet.pending@vetconnect.com',
+    email: 'vet.pending@huellicam.com',
     role: 'VET' as const,
     vetStatus: 'PENDING' as const,
     licenseNumber: 'MP-9900',

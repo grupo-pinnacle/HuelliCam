@@ -11,10 +11,10 @@ describe('Bugfix: Messages Full-height Scroll & Prescriptions Cache', () => {
     expect(clientAppCode).toMatch(/app-main\s+\$\{isMessagesPage\s*\?\s*['"]app-main--messages['"]/);
   });
 
-  it('Bug B: MessagesPage debe almacenar y recuperar mensajes de localStorage ("vetconnect_chat_") para persistir la conversación ante recargas', () => {
+  it('Bug B: MessagesPage debe almacenar y recuperar mensajes de localStorage ("huellicam_chat_") para persistir la conversación ante recargas', () => {
     // Debe buscar y persistir en localStorage los mensajes de chat
-    expect(clientAppCode).toMatch(/vetconnect_chat_/);
-    expect(clientAppCode).toMatch(/localStorage\.setItem\([`'"]vetconnect_chat_/);
+    expect(clientAppCode).toMatch(/huellicam_chat_/);
+    expect(clientAppCode).toMatch(/localStorage\.setItem\([`'"]huellicam_chat_/);
   });
 
   it('Bug C: PrescriptionsPage / useClientData debe cachear recetas con useQuery para evitar latencia de 3s al reingresar a la sección', () => {

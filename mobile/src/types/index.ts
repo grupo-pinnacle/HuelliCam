@@ -30,6 +30,7 @@ export interface Pet {
   breed: string;
   weightKg?: number | null;
   sex?: string | null;
+  birthDate?: string | null;
   microchip?: string | null;
   allergies?: string | null;
   chronicConditions?: string | null;

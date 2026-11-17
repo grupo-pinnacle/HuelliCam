@@ -128,7 +128,7 @@ export default function CallScreen() {
         </View>
         <Text style={styles.title}>Permisos de Cámara y Micrófono Requeridos</Text>
         <Text style={styles.body}>
-          Para llevar a cabo la videoconsulta médica en vivo, VetConnect necesita acceso a la cámara y al micrófono de tu dispositivo.
+          Para llevar a cabo la videoconsulta médica en vivo, Huellicam necesita acceso a la cámara y al micrófono de tu dispositivo.
         </Text>
         <View style={styles.permissionAction}>
           <PrimaryButton

@@ -24,7 +24,7 @@ describe('AdminVets Modal & Toast Notification UX', () => {
         data: [
           {
             id: 'vet-10',
-            email: 'vet.toast@vetconnect.com',
+            email: 'vet.toast@huellicam.com',
             firstName: 'Mariana',
             lastName: 'Rios',
             role: 'VET',
@@ -65,7 +65,7 @@ describe('AdminVets Modal & Toast Notification UX', () => {
         data: [
           {
             id: 'vet-11',
-            email: 'vet.reject.toast@vetconnect.com',
+            email: 'vet.reject.toast@huellicam.com',
             firstName: 'Gabriel',
             lastName: 'Sosa',
             role: 'VET',
@@ -106,7 +106,7 @@ describe('AdminVets Modal & Toast Notification UX', () => {
         data: [
           {
             id: 'vet-12',
-            email: 'vet.dismiss@vetconnect.com',
+            email: 'vet.dismiss@huellicam.com',
             firstName: 'Hugo',
             lastName: 'Vargas',
             role: 'VET',
@@ -181,7 +181,7 @@ describe('AdminVets Modal & Toast Notification UX', () => {
         data: [
           {
             id: 'vet-13',
-            email: 'vet.input@vetconnect.com',
+            email: 'vet.input@huellicam.com',
             firstName: 'Paula',
             lastName: 'Nunez',
             role: 'VET',

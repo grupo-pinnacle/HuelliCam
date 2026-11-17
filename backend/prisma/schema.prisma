@@ -84,6 +84,7 @@ model Pet {
   breed             String
   weightKg          Float?    @map("weight_kg")
   sex               String?
+  birthDate         DateTime? @map("birth_date")
   microchip         String?
   allergies         String?
   chronicConditions String?   @map("chronic_conditions")
@@ -310,4 +311,16 @@ model PasswordResetToken {
 
   @@index([email, expiresAt])
   @@map("password_reset_tokens")
+}
+
+model EmailDispatchLog {
+  id             String   @id @default(uuid())
+  dedupeKey      String   @unique @map("dedupe_key")
+  type           String
+  entityId       String?  @map("entity_id")
+  recipientEmail String   @map("recipient_email")
+  sentAt         DateTime @default(now()) @map("sent_at")
+
+  @@index([type, entityId, sentAt])
+  @@map("email_dispatch_logs")
 }

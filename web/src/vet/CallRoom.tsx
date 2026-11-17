@@ -4,7 +4,8 @@ import ClientScopedStyle from "../styles/ClientScopedStyle";
 import { getWsUrl } from "../lib/ws";
 import { WhatsAppCheck } from "../components/call/WhatsAppCheck";
 import { Button, Icon, Modal, go } from "../shared";
-import { getPatient, initialConsults, initialQueue, registerPatient, type Consult, type QueueItem, type Triage } from "./data";
+import { getPatient, initialConsults, initialQueue, quickReplies, registerPatient, type Consult, type QueueItem, type Triage } from "./data";
+import { ClinicalChatThread, type ClinicalChatDoc, type ClinicalChatMessage } from "../components/chat/ClinicalChatThread";
 import { TriageBadge, VetProvider, useVet } from "./vetkit";
 import { EvolutionEditor, FichaClinica } from "./Consultations";
 import { useAuth } from "../context/AuthContext";
@@ -574,20 +575,73 @@ export function LiveKitTrackSynchronizer({ mic, cam }: { mic: boolean; cam: bool
 
 export { getWsUrl, WhatsAppCheck };
 
+interface CallChatRawMessage {
+  id?: string;
+  clientMsgId?: string;
+  consultationId?: string;
+  content?: string;
+  senderId?: string;
+  sender?: { firstName?: string; lastName?: string };
+  createdAt?: string;
+  attachmentUrl?: string | null;
+  status?: "sending" | "sent" | "delivered" | "read" | "failed";
+  localDoc?: ClinicalChatDoc;
+}
+
+const IMAGE_URL_RE = /\.(png|jpe?g|webp|gif|bmp|avif)(\?|$)/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function resolveAttachmentUrl(rawUrl?: string | null): string | undefined {
+  if (!rawUrl) return undefined;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return undefined;
+  if (UUID_RE.test(trimmed)) return `/api/media/${trimmed}`;
+  return trimmed;
+}
+
+function buildDocFromMessage(m: CallChatRawMessage): ClinicalChatDoc | undefined {
+  if (m.localDoc) return m.localDoc;
+  const resolved = resolveAttachmentUrl(m.attachmentUrl);
+  if (!resolved) return undefined;
+  const contentText = (m.content || "").trim();
+  const title = contentText.replace(/^📎\s*Adjunto:\s*/i, "") || "Archivo clínico adjunto";
+  const isImage = IMAGE_URL_RE.test(resolved) || IMAGE_URL_RE.test(title);
+  return {
+    title,
+    sub: isImage ? "Imagen clínica adjunta" : "Documento clínico adjunto",
+    bannerTag: isImage ? "FOTO / ARCHIVO CLÍNICO" : "DOCUMENTO ADJUNTO",
+    bannerTitle: "HuelliCam · Expediente Clínico",
+    fileUrl: resolved,
+    isImage,
+  };
+}
+
 function CallChatPanel({
   consultationId,
   otherName,
+  otherInitials,
+  otherSubtitle,
+  isVet,
   user,
+  onNewIncomingMessage,
+  onClosePanel,
 }: {
   consultationId: string;
   otherName: string;
-  user: any;
+  otherInitials: string;
+  otherSubtitle: string;
+  isVet: boolean;
+  user: { id?: string; firstName?: string; lastName?: string } | null;
+  onNewIncomingMessage?: () => void;
+  onClosePanel?: () => void;
 }) {
-  const [messages, setMessages] = useState<any[]>([]);
+  const [messages, setMessages] = useState<CallChatRawMessage[]>([]);
   const [text, setText] = useState("");
   const [socket, setSocket] = useState<Socket | null>(null);
   const [connected, setConnected] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+  const onNewIncomingRef = useRef(onNewIncomingMessage);
+  onNewIncomingRef.current = onNewIncomingMessage;
 
   useEffect(() => {
     const wsUrl = getWsUrl();
@@ -613,22 +667,26 @@ function CallChatPanel({
 
     s.on("disconnect", () => setConnected(false));
 
-    s.on("message:new", (msg: any) => {
+    s.on("message:new", (msg: CallChatRawMessage) => {
+      const fromOther = Boolean(msg.senderId && msg.senderId !== user?.id);
       setMessages((prev) => {
         const existingIdx = prev.findIndex(
           (m) => (m.id && m.id === msg.id) || (m.clientMsgId && m.clientMsgId === msg.clientMsgId)
         );
         if (existingIdx >= 0) {
           const updated = [...prev];
-          updated[existingIdx] = { ...msg, status: "sent" };
+          updated[existingIdx] = { ...prev[existingIdx], ...msg, status: "sent" };
           return updated;
+        }
+        if (fromOther) {
+          onNewIncomingRef.current?.();
         }
         return [...prev, { ...msg, status: "sent" }];
       });
     });
 
     api
-      .get<ApiResponse<any[]>>(`/api/consultations/${consultationId}/messages`)
+      .get<ApiResponse<CallChatRawMessage[]>>(`/api/consultations/${consultationId}/messages`)
       .then((res) => {
         if (res.data.success && res.data.data) {
           setMessages(res.data.data);
@@ -643,20 +701,18 @@ function CallChatPanel({
       s.off("message:new");
       s.disconnect();
     };
-  }, [consultationId]);
+  }, [consultationId, user?.id]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length]);
 
-  const handleSend = async () => {
-    if (!text.trim()) return;
+  const dispatchMessage = async (
+    newContent: string,
+    options?: { attachmentUrl?: string; localDoc?: ClinicalChatDoc }
+  ) => {
     const clientMsgId = `call-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const newContent = text.trim();
-    setText("");
-
-    // Optimistic message insertion: display immediately with WhatsApp 'sending' animated clock
-    const optimisticMsg = {
+    const optimisticMsg: CallChatRawMessage = {
       id: clientMsgId,
       clientMsgId,
       consultationId,
@@ -664,7 +720,9 @@ function CallChatPanel({
       senderId: user?.id,
       sender: user ? { firstName: user.firstName, lastName: user.lastName } : undefined,
       createdAt: new Date().toISOString(),
-      status: "sending" as const,
+      attachmentUrl: options?.attachmentUrl,
+      localDoc: options?.localDoc,
+      status: "sending",
     };
 
     setMessages((prev) => [...prev, optimisticMsg]);
@@ -676,128 +734,159 @@ function CallChatPanel({
           consultationId,
           content: newContent,
           clientMsgId,
+          ...(options?.attachmentUrl ? { attachmentUrl: options.attachmentUrl } : {}),
         },
-        (res: any) => {
+        (res: { success?: boolean; data?: CallChatRawMessage }) => {
           if (res?.success && res?.data) {
             setMessages((prev) =>
               prev.map((m) =>
                 m.clientMsgId === clientMsgId
-                  ? { ...res.data, status: "sent" }
+                  ? { ...res.data, localDoc: m.localDoc, status: "sent" }
                   : m
               )
             );
           }
         }
       );
-    } else {
-      // Fallback via HTTP REST
-      try {
-        const res = await api.post<ApiResponse<any>>(`/api/consultations/${consultationId}/messages`, {
+      return;
+    }
+
+    try {
+      const res = await api.post<ApiResponse<CallChatRawMessage>>(
+        `/api/consultations/${consultationId}/messages`,
+        {
           content: newContent,
           clientMsgId,
-        });
-        if (res.data.success && res.data.data) {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.clientMsgId === clientMsgId
-                ? { ...res.data.data, status: "sent" }
-                : m
-            )
-          );
+          ...(options?.attachmentUrl ? { attachmentUrl: options.attachmentUrl } : {}),
         }
-      } catch (err) {
-        console.error("Error sending message via HTTP fallback:", err);
+      );
+      if (res.data.success && res.data.data) {
         setMessages((prev) =>
           prev.map((m) =>
             m.clientMsgId === clientMsgId
-              ? { ...m, status: "failed" }
+              ? { ...res.data.data, localDoc: m.localDoc, status: "sent" }
               : m
           )
         );
       }
+    } catch (err) {
+      console.error("Error sending message via HTTP fallback:", err);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.clientMsgId === clientMsgId ? { ...m, status: "failed" } : m
+        )
+      );
     }
   };
 
+  const handleSend = () => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    setText("");
+    void dispatchMessage(trimmed);
+  };
+
+  const handleAttachFile = async (file: File, isImage: boolean) => {
+    const localPreviewUrl = URL.createObjectURL(file);
+    const sizeKB = (file.size / 1024).toFixed(1);
+    const localDoc: ClinicalChatDoc = {
+      title: file.name,
+      sub: isImage ? `Imagen clínica · ${sizeKB} KB` : `Documento clínico · ${sizeKB} KB`,
+      bannerTag: isImage ? "FOTO / ARCHIVO CLÍNICO" : "DOCUMENTO ADJUNTO",
+      bannerTitle: "HuelliCam · Expediente Clínico",
+      fileUrl: localPreviewUrl,
+      isImage,
+    };
+
+    let uploadedAttachmentUrl: string | undefined;
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("consultationId", consultationId);
+      const uploadRes = await api.post<ApiResponse<{ id?: string; url?: string }>>(
+        "/api/media",
+        formData
+      );
+      const uploadedId = uploadRes.data?.data?.id;
+      const uploadedUrl = uploadRes.data?.data?.url;
+      if (uploadedUrl) {
+        uploadedAttachmentUrl = uploadedUrl;
+      } else if (uploadedId) {
+        uploadedAttachmentUrl = `/api/media/${uploadedId}`;
+      }
+    } catch (err) {
+      console.warn("Media upload fallback to clinical chat entry:", err);
+    }
+
+    await dispatchMessage(`📎 Adjunto: ${file.name}`, {
+      attachmentUrl: uploadedAttachmentUrl,
+      localDoc,
+    });
+  };
+
+  const threadMessages: ClinicalChatMessage[] = messages.map((m) => {
+    const mine = m.senderId === user?.id;
+    const time = m.createdAt
+      ? new Date(m.createdAt).toLocaleTimeString("es-AR", {
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "Ahora";
+    const doc = buildDocFromMessage(m);
+    const displayText =
+      doc && m.content?.startsWith("📎 Adjunto:") ? undefined : m.content || "";
+    const senderDisplay =
+      [m.sender?.firstName, m.sender?.lastName].filter(Boolean).join(" ") ||
+      otherName;
+
+    return {
+      id: m.id || m.clientMsgId || `${time}-${Math.random()}`,
+      mine,
+      senderName: mine ? undefined : senderDisplay,
+      text: displayText,
+      time,
+      state: m.status || "read",
+      doc,
+    };
+  });
+
   return (
-    <div className="wa-chat-pane" style={{ display: "flex", flexDirection: "column", height: "100%", background: "#fffbef" }}>
-      <style>{`
-        @keyframes waSpin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
-      <div className="wa-chat-body" style={{ flex: 1, padding: "14px 16px", overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
-        <div className="wa-encryption-pill" style={{ alignSelf: "center", margin: "4px auto 8px" }}>
-          <span>🔒</span>
-          <span>Llamada y chat cifrados de extremo a extremo · SENASA</span>
-        </div>
-        <div className="wa-date-pill" style={{ alignSelf: "center", margin: "0 auto 6px" }}>HOY</div>
-
-        {messages.length === 0 ? (
-          <div className="v-chat__empty" style={{ textAlign: "center", padding: "32px 16px", color: "var(--ink-soft)" }}>
-            <Icon name="message" size={26} />
-            <p style={{ marginTop: 8, fontSize: 13 }}>Todavía no hay mensajes con {otherName}. Escribí abajo para comenzar.</p>
-          </div>
-        ) : (
-          messages.map((m) => {
-            const mine = m.senderId === user?.id;
-            const time = m.createdAt
-              ? new Date(m.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-              : "Ahora";
-            return (
-              <div
-                key={m.id || m.clientMsgId}
-                className={`wa-bubble ${mine ? "wa-bubble--sent" : "wa-bubble--received"}`}
-                style={{
-                  alignSelf: mine ? "flex-end" : "flex-start",
-                  maxWidth: "85%",
-                }}
-              >
-                {!mine && (
-                  <div className="wa-bubble__sender" style={{ fontSize: 11.5, fontWeight: 700, color: "#315f5d", marginBottom: 2 }}>
-                    {m.sender?.firstName || otherName}
-                  </div>
-                )}
-                <p className="wa-bubble__text" style={{ margin: 0, fontSize: 13, lineHeight: 1.45, color: "#183c3a" }}>
-                  {m.content}
-                </p>
-                <div className="wa-bubble__meta" style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4, marginTop: 3, fontSize: 10, color: "#607674" }}>
-                  <span>{time}</span>
-                  {mine && <WhatsAppCheck state={m.status || "read"} />}
-                </div>
-              </div>
-            );
-          })
-        )}
-        <div style={{ fontSize: 11, padding: "4px 8px", color: connected ? "#315f5d" : "#607674", display: "flex", alignItems: "center", gap: 6, justifyContent: "center", marginTop: "auto" }}>
-          <i className={connected ? "is-online" : "is-offline"} style={{ width: 7, height: 7, borderRadius: "50%" }} />
-          {connected ? "Canal telemático seguro conectado" : "Conectando al servidor…"}
-        </div>
-        <div ref={endRef} />
-      </div>
-
-      <footer className="wa-chat-footer" style={{ padding: "8px 12px", background: "#f2eddd", display: "flex", alignItems: "center", gap: 8, borderTop: "1px solid #e4dfd2" }}>
-        <div className="wa-input-pill" style={{ flex: 1, background: "#ffffff", borderRadius: 999, border: "1px solid #e4dfd2", height: 40, display: "flex", alignItems: "center", padding: "0 14px" }}>
-          <input
-            aria-label="Escribir mensaje"
-            placeholder={`Escribir a ${otherName}…`}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSend()}
-            style={{ width: "100%", border: "none", background: "transparent", outline: "none", fontSize: 13, color: "#183c3a" }}
-          />
-        </div>
-        <button
-          className="wa-send-btn"
-          disabled={!text.trim()}
-          onClick={handleSend}
-          aria-label="Enviar mensaje"
-          style={{ width: 40, height: 40, borderRadius: "50%", border: "none", background: text.trim() ? "#315f5d" : "#a8b5b2", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: text.trim() ? "pointer" : "default" }}
-        >
-          <Icon name="send" size={17} />
-        </button>
-      </footer>
-    </div>
+    <ClinicalChatThread
+      ariaLabel={`Chat clínico con ${otherName}`}
+      showHeader={true}
+      contactName={otherName}
+      contactInitials={otherInitials}
+      statusText={
+        connected
+          ? `En consulta activa · ${otherSubtitle}`
+          : `Conectando canal clínico… · ${otherSubtitle}`
+      }
+      isOnline={connected}
+      headerActions={
+        onClosePanel ? (
+          <button
+            type="button"
+            className="wa-icon-btn"
+            onClick={onClosePanel}
+            aria-label="Cerrar panel"
+          >
+            <Icon name="close" size={17} />
+          </button>
+        ) : undefined
+      }
+      messages={threadMessages}
+      value={text}
+      onChange={setText}
+      onSend={handleSend}
+      placeholder={
+        isVet
+          ? `Escribir indicación a ${otherName}…`
+          : "Escribí un mensaje clínico para el veterinario..."
+      }
+      quickReplies={isVet ? quickReplies : undefined}
+      onAttachFile={handleAttachFile}
+      endRef={endRef}
+    />
   );
 }
 
@@ -846,6 +935,19 @@ function Room({ id }: { id: string }) {
   // total a la cámara/video del paciente y médico, evitando que el drawer
   // fixed de 66vh tape la pantalla al ingresar (BUG-01 test1.md):
   const [panel, setPanel] = useState<CallRoomPanel>("");
+  const panelRef = useRef<CallRoomPanel>(panel);
+  panelRef.current = panel;
+  const [unreadChat, setUnreadChat] = useState(0);
+  useEffect(() => {
+    if (panel === "Chat") {
+      setUnreadChat(0);
+    }
+  }, [panel]);
+  const handleNewIncomingMessage = useCallback(() => {
+    if (panelRef.current !== "Chat") {
+      setUnreadChat((n) => n + 1);
+    }
+  }, []);
   const [celebrating, setCelebrating] = useState(false);
   const wasWaitingRef = useRef(false);
   const [ending, setEnding] = useState(false);
@@ -857,7 +959,7 @@ function Room({ id }: { id: string }) {
 
   const cachedUser = (() => {
     try {
-      const raw = typeof window !== "undefined" ? window.localStorage.getItem("vetconnect_user") : null;
+      const raw = typeof window !== "undefined" ? window.localStorage.getItem("huellicam_user") : null;
       return raw ? JSON.parse(raw) : null;
     } catch {
       return null;
@@ -1075,7 +1177,7 @@ function Room({ id }: { id: string }) {
       roomSocket.disconnect();
       if (typeof window !== "undefined") {
         window.dispatchEvent(
-          new CustomEvent("vetconnect:session_terminated", {
+          new CustomEvent("huellicam:session_terminated", {
             detail: {
               reason: data?.reason || "MULTIPLE_DEVICES_DETECTED",
               message: data?.message || "Tu sesión fue transferida a otro dispositivo.",
@@ -1280,18 +1382,23 @@ function Room({ id }: { id: string }) {
         <button className="v-call__back" onClick={() => setEnding(true)} aria-label="Salir de la videollamada">
           <Icon name="left" size={20} />
         </button>
-        <div>
-          <b>{petName} · {tutorName}</b>
+        <span className="v-call__brand-mark" aria-hidden="true" />
+        <div className="v-call__identity">
+          <span className="v-call__eyebrow">Videoconsulta · {petKind}</span>
+          <b>{petName} · {fromClient ? vetName : tutorName}</b>
           <span>{cleanReason}</span>
         </div>
-        {effectiveTriage && <TriageBadge level={effectiveTriage} compact />}
-        <span className={`v-call__net ${callState === "reconnecting" ? "is-warning" : ""}`}>
-          <Icon name={callState === "reconnecting" ? "repeat" : "check"} size={13} />
-          {callState === "reconnecting" ? "Reconectando" : "Conexión estable"}
-        </span>
-        <time className="v-call__time" aria-label={`Duración ${Math.floor(secs / 60)} minutos`}>
-          {clock}
-        </time>
+        <div className="v-call__status-group">
+          {effectiveTriage && <TriageBadge level={effectiveTriage} compact />}
+          <span className={`v-call__net ${callState === "reconnecting" ? "is-warning" : ""}`}>
+            <Icon name={callState === "reconnecting" ? "repeat" : "check"} size={13} />
+            <span>{callState === "reconnecting" ? "Reconectando" : "Conexión estable"}</span>
+          </span>
+          <time className="v-call__time" aria-label={`Duración ${Math.floor(secs / 60)} minutos`}>
+            <i className="v-call__rec-dot" aria-hidden="true" />
+            <span>{clock}</span>
+          </time>
+        </div>
       </header>
 
       <main className="v-call__stage">
@@ -1348,8 +1455,8 @@ function Room({ id }: { id: string }) {
                 <h1>{stateCopy[0]}</h1>
                 <p>{stateCopy[1]}</p>
                 {callState === "waiting" && (
-                  <div style={{ marginTop: 16, display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, padding: "6px 14px", borderRadius: 20, background: "#254d4a", color: "#609f9c", border: "1px solid #3d6f6c" }}>
-                    <i className="is-online" style={{ width: 8, height: 8 }} />
+                  <div className="v-call__state-pill">
+                    <i className="is-online" />
                     <span>Sala de espera activa · Notificando a médicos de guardia</span>
                   </div>
                 )}
@@ -1362,12 +1469,16 @@ function Room({ id }: { id: string }) {
             )
           ) : (
             <div className="v-call__professional" role="img" aria-label={`Video de ${remoteName}`}>
+              <div className="v-call__pro-rings" aria-hidden="true">
+                <i />
+                <i />
+              </div>
               <span className="avatar">{remoteInitials}</span>
               <small>{remoteName}</small>
-              <span style={{ fontSize: 12, color: "#d9e8e4", marginTop: 4 }}>
+              <span className="v-call__pro-sub">
                 {livekitFailed
                   ? "No pudimos conectar el video en vivo. Podés usar el chat o reintentar."
-                  : "Canal telemático HD activo"}
+                  : `Canal telemático HD activo · ${petName}`}
               </span>
               {livekitFailed && (
                 <Button variant="secondary" icon="repeat" onClick={() => setLivekitFailed(false)}>
@@ -1379,29 +1490,20 @@ function Room({ id }: { id: string }) {
 
           {/* Clinical identification tag */}
           <span className="v-call__tag">
-            {callState === "waiting" ? "Sala de espera · Guardia HuelliCam" : remoteName}
+            <b className="v-call__tag-ini" aria-hidden="true">{remoteInitials}</b>
+            <span>{callState === "waiting" ? "Sala de espera · Guardia HuelliCam" : remoteName}</span>
           </span>
 
           {/* Legal compliance badge */}
-          <span
-            className="v-call__tag"
-            style={{
-              top: 14,
-              left: 14,
-              bottom: "auto",
-              fontSize: 11,
-              background: "#183c3a",
-              border: "1px solid #315f5d",
-              color: "#609f9c",
-            }}
-          >
-            Canal Cifrado • SENASA Res. 1442/2021
+          <span className="v-call__tag v-call__hud-pill--secure">
+            <Icon name="shield" size={13} />
+            <span>Canal Cifrado · SENASA Res. 1442/2021</span>
           </span>
         </div>
 
         {/* Local user pip with live webcam stream - only when LiveKit room is not active */}
         {!livekitToken && (
-          <div className={`v-call__self ${cam ? "" : "is-off"} ${callState === "waiting" ? "v-call__self--waiting" : "v-call__self--active bottom-20 right-3 z-20 w-24 h-32 rounded-xl overflow-hidden shadow-lg"}`}>
+          <div className={`v-call__self ${cam ? "" : "is-off"} ${callState === "waiting" ? "v-call__self--waiting" : "v-call__self--active"}`}>
             {cam ? (
               <video
                 ref={localVideoRef}
@@ -1412,13 +1514,13 @@ function Room({ id }: { id: string }) {
               />
             ) : (
               <>
-                <Icon name="video" size={18} />
+                <Icon name="video" size={20} />
                 <small>Cámara apagada</small>
               </>
             )}
             <em className="v-call__self-name">Vos ({selfInitials})</em>
             {!mic && (
-              <span className="v-call__muted">
+              <span className="v-call__muted" aria-label="Micrófono silenciado">
                 <Icon name="micoff" size={13} />
               </span>
             )}
@@ -1427,54 +1529,61 @@ function Room({ id }: { id: string }) {
       </main>
 
       <nav className="v-call__bar" aria-label="Controles de la llamada">
-        <button
-          className={`v-ctl ${mic ? "" : "is-off"}`}
-          aria-label={mic ? "Silenciar micrófono" : "Activar micrófono"}
-          aria-pressed={!mic}
-          onClick={() => setMic(!mic)}
-        >
-          <Icon name={mic ? "mic" : "micoff"} size={20} />
-          <span>{mic ? "Silenciar" : "Activar mic"}</span>
-        </button>
-        <button
-          className={`v-ctl ${cam ? "" : "is-off"}`}
-          aria-label={cam ? "Apagar cámara" : "Encender cámara"}
-          aria-pressed={!cam}
-          onClick={() => setCam(!cam)}
-        >
-          <Icon name={cam ? "video" : "micoff"} size={20} />
-          <span>{cam ? "Apagar cámara" : "Encender"}</span>
-        </button>
-        <button
-          className={`v-ctl ${panel === "Chat" ? "is-on" : ""}`}
-          aria-pressed={panel === "Chat"}
-          onClick={() => setPanel(panel === "Chat" ? "" : "Chat")}
-        >
-          <Icon name="message" size={20} />
-          <span>Chat</span>
-        </button>
-        <button
-          className={`v-ctl ${panel === "Ficha" ? "is-on" : ""}`}
-          aria-pressed={panel === "Ficha"}
-          onClick={() => setPanel(panel === "Ficha" ? "" : "Ficha")}
-        >
-          <Icon name="file" size={20} />
-          <span>Ficha</span>
-        </button>
-        {!fromClient && (
+        <div className="v-call__dock">
           <button
-            className={`v-ctl ${panel === "Evolución" ? "is-on" : ""}`}
-            aria-pressed={panel === "Evolución"}
-            onClick={() => setPanel(panel === "Evolución" ? "" : "Evolución")}
+            className={`v-ctl ${mic ? "" : "is-off"}`}
+            aria-label={mic ? "Silenciar micrófono" : "Activar micrófono"}
+            aria-pressed={!mic}
+            onClick={() => setMic(!mic)}
           >
-            <Icon name="edit" size={20} />
-            <span>Evolución</span>
+            <Icon name={mic ? "mic" : "micoff"} size={20} />
+            <span>{mic ? "Silenciar" : "Activar mic"}</span>
           </button>
-        )}
-        <button className="v-ctl v-ctl--end" onClick={() => setEnding(true)}>
-          <Icon name="phone" size={20} />
-          <span>Finalizar</span>
-        </button>
+          <button
+            className={`v-ctl ${cam ? "" : "is-off"}`}
+            aria-label={cam ? "Apagar cámara" : "Encender cámara"}
+            aria-pressed={!cam}
+            onClick={() => setCam(!cam)}
+          >
+            <Icon name={cam ? "video" : "micoff"} size={20} />
+            <span>{cam ? "Apagar cámara" : "Encender"}</span>
+          </button>
+          <button
+            className={`v-ctl ${panel === "Chat" ? "is-on" : ""}`}
+            aria-pressed={panel === "Chat"}
+            onClick={() => setPanel(panel === "Chat" ? "" : "Chat")}
+          >
+            <Icon name="message" size={20} />
+            <span>Chat</span>
+            {unreadChat > 0 && panel !== "Chat" && (
+              <b className="v-ctl__badge" aria-label={`${unreadChat} mensajes sin leer`}>
+                {unreadChat}
+              </b>
+            )}
+          </button>
+          <button
+            className={`v-ctl ${panel === "Ficha" ? "is-on" : ""}`}
+            aria-pressed={panel === "Ficha"}
+            onClick={() => setPanel(panel === "Ficha" ? "" : "Ficha")}
+          >
+            <Icon name="file" size={20} />
+            <span>Ficha</span>
+          </button>
+          {!fromClient && (
+            <button
+              className={`v-ctl ${panel === "Evolución" ? "is-on" : ""}`}
+              aria-pressed={panel === "Evolución"}
+              onClick={() => setPanel(panel === "Evolución" ? "" : "Evolución")}
+            >
+              <Icon name="edit" size={20} />
+              <span>Evolución</span>
+            </button>
+          )}
+          <button className="v-ctl v-ctl--end" onClick={() => setEnding(true)}>
+            <Icon name="phone" size={20} />
+            <span>Finalizar</span>
+          </button>
+        </div>
       </nav>
 
       <aside
@@ -1488,21 +1597,29 @@ function Room({ id }: { id: string }) {
             : "Evolución clínica"
         }
       >
-        <header>
-          <b>
-            {panel === "Chat"
-              ? `Chat con ${chatOtherName}`
-              : panel === "Ficha"
-              ? "Ficha clínica"
-              : "Evolución clínica"}
-          </b>
-          <button className="button button--icon" onClick={() => setPanel("")} aria-label="Cerrar panel">
-            <Icon name="close" size={16} />
-          </button>
-        </header>
+        {panel !== "Chat" && (
+          <header className="v-call__panel-header">
+            <div>
+              <span className="v-call__panel-eyebrow">Expediente en vivo</span>
+              <b>{panel === "Ficha" ? "Ficha clínica" : "Evolución clínica"}</b>
+            </div>
+            <button className="wa-icon-btn" onClick={() => setPanel("")} aria-label="Cerrar panel">
+              <Icon name="close" size={17} />
+            </button>
+          </header>
+        )}
         <div className="v-call__panel-body" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
           <div style={{ display: panel === "Chat" ? "flex" : "none", flex: 1, flexDirection: "column", height: "100%", minHeight: 0 }}>
-            <CallChatPanel consultationId={id} otherName={chatOtherName} user={user} />
+            <CallChatPanel
+              consultationId={id}
+              otherName={chatOtherName}
+              otherInitials={remoteInitials}
+              otherSubtitle={`${petName} · ${petKind}`}
+              isVet={!fromClient}
+              user={user}
+              onNewIncomingMessage={handleNewIncomingMessage}
+              onClosePanel={() => setPanel("")}
+            />
           </div>
           {panel === "Ficha" && <FichaClinica p={p} />}
           <div style={{ display: panel === "Evolución" ? "block" : "none" }}>

@@ -1,25 +1,25 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: vetconnect-postgres
+    container_name: huellicam-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgrespassword
-      POSTGRES_DB: vetconnect_dev
+      POSTGRES_DB: huellicam_dev
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d vetconnect_dev"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d huellicam_dev"]
       interval: 5s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:7-alpine
-    container_name: vetconnect-redis
+    container_name: huellicam-redis
     restart: unless-stopped
     ports:
       - "6379:6379"
@@ -33,6 +33,6 @@ services:
 
 volumes:
   postgres_data:
-    name: vetconnect_postgres_data
+    name: huellicam_postgres_data
   redis_data:
-    name: vetconnect_redis_data
+    name: huellicam_redis_data

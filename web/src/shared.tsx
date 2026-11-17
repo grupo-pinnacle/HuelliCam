@@ -112,7 +112,7 @@ export function Status({ children, tone = "teal" }: { children: ReactNode; tone?
 export function Logo({ to }: { to?: string }) {
   let defaultTo = "/login";
   try {
-    const raw = typeof window !== "undefined" ? window.localStorage.getItem("vetconnect_user") : null;
+    const raw = typeof window !== "undefined" ? window.localStorage.getItem("huellicam_user") : null;
     if (raw) {
       const u = JSON.parse(raw);
       if (u?.role === "VET") defaultTo = "/vet/dashboard";

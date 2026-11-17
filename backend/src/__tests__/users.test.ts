@@ -23,7 +23,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-jwt-secret-key-change-in-produ
 describe('Users & Vet Directory Module', () => {
   const mockAdmin = {
     id: 'admin-uuid-1',
-    email: 'admin@vetconnect.com',
+    email: 'admin@huellicam.com',
     password: 'hashedpassword',
     firstName: 'System',
     lastName: 'Admin',
@@ -47,7 +47,7 @@ describe('Users & Vet Directory Module', () => {
   const mockApprovedVet = {
     ...mockAdmin,
     id: 'vet-approved-1',
-    email: 'carlos.mendoza@vetconnect.com',
+    email: 'carlos.mendoza@huellicam.com',
     firstName: 'Carlos',
     lastName: 'Mendoza',
     role: 'VET' as const,
@@ -84,7 +84,7 @@ describe('Users & Vet Directory Module', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.data.user.email).toBe('admin@vetconnect.com');
+      expect(res.body.data.user.email).toBe('admin@huellicam.com');
       expect(res.body.data.user.role).toBe('ADMIN');
       expect(res.body.data.user.password).toBeUndefined(); // Sanitized
     });

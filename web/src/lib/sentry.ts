@@ -9,7 +9,7 @@ export const initSentry = (): void => {
   // Verificar consentimiento de analíticas y telemetría (Ley 25.326 / Cookie Consent)
   let analyticsAllowed = false;
   try {
-    const consent = localStorage.getItem('vetconnect_cookie_consent');
+    const consent = localStorage.getItem('huellicam_cookie_consent');
     if (consent) {
       const parsed = JSON.parse(consent);
       analyticsAllowed = Boolean(parsed.analytics);
@@ -31,7 +31,7 @@ export const initSentry = (): void => {
     tracesSampleRate: analyticsAllowed ? (import.meta.env.PROD ? 0.2 : 1.0) : 0,
     tracePropagationTargets: [
       'localhost',
-      /^https:\/\/api\.vetconnect\.com\.ar/,
+      /^https:\/\/api\.huellicam\.com\.ar/,
       /^https:\/\/.*\.vercel\.app/,
     ],
     // Session Replay (cero grabación sin consentimiento expreso)

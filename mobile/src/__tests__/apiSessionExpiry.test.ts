@@ -53,7 +53,7 @@ const errorBody = (message: string): ApiResponse<never> => ({
 
 const buildUser = (): User => ({
   id: 'user-1',
-  email: 'vet@vetconnect.com',
+  email: 'vet@huellicam.com',
   firstName: 'Ana',
   lastName: 'Ruiz',
   phone: null,
@@ -170,7 +170,7 @@ describe('Mobile API session expiry handling (debt D-07)', () => {
   });
 
   const signIn = (): Promise<unknown> =>
-    useAuthStore.getState().login({ email: 'vet@vetconnect.com', password: 'Password123!' });
+    useAuthStore.getState().login({ email: 'vet@huellicam.com', password: 'Password123!' });
 
   it('clears the authenticated user, the keychain token and routes to login when the refresh attempt fails', async () => {
     installTransport({ refreshShouldFail: true });

@@ -16,8 +16,8 @@ const defaultOrigins = [
   'http://127.0.0.1:4173',
   'http://localhost:3000',
   'http://127.0.0.1:3000',
-  'https://vet-connect-web.vercel.app',
-  'https://app.vetconnect.com.ar',
+  'https://huellicam-web.vercel.app',
+  'https://app.huellicam.com.ar',
 ];
 
 export const allowedOrigins = Array.from(new Set([...defaultOrigins, ...envOrigins]));
@@ -41,12 +41,12 @@ export const isAllowedOrigin = (origin?: string): boolean => {
   ) {
     return true;
   }
-  // Allow Vercel preview and production deployments for VetConnect
-  if (/^https:\/\/vet-connect[a-z0-9-]*\.vercel\.app$/.test(cleanOrigin)) {
+  // Allow Vercel preview and production deployments for Huellicam
+  if (/^https:\/\/huellicam[a-z0-9-]*\.vercel\.app$/.test(cleanOrigin)) {
     return true;
   }
-  // Allow official VetConnect subdomains
-  if (/^https:\/\/([a-z0-9-]+\.)?vetconnect\.com\.ar$/.test(cleanOrigin)) {
+  // Allow official Huellicam subdomains
+  if (/^https:\/\/([a-z0-9-]+\.)?huellicam\.com\.ar$/.test(cleanOrigin)) {
     return true;
   }
   return false;

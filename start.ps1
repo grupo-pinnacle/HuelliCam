@@ -1,5 +1,5 @@
 Write-Host "===================================================" -ForegroundColor Cyan
-Write-Host " VetConnect v2.0 - Mobile Dev Environment" -ForegroundColor Cyan
+Write-Host " Huellicam v2.0 - Mobile Dev Environment" -ForegroundColor Cyan
 Write-Host " Configurando ADB Reverse USB para Android..." -ForegroundColor Cyan
 Write-Host "===================================================" -ForegroundColor Cyan
 

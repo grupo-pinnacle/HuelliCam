@@ -1,5 +1,5 @@
 /**
- * Utility functions for VetConnect Web
+ * Utility functions for Huellicam Web
  */
 
 export function cn(...inputs: (string | undefined | null | false)[]): string {

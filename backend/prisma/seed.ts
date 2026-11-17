@@ -11,10 +11,10 @@ async function main() {
 
   // 1. Admin User
   const admin = await prisma.user.upsert({
-    where: { email: 'admin@vetconnect.com' },
+    where: { email: 'admin@huellicam.com' },
     update: {},
     create: {
-      email: 'admin@vetconnect.com',
+      email: 'admin@huellicam.com',
       password: defaultPasswordHash,
       firstName: 'Admin',
       lastName: 'System',
@@ -26,10 +26,10 @@ async function main() {
 
   // 2. Approved Vet
   const approvedVet = await prisma.user.upsert({
-    where: { email: 'vet.approved@vetconnect.com' },
+    where: { email: 'vet.approved@huellicam.com' },
     update: {},
     create: {
-      email: 'vet.approved@vetconnect.com',
+      email: 'vet.approved@huellicam.com',
       password: defaultPasswordHash,
       firstName: 'Dr. Carlos',
       lastName: 'Mendoza',
@@ -47,10 +47,10 @@ async function main() {
 
   // 3. Pending Vet
   const pendingVet = await prisma.user.upsert({
-    where: { email: 'vet.pending@vetconnect.com' },
+    where: { email: 'vet.pending@huellicam.com' },
     update: {},
     create: {
-      email: 'vet.pending@vetconnect.com',
+      email: 'vet.pending@huellicam.com',
       password: defaultPasswordHash,
       firstName: 'Dra. Ana',
       lastName: 'Gomez',
@@ -68,10 +68,10 @@ async function main() {
 
   // 4. Client 1 with Dog (Microchip ISO 15 digits)
   const client1 = await prisma.user.upsert({
-    where: { email: 'client1@vetconnect.com' },
+    where: { email: 'client1@huellicam.com' },
     update: {},
     create: {
-      email: 'client1@vetconnect.com',
+      email: 'client1@huellicam.com',
       password: defaultPasswordHash,
       firstName: 'Lucia',
       lastName: 'Fernandez',
@@ -98,10 +98,10 @@ async function main() {
 
   // 5. Client 2 with Cat (No microchip)
   const client2 = await prisma.user.upsert({
-    where: { email: 'client2@vetconnect.com' },
+    where: { email: 'client2@huellicam.com' },
     update: {},
     create: {
-      email: 'client2@vetconnect.com',
+      email: 'client2@huellicam.com',
       password: defaultPasswordHash,
       firstName: 'Martin',
       lastName: 'Rossi',

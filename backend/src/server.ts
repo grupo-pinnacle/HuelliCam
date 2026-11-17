@@ -67,6 +67,27 @@ export async function ensureDatabaseSchema(): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_password_reset_email_exp 
         ON password_reset_tokens (email, expires_at);
     `);
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE pets
+        ADD COLUMN IF NOT EXISTS birth_date TIMESTAMPTZ;
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS email_dispatch_logs (
+        id TEXT PRIMARY KEY,
+        dedupe_key TEXT NOT NULL UNIQUE,
+        type TEXT NOT NULL,
+        entity_id TEXT,
+        recipient_email TEXT NOT NULL,
+        sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS idx_email_dispatch_type_entity_sent
+        ON email_dispatch_logs (type, entity_id, sent_at);
+    `);
   } catch (err) {
     console.warn('[Schema Sync] Database schema self-check notice:', err);
   }
@@ -75,7 +96,7 @@ export async function ensureDatabaseSchema(): Promise<void> {
 import { notificationsScheduler } from './jobs/notifications.scheduler';
 
 const server = app.listen(PORT, async () => {
-  console.log(`🚀 VetConnect Backend Server running on port ${PORT}`);
+  console.log(`🚀 Huellicam Backend Server running on port ${PORT}`);
   await ensureDatabaseSchema();
   if (process.env.NODE_ENV !== 'test') {
     notificationsScheduler.start();

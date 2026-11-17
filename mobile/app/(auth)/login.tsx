@@ -30,7 +30,7 @@ export default function LoginScreen() {
 
   return (
     <View style={styles.container} testID="login-screen">
-      <Text style={styles.title}>VetConnect Mobile</Text>
+      <Text style={styles.title}>Huellicam Mobile</Text>
 
       {error && (
         <View style={styles.errorBox} testID="login-error">
@@ -41,7 +41,7 @@ export default function LoginScreen() {
       <Text style={styles.label}>Correo Electrónico</Text>
       <TextInput
         style={styles.input}
-        placeholder="ejemplo@vetconnect.com"
+        placeholder="ejemplo@huellicam.com"
         value={email}
         onChangeText={(t) => { setEmail(t); setError(null); }}
         autoCapitalize="none"

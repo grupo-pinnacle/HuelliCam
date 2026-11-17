@@ -19,8 +19,14 @@ config.resolver.nodeModulesPaths = [
   path.resolve(workspaceRoot, 'node_modules'),
 ];
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const rootNodeModulesPattern = escapeRegExp(path.join(workspaceRoot, 'node_modules'));
+
 // ADR-031: Monorepo React Singleton Pinning
-// El frontend web (@vetconnect/web) utiliza React 18.3.1 (LTS) en la raíz,
+// El frontend web (@huellicam/web) utiliza React 18.3.1 (LTS) en la raíz,
 // mientras que mobile utiliza Expo SDK 54 con React 19.1.0 y React Native 0.81.4.
 // Forzamos copia única canónica para evitar dispatchers nulos ('useId' of null) y colisión de hooks.
 config.resolver.extraNodeModules = {
@@ -36,9 +42,9 @@ config.resolver.blockList = exclusionList([
   /node_modules[/\\]nativewind[/\\]node_modules[/\\]react-native[/\\].*/,
   /node_modules[/\\]nativewind[/\\]node_modules[/\\]react[/\\].*/,
   /node_modules[/\\]nativewind[/\\]node_modules[/\\]react-dom[/\\].*/,
-  /VetConnect[/\\]node_modules[/\\]react-native[/\\].*/,
-  /VetConnect[/\\]node_modules[/\\]react[/\\].*/,
-  /VetConnect[/\\]node_modules[/\\]react-dom[/\\].*/,
+  new RegExp(`${rootNodeModulesPattern}[/\\\\]react-native[/\\\\].*`),
+  new RegExp(`${rootNodeModulesPattern}[/\\\\]react[/\\\\].*`),
+  new RegExp(`${rootNodeModulesPattern}[/\\\\]react-dom[/\\\\].*`),
 ]);
 
 // Intercepción determinista en tiempo de resolución:

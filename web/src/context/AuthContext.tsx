@@ -38,7 +38,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [user, setUser] = useState<User | null>(() => {
     try {
       if (typeof window !== 'undefined' && window.localStorage) {
-        const cached = window.localStorage.getItem('vetconnect_user');
+        const cached = window.localStorage.getItem('huellicam_user');
         return cached ? JSON.parse(cached) : null;
       }
     } catch {
@@ -53,9 +53,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setUser(null);
     setAccessToken(null);
     try {
-      window.localStorage.removeItem('vetconnect_user');
-      window.localStorage.removeItem('vetconnect_token');
-      window.localStorage.removeItem('vetconnect_device_id');
+      window.localStorage.removeItem('huellicam_user');
+      window.localStorage.removeItem('huellicam_token');
+      window.localStorage.removeItem('huellicam_device_id');
       window.sessionStorage.clear();
     } catch {}
   };
@@ -100,7 +100,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (res.data.success && res.data.data?.user) {
         setUser(res.data.data.user);
         try {
-          window.localStorage.setItem('vetconnect_user', JSON.stringify(res.data.data.user));
+          window.localStorage.setItem('huellicam_user', JSON.stringify(res.data.data.user));
         } catch {}
         return;
       }
@@ -151,10 +151,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     if (typeof window !== 'undefined') {
-      window.addEventListener('vetconnect:session_terminated', handleSessionTerminated);
+      window.addEventListener('huellicam:session_terminated', handleSessionTerminated);
       document.addEventListener('visibilitychange', handleVisibilityChange);
       return () => {
-        window.removeEventListener('vetconnect:session_terminated', handleSessionTerminated);
+        window.removeEventListener('huellicam:session_terminated', handleSessionTerminated);
         document.removeEventListener('visibilitychange', handleVisibilityChange);
       };
     }
@@ -172,7 +172,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setAccessToken(accessToken);
     setUser(loggedUser);
     try {
-      window.localStorage.setItem('vetconnect_user', JSON.stringify(loggedUser));
+      window.localStorage.setItem('huellicam_user', JSON.stringify(loggedUser));
     } catch {}
     return loggedUser;
   };
@@ -189,7 +189,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setAccessToken(accessToken);
     setUser(registeredUser);
     try {
-      window.localStorage.setItem('vetconnect_user', JSON.stringify(registeredUser));
+      window.localStorage.setItem('huellicam_user', JSON.stringify(registeredUser));
     } catch {}
     return registeredUser;
   };

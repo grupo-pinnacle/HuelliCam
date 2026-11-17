@@ -7,6 +7,30 @@ import { notificationsService } from '../notifications/notifications.service';
 import { emailService } from '../../services/email.service';
 
 export class PrescriptionsService {
+  private getPublicBaseUrl(): string {
+    if (process.env.NODE_ENV === 'test') {
+      return 'https://app.huellicam.com.ar';
+    }
+    const configured = process.env.CLIENT_URL || process.env.FRONTEND_URL;
+    if (configured) {
+      return configured.replace(/\/$/, '');
+    }
+    return process.env.NODE_ENV === 'development'
+      ? 'http://localhost:5173'
+      : 'https://app.huellicam.com.ar';
+  }
+
+  private async buildQrPayload(prescriptionId: string): Promise<{ verifyUrl: string; qrCodeDataUrl: string }> {
+    const verifyUrl = `${this.getPublicBaseUrl()}/prescriptions/${prescriptionId}`;
+    let qrCodeDataUrl = '';
+    try {
+      qrCodeDataUrl = await QRCode.toDataURL(verifyUrl);
+    } catch (err) {
+      console.error('Failed to generate QR code for prescription:', err);
+    }
+    return { verifyUrl, qrCodeDataUrl };
+  }
+
   public async createPrescription(
     consultationId: string,
     user: User,
@@ -69,17 +93,7 @@ export class PrescriptionsService {
       },
     });
 
-    const baseUrl =
-      process.env.NODE_ENV === 'test'
-        ? 'https://app.vetconnect.com.ar'
-        : (process.env.CLIENT_URL || process.env.FRONTEND_URL || 'https://app.vetconnect.com.ar').replace(/\/$/, '');
-    const verifyUrl = `${baseUrl}/prescriptions/${prescription.id}`;
-    let qrCodeDataUrl = '';
-    try {
-      qrCodeDataUrl = await QRCode.toDataURL(verifyUrl);
-    } catch (err) {
-      console.error('Failed to generate QR code for prescription:', err);
-    }
+    const { verifyUrl, qrCodeDataUrl } = await this.buildQrPayload(prescription.id);
 
     await notificationsService
       .createAndDispatch(
@@ -118,6 +132,55 @@ export class PrescriptionsService {
     };
   }
 
+  public async getPrescriptionsForUser(user: User) {
+    if (user.role === Role.VET) {
+      const list = await prisma.prescription.findMany({
+        where: {
+          vetId: user.id,
+          consultation: {
+            deletedAt: null,
+          },
+        },
+        include: {
+          vet: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              licenseNumber: true,
+            },
+          },
+          consultation: {
+            include: {
+              pet: true,
+              client: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      return Promise.all(
+        list.map(async (rx) => {
+          const { verifyUrl, qrCodeDataUrl } = await this.buildQrPayload(rx.id);
+          return {
+            ...rx,
+            verifyUrl,
+            qrCodeDataUrl,
+          };
+        })
+      );
+    }
+
+    return this.getPrescriptionsForClient(user.id);
+  }
+
   public async getPrescriptionsForClient(clientId: string) {
     const list = await prisma.prescription.findMany({
       where: {
@@ -145,11 +208,16 @@ export class PrescriptionsService {
       orderBy: { createdAt: 'desc' },
     });
 
-    const baseUrl = (process.env.CLIENT_URL || process.env.FRONTEND_URL || 'https://app.vetconnect.com.ar').replace(/\/$/, '');
-    return list.map((rx) => ({
-      ...rx,
-      verifyUrl: `${baseUrl}/prescriptions/${rx.id}`,
-    }));
+    return Promise.all(
+      list.map(async (rx) => {
+        const { verifyUrl, qrCodeDataUrl } = await this.buildQrPayload(rx.id);
+        return {
+          ...rx,
+          verifyUrl,
+          qrCodeDataUrl,
+        };
+      })
+    );
   }
 
   public async getPrescriptionById(prescriptionId: string, requester?: User) {
@@ -175,14 +243,7 @@ export class PrescriptionsService {
     }
 
     // Public QR verification: allow unauthenticated third-party verification of non-sensitive official health data
-    const baseUrl = (process.env.CLIENT_URL || process.env.FRONTEND_URL || 'https://app.vetconnect.com.ar').replace(/\/$/, '');
-    const verifyUrl = `${baseUrl}/prescriptions/${prescription.id}`;
-    let qrCodeDataUrl = '';
-    try {
-      qrCodeDataUrl = await QRCode.toDataURL(verifyUrl);
-    } catch (err) {
-      console.error('Failed to generate QR code for prescription:', err);
-    }
+    const { verifyUrl, qrCodeDataUrl } = await this.buildQrPayload(prescription.id);
 
     return {
       ...prescription,
