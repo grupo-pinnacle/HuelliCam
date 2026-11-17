@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { Printer, ShieldCheck, Stethoscope } from 'lucide-react';
 import { PrescriptionDocProps } from '../../types';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
+import { requestMobilePrintOrFallback } from '../../lib/mobileBridge';
 
 export const PrescriptionDoc: React.FC<PrescriptionDocProps> = ({
   prescription,
@@ -14,11 +15,17 @@ export const PrescriptionDoc: React.FC<PrescriptionDocProps> = ({
   'data-testid': testId = 'prescription-document',
 }) => {
   const { user } = useAuth();
+  const docRef = useRef<HTMLElement | null>(null);
+
   const handlePrint = () => {
     if (onPrint) {
       onPrint();
-    } else if (typeof window !== 'undefined') {
-      window.print();
+    } else {
+      requestMobilePrintOrFallback({
+        title: `Receta HuelliCam ${prescription.id}`,
+        url: typeof window !== 'undefined' ? window.location.href : undefined,
+        element: docRef.current,
+      });
     }
   };
 
@@ -57,6 +64,7 @@ export const PrescriptionDoc: React.FC<PrescriptionDocProps> = ({
 
       {/* Official Prescription Document */}
       <article
+        ref={docRef}
         data-testid={testId}
         className={cn(
           "bg-white border border-[#e4dfd2] rounded-3xl p-6 sm:p-8 max-w-2xl w-full shadow-sm font-['Manrope',sans-serif] text-[#183c3a] print:shadow-none print:border-none print:p-0 print:max-w-none print:m-0",

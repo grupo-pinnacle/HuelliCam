@@ -7,6 +7,7 @@ import OfflineBanner from './components/common/OfflineBanner';
 import CookieConsentBanner from './components/common/CookieConsentBanner';
 import SessionTerminatedModal from './components/common/SessionTerminatedModal';
 import { ScopedStyle } from './components/common/ScopedStyle';
+import { isReactNativeWebView, requestMobileExternalOpen } from './lib/mobileBridge';
 
 export { ScopedStyle };
 
@@ -88,6 +89,78 @@ const CallWrapper: React.FC = () => {
   return <CallRoom id={id || 'milo'} />;
 };
 
+const MobileNavigationBridge: React.FC = () => {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const handleNativeNavigate = (event: Event) => {
+      const detail = (event as CustomEvent<{ path?: string }>).detail;
+      const targetPath = detail?.path?.trim();
+      if (!targetPath || !targetPath.startsWith('/')) return;
+
+      navigate(targetPath);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    };
+
+    window.addEventListener('huellicam:navigate', handleNativeNavigate);
+    return () => {
+      window.removeEventListener('huellicam:navigate', handleNativeNavigate);
+    };
+  }, [navigate]);
+
+  return null;
+};
+
+const AdminMobileRestriction: React.FC = () => {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login', { replace: true });
+  };
+
+  return (
+    <main
+      data-testid="admin-mobile-restriction"
+      className="min-h-[100dvh] bg-[#fffbef] text-[#183c3a] flex items-center justify-center p-6 font-['Manrope',sans-serif]"
+    >
+      <section className="w-full max-w-md bg-white border border-[#e4dfd2] rounded-3xl p-7 shadow-sm text-center space-y-4">
+        <img
+          src="/assets/huellicam-mark.png"
+          alt="Huellicam"
+          className="w-14 h-12 mx-auto object-contain"
+        />
+        <span className="inline-block text-[11px] font-extrabold uppercase tracking-wider px-3 py-1 rounded-full bg-[#d9e8e4] text-[#315f5d]">
+          Acceso exclusivo escritorio
+        </span>
+        <h1 className="text-xl font-extrabold text-[#183c3a]">
+          Panel de administración web
+        </h1>
+        <p className="text-sm text-[#607674] leading-relaxed">
+          Hola{user?.firstName ? `, ${user.firstName}` : ''}. La app móvil está optimizada para Tutores y Veterinarios. Para gestionar matrículas, métricas y auditoría, ingresá desde una computadora.
+        </p>
+        <div className="pt-2 flex flex-col gap-2.5">
+          <button
+            type="button"
+            onClick={() => void handleLogout()}
+            className="w-full py-3 px-5 rounded-full bg-[#315f5d] hover:bg-[#183c3a] text-white text-sm font-bold transition-colors cursor-pointer"
+          >
+            Cerrar sesión y cambiar de cuenta
+          </button>
+          <button
+            type="button"
+            onClick={() => requestMobileExternalOpen(window.location.href)}
+            className="w-full py-3 px-5 rounded-full border border-[#e4dfd2] bg-[#fffbef] hover:bg-[#f2eddd] text-[#183c3a] text-sm font-bold transition-colors cursor-pointer"
+          >
+            Abrir consola en el navegador
+          </button>
+        </div>
+      </section>
+    </main>
+  );
+};
+
 const AdminWrapper: React.FC = () => {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
@@ -100,6 +173,10 @@ const AdminWrapper: React.FC = () => {
 
   if (!loading && (!user || user.role !== 'ADMIN')) {
     return <div className="route-loading" role="status">Acceso restringido. Redirigiendo a inicio de sesión…</div>;
+  }
+
+  if (!loading && user?.role === 'ADMIN' && isReactNativeWebView()) {
+    return <AdminMobileRestriction />;
   }
 
   return <AdminApp />;
@@ -120,10 +197,11 @@ export const App: React.FC = () => {
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <BrowserRouter>
+            <MobileNavigationBridge />
             <OfflineBanner />
             <AuthenticatedCallListener />
             <SessionTerminatedModal />
-            <CookieConsentBanner />
+            {!isReactNativeWebView() && <CookieConsentBanner />}
             <Suspense fallback={<div className="route-loading" role="status">Cargando...</div>}>
               <Routes>
                 {/* 1. Landing & Inicio */}

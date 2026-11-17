@@ -1,7 +1,5 @@
 export type Role = 'CLIENT' | 'VET' | 'ADMIN';
 export type VetStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
-export type ConsultationStatus = 'WAITING' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
-export type TriagePriority = 'ROJO' | 'AMARILLO' | 'VERDE';
 
 export interface User {
   id: string;
@@ -22,90 +20,12 @@ export interface User {
   updatedAt: string;
 }
 
-export interface Pet {
+export interface BridgeSessionUser {
   id: string;
-  ownerId: string;
-  name: string;
-  species: string;
-  breed: string;
-  weightKg?: number | null;
-  sex?: string | null;
-  birthDate?: string | null;
-  microchip?: string | null;
-  allergies?: string | null;
-  chronicConditions?: string | null;
-  createdAt: string;
-  updatedAt: string;
-  deletedAt?: string | null;
-}
-
-export interface Consultation {
-  id: string;
-  clientId: string;
-  vetId?: string | null;
-  petId: string;
-  status: ConsultationStatus;
-  notes?: string | null;
-  diagnosisNotes?: string | null;
-  startedAt?: string | null;
-  endedAt?: string | null;
-  createdAt: string;
-  updatedAt: string;
-  pet?: Pet;
-  client?: Partial<User>;
-  vet?: Partial<User>;
-  prescriptions?: Prescription[];
-  review?: Review | null;
-}
-
-export interface Review {
-  id: string;
-  consultationId: string;
-  clientId: string;
-  vetId: string;
-  rating: number;
-  comment?: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface Prescription {
-  id: string;
-  consultationId: string;
-  vetId: string;
-  medication: string;
-  dosage: string;
-  frequency: string;
-  durationDays: number;
-  indications: string;
-  createdAt: string;
-  qrCodeDataUrl?: string;
-  verifyUrl?: string;
-  vet?: Partial<User>;
-}
-
-export interface Message {
-  id: string;
-  consultationId: string;
-  senderId: string;
-  content: string;
-  attachmentUrl?: string | null;
-  clientMsgId: string;
-  createdAt: string;
-  sender?: {
-    id: string;
-    firstName: string;
-    lastName: string;
-    role: Role;
-  };
-}
-
-export interface MediaFile {
-  id: string;
-  fileName: string;
-  fileSize: number;
-  mimeType: string;
-  createdAt: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  role: Role;
 }
 
 export interface Notification {
@@ -134,25 +54,12 @@ export interface ApiResponse<T = unknown> {
   error?: ApiError;
 }
 
-export interface AuthPayload {
-  accessToken: string;
-  refreshToken?: string;
-  user: User;
-}
-
-export interface LiveKitTokenPayload {
-  token: string;
-  wsUrl: string;
-}
-
-export interface IncomingCallPayload {
-  consultationId: string;
-  callerName: string;
-  roomName: string;
-}
-
-export interface RingCallResponse {
-  consultationId: string;
-  targetUserId: string;
-  status: string;
-}
+export type WebViewBridgeMessage =
+  | { type: 'page:ready' }
+  | { type: 'auth:session'; token: string; user: BridgeSessionUser }
+  | { type: 'auth:logout' }
+  | { type: 'wakelock:acquire' }
+  | { type: 'wakelock:release' }
+  | { type: 'call:ended' }
+  | { type: 'print:request'; title: string; url: string; html?: string }
+  | { type: 'external:open'; url: string };

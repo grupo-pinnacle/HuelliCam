@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Pet } from '../../types';
 import { SpeciesIcon } from '../icons/SpeciesIcons';
+import { requestMobilePrintOrFallback } from '../../lib/mobileBridge';
 import {
   X,
   Printer,
@@ -24,6 +25,7 @@ interface PetDossierModalProps {
 
 export const PetDossierModal: React.FC<PetDossierModalProps> = ({ pet, isOpen, onClose }) => {
   const [copied, setCopied] = useState(false);
+  const printableRef = useRef<HTMLDivElement | null>(null);
 
   if (!isOpen || !pet) return null;
 
@@ -36,9 +38,11 @@ export const PetDossierModal: React.FC<PetDossierModalProps> = ({ pet, isOpen, o
   };
 
   const handlePrint = () => {
-    if (typeof window !== 'undefined') {
-      window.print();
-    }
+    requestMobilePrintOrFallback({
+      title: `Expediente Clínico — ${pet.name}`,
+      url: typeof window !== 'undefined' ? window.location.href : undefined,
+      element: printableRef.current,
+    });
   };
 
   return (
@@ -93,7 +97,7 @@ export const PetDossierModal: React.FC<PetDossierModalProps> = ({ pet, isOpen, o
         </div>
 
         {/* Official printable document body */}
-        <div id="printable-dossier-content" className="p-6 sm:p-8 space-y-6">
+        <div ref={printableRef} id="printable-dossier-content" className="p-6 sm:p-8 space-y-6">
           {/* Institutional Print Watermark & Header (visible when printing) */}
           <div className="border-b border-[#E8E2D5] pb-4 mb-2 flex justify-between items-start">
             <div>

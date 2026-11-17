@@ -1,23 +1,34 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useEffect, useMemo } from 'react';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { usePathname, useRouter } from 'expo-router';
-import { colors, spacing, radius } from '../src/theme/tokens';
+import { APP_SCHEME, resolveDeepLinkHref } from '../src/lib/deepLinks';
+import { getActiveSessionRole } from '../src/services/notifications.service';
+import { colors, radius, spacing } from '../src/theme/tokens';
 
 /**
- * Catch-all for URLs that do not address a known screen.
- *
- * expo-router maps `+not-found` to the `*not-found` path pattern
- * (`expo-router/build/getReactNavigationConfig.js`), so any unmatched incoming
- * `huellicam://` link renders here instead of a blank screen.
- *
- * Rendered inside the root `<Stack>`, so it deliberately carries no auth gate:
- * an unrecognised link must be reported even when there is no session.
+ * Catch-all screen for unmatched `huellicam://` URLs. If the attempted path
+ * resolves to a valid WebView deep link (e.g., cold-start `huellicam://call/123`),
+ * redirect cleanly to `/` with the target path.
  */
 export default function NotFoundScreen() {
   const router = useRouter();
-  // The wildcard segments arrive as route params, not as a ready-made href, so
-  // the current pathname is what actually reflects the attempted address.
   const attempted = usePathname();
+
+  const resolvedWebPath = useMemo(() => {
+    if (!attempted || attempted === '/') return null;
+    const clean = attempted.replace(/^\/+/, '');
+    return resolveDeepLinkHref(`${APP_SCHEME}://${clean}`, getActiveSessionRole());
+  }, [attempted]);
+
+  useEffect(() => {
+    if (resolvedWebPath) {
+      router.replace({ pathname: '/', params: { path: resolvedWebPath } });
+    }
+  }, [resolvedWebPath, router]);
+
+  if (resolvedWebPath) {
+    return <View style={styles.container} />;
+  }
 
   return (
     <View style={styles.container} testID="not-found-screen">
@@ -49,7 +60,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.canvas,
     padding: spacing.xl,
   },
-  title: { fontSize: 20, fontWeight: 'bold', color: colors.ink, marginBottom: spacing.sm },
+  title: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: colors.ink,
+    marginBottom: spacing.sm,
+  },
   body: {
     fontSize: 14,
     color: colors.muted,
@@ -70,7 +86,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     paddingVertical: 12,
     paddingHorizontal: spacing.xl,
-    borderRadius: radius.md,
+    borderRadius: radius.full,
   },
-  buttonText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 14 },
+  buttonText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
 });

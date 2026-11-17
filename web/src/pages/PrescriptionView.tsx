@@ -5,6 +5,7 @@ import api from '../services/api';
 import { Prescription, ApiResponse } from '../types';
 import { PrescriptionDoc } from '../components/ui/PrescriptionDoc';
 import { PrescriptionDocSkeleton } from '../components/ui/Skeleton';
+import { requestMobilePrintOrFallback } from '../lib/mobileBridge';
 
 export const PrescriptionView: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -40,7 +41,15 @@ export const PrescriptionView: React.FC = () => {
   }, [targetId]);
 
   const handlePrint = () => {
-    window.print();
+    const docElement =
+      typeof document !== 'undefined'
+        ? document.querySelector<HTMLElement>('[data-testid="prescription-document"]')
+        : null;
+    requestMobilePrintOrFallback({
+      title: `Receta Oficial HuelliCam ${prescription?.id || targetId || ''}`.trim(),
+      url: typeof window !== 'undefined' ? window.location.href : undefined,
+      element: docElement,
+    });
   };
 
   const handleBack = () => {

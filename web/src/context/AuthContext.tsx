@@ -2,6 +2,10 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import axios from 'axios';
 import api, { setAccessToken, getAccessToken } from '../services/api';
 import { User, ApiResponse } from '../types';
+import {
+  notifyMobileAuthLogout,
+  notifyMobileAuthSession,
+} from '../lib/mobileBridge';
 
 export interface AuthContextType {
   user: User | null;
@@ -52,6 +56,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const clearSession = () => {
     setUser(null);
     setAccessToken(null);
+    notifyMobileAuthLogout();
     try {
       window.localStorage.removeItem('huellicam_user');
       window.localStorage.removeItem('huellicam_token');
@@ -102,6 +107,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         try {
           window.localStorage.setItem('huellicam_user', JSON.stringify(res.data.data.user));
         } catch {}
+        const currentToken = getAccessToken();
+        if (currentToken) {
+          notifyMobileAuthSession(currentToken, res.data.data.user);
+        }
         return;
       }
 
@@ -174,6 +183,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       window.localStorage.setItem('huellicam_user', JSON.stringify(loggedUser));
     } catch {}
+    notifyMobileAuthSession(accessToken, loggedUser);
     return loggedUser;
   };
 
@@ -191,6 +201,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       window.localStorage.setItem('huellicam_user', JSON.stringify(registeredUser));
     } catch {}
+    notifyMobileAuthSession(accessToken, registeredUser);
     return registeredUser;
   };
 

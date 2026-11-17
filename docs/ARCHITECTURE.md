@@ -18,8 +18,8 @@ graph TD
     Media["Storage (S3 / Local) & LiveKit SFU"]
 
     Web <-->|REST + Socket.io| Backend
-    Mobile <-->|REST + Socket.io + WebView| Backend
-    Mobile -.->|Embebe /call/:id| Web
+    Mobile -->|Registra Push Token| Backend
+    Mobile <-->|Shell 100% WebView| Web
     Backend <--> DB
     Backend <--> Cache
     Backend <--> Media
@@ -64,15 +64,15 @@ Aplicación SPA construida con **React 18.3.1 (LTS)** y **Vite 6**, optimizada c
 
 ---
 
-## 4. Aplicación Mobile (`mobile/`) — Enfoque Híbrido con WebView
+## 4. Aplicación Mobile (`mobile/`) — Shell 100% WebView
 
 La aplicación móvil está construida con **Expo SDK 54**, **React Native 0.81.4** y **Expo Router**:
 
-- **Estrategia Vigente (WebView para Videollamadas sobre Web SPA):** Para asegurar paridad funcional inmediata en videoconsultas WebRTC sin duplicar la complejidad de salas LiveKit en código nativo, la pantalla de llamada (`mobile/app/(app)/call/[consultationId].tsx`) embebe la ruta web `/call/:consultationId` mediante `react-native-webview`.
-- **Bridge Bidireccional y Auth Seeding:** Antes de cargar el DOM web (`injectedJavaScriptBeforeContentLoaded`), `webviewBridge.ts` inyecta los tokens de sesión en `localStorage` (`buildAuthSeedScript`) y coordina eventos `postMessage` (`page:ready`, `call:ended`) junto con permisos nativos (`expo-camera`) y prevención de suspensión de pantalla.
-- **Capacidades Nativas Complementarias:** El workspace móvil gestiona autenticación segura (`expo-secure-store`), deep links, notificaciones push (`expo-notifications`), escucha global de llamadas entrantes (`IncomingCallModal`) y vistas nativas en Expo Router (`(auth)`, inicio, mascotas, chat y recetas).
+- **Estrategia Vigente (Shell 100% WebView sobre `web/`):** Toda la interfaz funcional (autenticación, portales Tutor y Veterinario, triaje, chat, videollamadas LiveKit y recetas) corre dentro de `mobile/app/index.tsx` embebiendo la Web App responsive (`EXPO_PUBLIC_WEB_URL`) vía `react-native-webview`. Si inicia sesión un `ADMIN`, la app muestra un aviso para utilizar la versión web de escritorio.
+- **Puente Bidireccional (`web/src/lib/mobileBridge.ts` ↔ `mobile/src/lib/webviewBridge.ts`):** Coordina sincronización de sesión hacia nativo (`auth:session` / `auth:logout`) para registro de tokens Push, prevención de suspensión durante llamadas (`wakelock:acquire` / `release`, `call:ended`), impresión/PDF nativo (`print:request`), enlaces externos (`external:open`) y navegación desde notificaciones o deep links (`huellicam:navigate`).
+- **Capacidades Nativas del Contenedor:** Splash screen, detección Offline (`NetInfo`), botón físico Atrás (`BackHandler`), permisos de cámara/micrófono (`expo-camera`), WakeLock (`expo-keep-awake`) y notificaciones push (`expo-notifications`).
 - **Aislamiento en Monorepo (`metro.config.js`):** Dado que `web/` usa React 18.3.1 (compatibilidad con LiveKit Web) y `mobile/` usa React 19.1.0, Metro fuerza la resolución singleton hacia `mobile/node_modules/react` y `react-native`.
-- **Evolución Futura:** Si bien `@livekit/react-native` figura en dependencias como preparación de arquitectura, la operación actual se mantiene deliberadamente sobre WebView de la web hasta definir la migración a SDK nativo en una etapa posterior.
+- **Evolución Futura:** La reimplementación de vistas nativas idénticas a la web (incluyendo SDK LiveKit nativo) queda planificada como fase posterior cuando se requiera separar la experiencia móvil del WebView.
 
 ---
 
@@ -90,4 +90,4 @@ Se evita la complejidad de empaquetado cruzado (`packages/shared`) entre Vite y 
 | Configuración arancelaria y métricas ejecutivas | **Operativo (en memoria + AuditLog)** | Endpoints `/api/admin/pricing-settings` y `/api/admin/executive-metrics` listos; persistencia actual en memoria de proceso y auditoría en `AuditLog`. |
 | Feature Flags administrativos | **Operativo (en memoria + AuditLog)** | `PAYMENTS_ENABLED`, `TRIAGE_ACTIVE`, `VIDEOCALLS_ENABLED`, `NEW_REGISTRATIONS_ENABLED`. |
 | Cobro real con pasarela externa (`IPaymentGateway`) | **Planificado (no conectado)** | Documentado en [docs/payments/README.md](payments/README.md) para activación en fase comercial. |
-| Video nativo en Mobile sin WebView | **Planificado (no activo)** | Actualmente opera mediante WebView de la web SPA. |
+| App nativa completa en Mobile (sin WebView) | **Planificado (pendiente)** | Actualmente toda la app móvil opera como shell 100% WebView sobre `web/`. |

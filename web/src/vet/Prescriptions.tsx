@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Button, EmptyState, Icon, Modal, PageHeader, Tabs, go } from "../shared";
 import api from "../services/api";
 import { useAuth } from "../context/AuthContext";
+import { isReactNativeWebView } from "../lib/mobileBridge";
 import type { ApiResponse, Consultation as BackendConsultation, Prescription as BackendPrescription } from "../types";
 import { getPatient, registerPatient, type Rx } from "./data";
 import { mapBackendPetToPatient } from "./mappers";
@@ -225,7 +226,17 @@ export function PrescriptionDetail({ id }: { id: string }) {
     <div className="v-inline-actions v-inline-actions--left">
       <Button variant="secondary" onClick={() => go("/vet/prescriptions")}>Volver a recetas</Button>
       {issued && (
-        <Button variant="soft" icon="qr" onClick={() => window.open(publicVerifyPath, "_blank", "noopener,noreferrer")}>Abrir vista pública QR</Button>
+        <Button
+          variant="soft"
+          icon="qr"
+          onClick={() =>
+            isReactNativeWebView()
+              ? window.location.assign(publicVerifyPath)
+              : window.open(publicVerifyPath, "_blank", "noopener,noreferrer")
+          }
+        >
+          Abrir vista pública QR
+        </Button>
       )}
       <Button variant="soft" icon="paperclip" onClick={() => { void navigator.clipboard?.writeText(issued ? displayVerifyUrl : r.id); notify(issued ? "Enlace QR copiado" : "Identificador copiado"); }}>{issued ? "Copiar enlace QR" : "Copiar identificador"}</Button>
       {!issued && <Button onClick={() => go(`/vet/prescriptions/new?draft=${r.id}`)}>Continuar borrador</Button>}

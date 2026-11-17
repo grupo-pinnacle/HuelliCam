@@ -1,6 +1,7 @@
 const post = jest.fn();
 const get = jest.fn();
 const patch = jest.fn();
+const setMobileAuthToken = jest.fn();
 const getPermissionsAsync = jest.fn();
 const requestPermissionsAsync = jest.fn();
 const getExpoPushTokenAsync = jest.fn();
@@ -8,6 +9,13 @@ const getLastNotificationResponse = jest.fn();
 const addNotificationResponseReceivedListener = jest.fn();
 const setNotificationHandler = jest.fn();
 const responseSubscription = { remove: jest.fn() };
+
+jest.mock('expo-constants', () => ({
+  __esModule: true,
+  default: {
+    expoConfig: { extra: { eas: { projectId: 'e578295e-7fa0-4727-b57c-4c31b6df01aa' } } },
+  },
+}));
 
 jest.mock('expo-notifications', () => ({
   setNotificationHandler,
@@ -27,9 +35,8 @@ jest.mock('expo-secure-store', () => ({
 jest.mock('../lib/api', () => ({
   __esModule: true,
   default: { post, get, patch, defaults: { headers: { common: {} } } },
+  setMobileAuthToken,
   SECURE_STORE_REFRESH_KEY: 'huellicam_refresh_token',
-  resetRefreshState: jest.fn(),
-  setSessionExpiredHandler: jest.fn(),
 }));
 
 /**
@@ -145,7 +152,7 @@ describe('registerPushToken', () => {
 });
 
 describe('setupNotificationListeners', () => {
-  it('navigates a warm tap to the call screen', () => {
+  it('navigates a warm tap to the WebView call route', () => {
     const { service } = loadService('ios');
     const onNavigate = jest.fn();
     getLastNotificationResponse.mockReturnValue(null);
@@ -154,10 +161,10 @@ describe('setupNotificationListeners', () => {
     const listener = addNotificationResponseReceivedListener.mock.calls[0][0];
     listener({ notification: { request: { identifier: 'r1', content: { data: { type: 'CALL_INCOMING', consultationId: 'cons-1' } } } } });
 
-    expect(onNavigate).toHaveBeenCalledWith('/(app)/call/cons-1');
+    expect(onNavigate).toHaveBeenCalledWith('/call/cons-1');
   });
 
-  it('navigates a cold-start tap, which never reaches the response listener', () => {
+  it('navigates a cold-start tap to the client consultation route', () => {
     const { service } = loadService('ios');
     const onNavigate = jest.fn();
     getLastNotificationResponse.mockReturnValue({
@@ -168,7 +175,7 @@ describe('setupNotificationListeners', () => {
 
     service.setupNotificationListeners(onNavigate);
 
-    expect(onNavigate).toHaveBeenCalledWith('/(app)/consultation/cons-2');
+    expect(onNavigate).toHaveBeenCalledWith('/client/consultations/cons-2');
   });
 
   it('deduplicates a tap delivered by both the cold-start drain and the listener', () => {
@@ -260,5 +267,48 @@ describe('fetchNotifications, markAsRead and markAllAsRead', () => {
     await service.markAllAsRead();
 
     expect(patch).toHaveBeenCalledWith('/api/notifications/read-all');
+  });
+});
+
+describe('syncSessionWithBackend', () => {
+  it('sets mobile auth token, registers push token and avoids duplicate posts for same session', async () => {
+    const { service } = loadService('android');
+    const user = {
+      id: 'u-1',
+      email: 'vet@huellicam.com.ar',
+      firstName: 'Ana',
+      lastName: 'Lopez',
+      role: 'VET' as const,
+    };
+
+    const first = await service.syncSessionWithBackend('jwt-1', user);
+    const second = await service.syncSessionWithBackend('jwt-1', user);
+
+    expect(first).toBe('ExponentPushToken[abc]');
+    expect(second).toBeNull();
+    expect(setMobileAuthToken).toHaveBeenCalledWith('jwt-1');
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips push registration for ADMIN accounts', async () => {
+    const { service } = loadService('android');
+    const token = await service.syncSessionWithBackend('jwt-admin', {
+      id: 'a-1',
+      email: 'admin@huellicam.com.ar',
+      firstName: 'Admin',
+      lastName: 'User',
+      role: 'ADMIN',
+    });
+
+    expect(token).toBeNull();
+    expect(setMobileAuthToken).toHaveBeenCalledWith(null);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('clears auth token on logout', async () => {
+    const { service } = loadService('android');
+    await service.syncSessionWithBackend(null);
+
+    expect(setMobileAuthToken).toHaveBeenCalledWith(null);
   });
 });

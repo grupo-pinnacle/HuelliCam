@@ -12,6 +12,7 @@ import { Stethoscope, CheckCircle2, Search, Paperclip, Loader2, X, FileText, Che
 import VetPatientProfile from '../components/dashboard/VetPatientProfile';
 import { HamsterMascot } from '../components/ui/HamsterMascot';
 import { parseConsultationNotes } from '../lib/consultationNotes';
+import { postMobileBridgeMessage } from '../lib/mobileBridge';
 
 const POLLING_INTERVAL_MS = 5000;
 
@@ -315,21 +316,23 @@ export const ConsultationRoom: React.FC = () => {
   // Emit page:ready handshake for mobile WebView wrapper
   // ----------------------------------------------------------------
   useEffect(() => {
-    if (typeof window !== 'undefined' && (window as any).ReactNativeWebView) {
-      (window as any).ReactNativeWebView.postMessage(JSON.stringify({ type: 'page:ready' }));
-    }
+    postMobileBridgeMessage({ type: 'page:ready' });
   }, []);
 
   // ----------------------------------------------------------------
   // FEAT-05: Screen WakeLock in WebView / Mobile browser
   // ----------------------------------------------------------------
   useEffect(() => {
-    let wakeLockSentinel: any = null;
+    type WakeLockNavigator = Navigator & {
+      wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> };
+    };
+    let wakeLockSentinel: { release: () => Promise<void> } | null = null;
 
     const requestWakeLock = async () => {
       try {
-        if (typeof navigator !== 'undefined' && 'wakeLock' in navigator && (navigator as any).wakeLock?.request) {
-          wakeLockSentinel = await (navigator as any).wakeLock.request('screen');
+        const nav = typeof navigator !== 'undefined' ? (navigator as WakeLockNavigator) : undefined;
+        if (nav?.wakeLock?.request) {
+          wakeLockSentinel = await nav.wakeLock.request('screen');
         }
       } catch {
         // Silently swallow per specification
@@ -337,19 +340,13 @@ export const ConsultationRoom: React.FC = () => {
     };
 
     if (phase === 'waiting' || phase === 'active') {
-      requestWakeLock();
-      if (typeof window !== 'undefined' && (window as any).ReactNativeWebView) {
-        try {
-          (window as any).ReactNativeWebView.postMessage(
-            JSON.stringify({ type: 'wakelock:acquire' })
-          );
-        } catch {}
-      }
+      void requestWakeLock();
+      postMobileBridgeMessage({ type: 'wakelock:acquire' });
     }
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && (phase === 'waiting' || phase === 'active')) {
-        requestWakeLock();
+        void requestWakeLock();
       }
     };
 
@@ -361,13 +358,7 @@ export const ConsultationRoom: React.FC = () => {
         wakeLockSentinel.release().catch(() => {});
         wakeLockSentinel = null;
       }
-      if (typeof window !== 'undefined' && (window as any).ReactNativeWebView) {
-        try {
-          (window as any).ReactNativeWebView.postMessage(
-            JSON.stringify({ type: 'wakelock:release' })
-          );
-        } catch {}
-      }
+      postMobileBridgeMessage({ type: 'wakelock:release' });
     };
   }, [phase]);
 
@@ -793,11 +784,7 @@ export const ConsultationRoom: React.FC = () => {
             token={livekitToken!}
             serverUrl={livekitWsUrl}
             onDisconnected={() => {
-              if (typeof window !== 'undefined' && (window as any).ReactNativeWebView) {
-                (window as any).ReactNativeWebView.postMessage(
-                  JSON.stringify({ type: 'call:ended' })
-                );
-              }
+              postMobileBridgeMessage({ type: 'call:ended' });
               navigate(-1);
             }}
           />

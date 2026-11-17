@@ -2,9 +2,15 @@ import {
   WEB_TOKEN_STORAGE_KEY,
   WEB_USER_STORAGE_KEY,
   buildAuthSeedScript,
+  buildNativeNavigateScript,
+  isCallRouteUrl,
   isLoopbackUrl,
   parseHost,
+  parseWebViewBridgeMessage,
+  resolveWebAppUrl,
+  resolveWebBaseUrlConfig,
   resolveWebCallUrl,
+  shouldOpenExternally,
   HARDENED_WEBVIEW_CONFIG,
   handleContentProcessTermination,
 } from '../lib/webviewBridge';
@@ -152,5 +158,66 @@ describe('BUG-07: Hardened React Native WebView Configuration', () => {
   it('does not crash or reload if termination event lacks nativeEvent or webview ref', () => {
     expect(handleContentProcessTermination({}, null)).toBe(false);
     expect(handleContentProcessTermination({ nativeEvent: {} }, null)).toBe(false);
+  });
+});
+
+describe('100% WebView Shell bridge helpers', () => {
+  it('resolves dev localhost default and rejects missing/loopback URL in standalone release', () => {
+    expect(resolveWebBaseUrlConfig(undefined, true)).toEqual({
+      url: 'http://localhost:5173',
+      error: null,
+    });
+    expect(resolveWebBaseUrlConfig(undefined, false).url).toBeNull();
+    expect(resolveWebBaseUrlConfig('http://localhost:5173', false).url).toBeNull();
+    expect(resolveWebBaseUrlConfig('https://app.huellicam.com.ar/', false)).toEqual({
+      url: 'https://app.huellicam.com.ar',
+      error: null,
+    });
+  });
+
+  it('builds SPA URLs cleanly and detects /call/* routes', () => {
+    expect(resolveWebAppUrl('https://app.huellicam.com.ar/', 'login')).toBe(
+      'https://app.huellicam.com.ar/login'
+    );
+    expect(isCallRouteUrl('http://localhost:5173/call/cons-1?from=client')).toBe(true);
+    expect(isCallRouteUrl('http://localhost:5173/client/dashboard')).toBe(false);
+  });
+
+  it('keeps same-origin navigation inside WebView and delegates external URLs', () => {
+    const appBase = 'https://app.huellicam.com.ar';
+    expect(shouldOpenExternally('https://app.huellicam.com.ar/client/pets', appBase)).toBe(false);
+    expect(shouldOpenExternally('about:blank', appBase)).toBe(false);
+    expect(shouldOpenExternally('https://mercadopago.com.ar/checkout', appBase)).toBe(true);
+    expect(shouldOpenExternally('mailto:soporte@huellicam.com.ar', appBase)).toBe(true);
+    expect(shouldOpenExternally('https://wa.me/5491100000000', appBase)).toBe(true);
+  });
+
+  it('parses valid bridge messages and ignores malformed or unknown payloads', () => {
+    expect(parseWebViewBridgeMessage('{"type":"wakelock:acquire"}')).toEqual({
+      type: 'wakelock:acquire',
+    });
+    expect(
+      parseWebViewBridgeMessage(
+        JSON.stringify({
+          type: 'auth:session',
+          token: 'jwt-1',
+          user: { id: 'u1', email: 'a@b.com', firstName: 'Ana', lastName: 'R', role: 'CLIENT' },
+        })
+      )
+    ).toEqual({
+      type: 'auth:session',
+      token: 'jwt-1',
+      user: { id: 'u1', email: 'a@b.com', firstName: 'Ana', lastName: 'R', role: 'CLIENT' },
+    });
+    expect(parseWebViewBridgeMessage('{"type":"auth:session","token":"","user":{}}')).toBeNull();
+    expect(parseWebViewBridgeMessage('{"type":"unknown"}')).toBeNull();
+    expect(parseWebViewBridgeMessage('not-json')).toBeNull();
+  });
+
+  it('generates safe native navigation injection script', () => {
+    const script = buildNativeNavigateScript('/prescriptions/rx-1');
+    expect(script).toContain('huellicam:navigate');
+    expect(script).toContain('/prescriptions/rx-1');
+    expect(script.endsWith('true;')).toBe(true);
   });
 });

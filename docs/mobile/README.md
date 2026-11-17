@@ -1,83 +1,93 @@
 # Aplicación Mobile (`mobile/`) — Huellicam
 
-Documentación técnica de la aplicación móvil construida con **Expo SDK 54**, **React Native 0.81.4** y **Expo Router**.
+Documentación técnica de la aplicación móvil construida con **Expo SDK 54**, **React Native 0.81.4**, **Expo Router** y **`react-native-webview`**.
 
 ---
 
-## 1. Arquitectura Actual: Híbrido con WebView para Videollamadas
+## 1. Arquitectura Actual: Shell 100% WebView
 
-La aplicación móvil opera actualmente bajo un enfoque pragmático híbrido:
-- **Flujos nativos en Expo Router (`mobile/app/`):** Inicio de sesión, registro, inicio por rol (`(app)/index.tsx` + `VetWorkspace.tsx`), gestión básica de mascotas, chat por Socket.io, notificaciones, perfil y visor de recetas.
-- **Videoconsultas sobre WebView de la Web App (`mobile/app/(app)/call/[consultationId].tsx`):** Toda videollamada WebRTC se ejecuta cargando la ruta `/call/:consultationId` de la SPA web dentro de `react-native-webview`.
+La aplicación móvil opera como un contenedor nativo liviano (`mobile/app/index.tsx`) sobre la **Web App responsive** (`web/`):
+- **Toda la experiencia funcional corre sobre la SPA web** (`/login`, `/client/*`, `/vet/*`, `/call/:id`, `/prescriptions/:id`), garantizando paridad visual y funcional inmediata sin código de UI duplicado.
+- **Acceso por rol:** Disponible para **Tutores (`CLIENT`)** y **Veterinarios (`VET`)**; si inicia sesión un `ADMIN`, la app muestra un aviso indicando el uso de la consola web de escritorio.
+- **Capacidades nativas del contenedor:** Splash screen (`expo-splash-screen`), pantalla **Offline** con recuperación automática (`NetInfo`), botón físico **Atrás** navegando el historial web, permisos de cámara/micrófono (`expo-camera`), **WakeLock** en videoconsultas (`expo-keep-awake`), impresión/PDF nativa (`expo-print` + `Share`), apertura externa de enlaces de terceros (`Linking`), push notifications (`expo-notifications`) y deep links (`huellicam://`).
 
-> **Decisión vigente:** Mantener las videoconsultas sobre el WebView de la aplicación web permite garantizar estabilidad, paridad visual y cero duplicación de lógica LiveKit mientras se prioriza el producto web. Aunque `@livekit/react-native` figura declarado en `mobile/package.json` para una eventual evolución futura, **no está activado en runtime**.
+> **Decisión vigente:** Mantener una arquitectura **100% WebView** para acelerar el lanzamiento en Play Store con una única base funcional en `web/`. La construcción de una app nativa completa idéntica a la web queda planificada como evolución futura.
 
 ---
 
-## 2. Puente Nativo ↔ WebView (`mobile/src/lib/webviewBridge.ts`)
+## 2. Puente Nativo ↔ WebView
 
-Para que la sala de videollamada web funcione dentro del WebView móvil sin redirecciones ni bloqueos de hardware:
+La comunicación tipada entre `web/src/lib/mobileBridge.ts` y `mobile/src/lib/webviewBridge.ts` coordina:
 
-1. **Inyección Temprana de Sesión (`buildAuthSeedScript`):**
-   - La SPA web lee el estado de autenticación al evaluar los módulos iniciales.
-   - El contenedor móvil inyecta el script en `injectedJavaScriptBeforeContentLoaded` antes de que se ejecute el bundle web, sembrando `accessToken` y `user` en `window.localStorage` y retornando `true;`.
-2. **Configuración Endurecida (`HARDENED_WEBVIEW_CONFIG`):**
+1. **Configuración endurecida (`HARDENED_WEBVIEW_CONFIG`):**
    - `domStorageEnabled: true`, `javaScriptEnabled: true`, `sharedCookiesEnabled: true`, `thirdPartyCookiesEnabled: true`
    - `allowsInlineMediaPlayback: true`, `mediaPlaybackRequiresUserAction: false`
-   - `mediaCapturePermissionGrantType: 'grant'` y `allowFileAccess: true`
-   - `originWhitelist: ['http://*', 'https://*']`
-3. **Permisos y Diagnóstico (`callPermissions.ts`, `isLoopbackUrl`):**
-   - Solicita permisos nativos de cámara y micrófono vía `expo-camera` antes de montar el WebView.
-   - Detecta si `EXPO_PUBLIC_WEB_URL` apunta a `localhost`/`127.0.0.1` (error frecuente en dispositivos físicos reales) mostrando un mensaje explícito en lugar de una pantalla en blanco.
-4. **Eventos Bidireccionales (`window.ReactNativeWebView.postMessage`):**
-   - `page:ready`: La web confirma hidratación y el shell oculta el indicador de carga.
-   - `call:ended`: Notifica finalización de consulta y retorna a la pantalla anterior.
+   - `mediaCapturePermissionGrantType: 'grant'`, `allowFileAccess: true`, `setSupportMultipleWindows: false`
+   - Enrutamiento externo (`shouldOpenExternally`): navega dentro del shell para el mismo origen y deriva esquemas/dominios externos (`mailto:`, `tel:`, `wa.me`, pasarelas) al navegador del sistema.
+2. **Eventos `WebView -> Nativo` (`window.ReactNativeWebView.postMessage`):**
+   - `page:ready`: Oculta el splash/overlay y libera navegaciones pendientes de deep links.
+   - `auth:session` / `auth:logout`: Sincroniza el token Bearer desde `AuthContext` para registrar el push token en `POST /api/notifications/register-token` y ajustar rutas por rol.
+   - `wakelock:acquire` / `wakelock:release` / `call:ended`: Controla `expo-keep-awake` durante salas `/call/:id`.
+   - `print:request`: Intercepta acciones de impresión en recetas (`PrescriptionDoc`, `PrescriptionView`) y expediente (`PetDossierModal`) para abrir el diálogo nativo PDF/Imprimir (`expo-print`) o compartir enlace (`Share`).
+   - `external:open`: Abre enlaces web fuera del contenedor móvil.
+3. **Eventos `Nativo -> WebView` (`huellicam:navigate`):**
+   - `buildNativeNavigateScript` despacha un evento en `window` capturado por `MobileNavigationBridge` en `web/src/App.tsx` para navegar sin recargar el bundle ante taps de notificaciones push o enlaces `huellicam://`.
 
 ---
 
-## 3. Autenticación, Push y Deep Linking
+## 3. Push Notifications (FCM) y Deep Linking
 
-- **Auth Dual (`mobile/src/lib/api.ts`, `authStore.ts`):** Envía el header `X-Client-Platform: mobile` para recibir el `refreshToken` en el payload JSON y almacenarlo cifrado en `expo-secure-store`, manteniendo el `accessToken` en memoria y gestionando concurrencia `401` mediante cola `failedQueue`.
-- **Push Notifications (`notifications.service.ts`):** Registra tokens en `POST /api/notifications/register-token` (validando plataforma `ios | android | web`) y escucha taps sobre notificaciones entrantes.
-- **Deep Linking (`deepLinks.ts`):** Mapea URLs del esquema de la app y payloads de notificación (`CALL_INCOMING`, `MESSAGE_NEW`, `PRESCRIPTION_NEW`) hacia rutas de Expo Router (`call`, `consultation`, `prescriptions`, `chat`, `review`).
-- **Aislamiento de React en Monorepo (`metro.config.js`):** Bloquea el `react` 18.3.1 del root (usado por `web/`) y redirige toda resolución de `react`, `react-dom` y `react-native` a `mobile/node_modules/` (React 19.1.0).
+- **Push Notifications (`notifications.service.ts`):** Registra tokens Expo/FCM en `POST /api/notifications/register-token` (`ios | android | web`). Maneja de forma segura la ausencia de credenciales Firebase durante desarrollo local o builds internos hasta agregar `google-services.json`.
+- **Deep Linking (`deepLinks.ts`):** Resuelve enlaces `huellicam://call/:id`, `huellicam://consultation/:id`, `huellicam://prescriptions/:id` y `huellicam://chat/:id` (junto con payloads `CALL_INCOMING`, `MESSAGE_NEW`, `PRESCRIPTION_NEW`) directamente hacia rutas SPA de `web/`, distinguiendo prefijos `/client/*` y `/vet/*`.
+- **Conexión Firebase FCM para Play Store:**
+  1. Crear proyecto Android en Firebase Console con package `com.huellicam.app` y descargar `google-services.json` en `mobile/google-services.json` (incluido en `.gitignore` si contiene llaves locales o configurado vía secreto EAS).
+  2. Declarar `"googleServicesFile": "./google-services.json"` dentro de `"android"` en `mobile/app.json` y subir las credenciales FCM en EAS (`eas credentials`).
+- **Aislamiento de React en Monorepo (`metro.config.js`):** Fija el singleton de React 19.1.0 y React Native 0.81.4 dentro de `mobile/node_modules/` evitando colisiones con React 18.3.1 usado por `web/`.
 
 ---
 
-## 4. Estructura Principal del Workspace
+## 4. Estructura del Workspace
 
 ```text
 mobile/
 ├── app/
-│   ├── _layout.tsx                 # Stack raíz, initAuth y listeners push
-│   ├── (auth)/                     # login.tsx, register.tsx
-│   └── (app)/                      # Tabs autenticados, gate SENASA, mascotas, chat, call/[consultationId].tsx
+│   ├── _layout.tsx                 # Stack raíz, SafeAreaProvider y SplashScreen
+│   ├── index.tsx                   # Contenedor 100% WebView, BackHandler, NetInfo, WakeLock y Print
+│   └── +not-found.tsx              # Fallback y redirección de deep links huellicam://
 ├── src/
-│   ├── components/                 # IncomingCallModal, VetWorkspace, AttachmentView, Field, ScreenState, etc.
-│   ├── hooks/                      # useConsultations, usePets, useProfile
-│   ├── lib/                        # api.ts, authStore.ts, socket.ts, webviewBridge.ts, deepLinks.ts, navGuards.ts
-│   ├── services/                   # Servicios REST y señalización
-│   ├── theme/                      # tokens.ts
-│   └── validation/                 # Esquemas locales de validación
+│   ├── components/                 # ShellFallbackScreens (Offline, Error y Loading)
+│   ├── lib/                        # api.ts, webviewBridge.ts, deepLinks.ts, callPermissions.ts
+│   ├── services/                   # notifications.service.ts
+│   ├── theme/                      # tokens.ts (#FFFBEF / #315F5D)
+│   ├── types/                      # Contratos TypeScript del shell y puente WebView
+│   └── __tests__/                  # Suite Jest unitaria del shell, bridge, push y deep links
+├── assets/                         # Iconos, adaptive-icon, splash y notification-icon de Huellicam
 ├── app.json
 └── metro.config.js
 ```
 
 ---
 
-## 5. Comandos de Desarrollo y Testing
+## 5. Desarrollo Local y Verificación
+
+En desarrollo contra tu máquina local, WebRTC (`getUserMedia`) dentro de Android WebView requiere contexto seguro (`https://` o `http://localhost`):
 
 ```bash
-# Levantar bundler de Expo
-npm run dev:mobile
+# 1. Levantar Backend (:3001) y Web SPA (:5173)
+npm run dev
 
-# Con USB en Windows (incluye adb reverse tcp:3001 y tcp:8081)
-.\start.ps1
+# 2. En dispositivo Android por USB: redirigir puertos locales para habilitar cámara/mic en localhost
+adb reverse tcp:5173 tcp:5173
+adb reverse tcp:3001 tcp:3001
+
+# 3. Levantar bundler de Expo
+npm run dev:mobile
 
 # Validación TypeScript y suite Jest
 npm run typecheck -w mobile
 npm test -w mobile
 
-# Compilación Android (requiere EAS login o JDK 21 + Android SDK en ruta ASCII)
+# Compilación Android (APK interno o AAB Play Store)
 npm run build:apk -w mobile
+npm run build:bundle -w mobile
 ```

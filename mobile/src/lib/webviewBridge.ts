@@ -1,31 +1,13 @@
-import { User } from '../types';
+import { BridgeSessionUser, Role, User, WebViewBridgeMessage } from '../types';
 
-/**
- * Builds the JavaScript that seeds the embedded web client's session (WU5 / D-03).
- *
- * The web SPA reads its access token from `localStorage` at MODULE LOAD
- * (`web/src/services/api.ts`), which happens while the bundle's first module is
- * evaluated. Injecting credentials after `page:ready` is therefore too late;
- * the only correct moment is `injectedJavaScriptBeforeContentLoaded`, which runs
- * after the document exists (so the correct origin's storage is addressable)
- * and before any of the page's own scripts.
- *
- * Pure string construction, no React, so it is unit-testable.
- */
-
-/** Must match the key `web/src/services/api.ts` reads and writes. */
 export const WEB_TOKEN_STORAGE_KEY = 'huellicam_token';
-/** Must match the key `web/src/context/AuthContext.tsx` reads and writes. */
 export const WEB_USER_STORAGE_KEY = 'huellicam_user';
+export const DEFAULT_WEB_ENTRY_PATH = '/login';
 
 const STORAGE_PREFIX = 'window.localStorage';
 
 /**
- * Returns a script that writes both storage keys and evaluates to `true`.
- *
- * The trailing `true` is required: `react-native-webview` logs a warning when an
- * injected script evaluates to anything else. The `try/catch` keeps a storage
- * failure (private mode, disabled WebView storage) from aborting the document.
+ * Builds JS to seed web client storage before content scripts execute.
  */
 export function buildAuthSeedScript(accessToken: string, user: User): string {
   const token = JSON.stringify(accessToken);
@@ -40,20 +22,17 @@ export function buildAuthSeedScript(accessToken: string, user: User): string {
   );
 }
 
-/**
- * Hosts that resolve to the handset itself rather than to a development machine.
- *
- * `new URL` is not used on purpose: Hermes ships a partial `URL` and relying on
- * it for a correctness check would be a latent runtime difference between Node
- * (tests) and the device.
- */
-const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1']);
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set([
+  'localhost',
+  '127.0.0.1',
+  '0.0.0.0',
+  '::1',
+]);
 
-/**
- * Bracketed IPv6 literals are matched as a unit: the character class below
- * stops at `:`, so `[::1]` would otherwise be truncated to `[`.
- */
 const HOST_PATTERN = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/(?:[^@/?#]*@)?(\[[^\]]*\]|[^:/?#]*)/;
+const PATH_PATTERN = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^/?#]*([^?#]*)/;
+const EXTERNAL_PROTOCOLS = ['mailto:', 'tel:', 'sms:', 'whatsapp:', 'intent:', 'market:'];
+const ROLES: ReadonlySet<Role> = new Set(['CLIENT', 'VET', 'ADMIN']);
 
 export function parseHost(url: string): string | null {
   const match = HOST_PATTERN.exec(url.trim());
@@ -61,30 +40,168 @@ export function parseHost(url: string): string | null {
   return match[1].replace(/^\[|\]$/g, '').toLowerCase();
 }
 
-/**
- * True when the configured web base URL points back at the device itself.
- *
- * `http://localhost:5173` is the development default, and on a real handset
- * `localhost` is the phone, not the laptop running Vite. The call screen fails
- * with an opaque WebView load error in that case, so it is detected up front
- * and reported explicitly.
- */
 export function isLoopbackUrl(url: string): boolean {
   const host = parseHost(url);
   return host !== null && LOOPBACK_HOSTS.has(host);
 }
 
-/** Joins the web base URL and the call path without doubling or losing slashes. */
+export function normalizeWebBaseUrl(baseUrl: string): string {
+  return baseUrl.trim().replace(/\/+$/, '');
+}
+
+export function resolveWebAppUrl(
+  baseUrl: string,
+  path: string = DEFAULT_WEB_ENTRY_PATH
+): string {
+  const base = normalizeWebBaseUrl(baseUrl);
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${base}${normalizedPath}`;
+}
+
 export function resolveWebCallUrl(baseUrl: string, consultationId: string): string {
-  const base = baseUrl.trim().replace(/\/+$/, '');
-  return `${base}/call/${encodeURIComponent(consultationId)}`;
+  return resolveWebAppUrl(baseUrl, `/call/${encodeURIComponent(consultationId)}`);
+}
+
+export function resolveWebBaseUrlConfig(
+  configuredUrl: string | undefined,
+  isDev: boolean
+): { url: string; error: null } | { url: null; error: string } {
+  const trimmed = configuredUrl?.trim() || '';
+  if (!trimmed) {
+    if (isDev) {
+      return { url: 'http://localhost:5173', error: null };
+    }
+    return {
+      url: null,
+      error:
+        'EXPO_PUBLIC_WEB_URL no está configurada para este build. Configurá la URL HTTPS de Huellicam antes de compilar.',
+    };
+  }
+
+  if (!parseHost(trimmed)) {
+    return {
+      url: null,
+      error: `La URL configurada en EXPO_PUBLIC_WEB_URL no es válida: "${trimmed}".`,
+    };
+  }
+
+  if (!isDev && isLoopbackUrl(trimmed)) {
+    return {
+      url: null,
+      error:
+        'EXPO_PUBLIC_WEB_URL apunta a localhost en un build standalone. Reemplazala por una URL accesible o HTTPS.',
+    };
+  }
+
+  return { url: normalizeWebBaseUrl(trimmed), error: null };
+}
+
+export function isCallRouteUrl(url: string): boolean {
+  const match = PATH_PATTERN.exec(url.trim());
+  const path = match?.[1] || '';
+  return path === '/call' || path.startsWith('/call/');
+}
+
+export function shouldOpenExternally(targetUrl: string, appBaseUrl: string): boolean {
+  const trimmed = targetUrl.trim();
+  if (!trimmed) return false;
+
+  const lower = trimmed.toLowerCase();
+  if (
+    lower === 'about:blank' ||
+    lower.startsWith('blob:') ||
+    lower.startsWith('data:')
+  ) {
+    return false;
+  }
+
+  if (EXTERNAL_PROTOCOLS.some((prefix) => lower.startsWith(prefix))) {
+    return true;
+  }
+
+  if (!lower.startsWith('http://') && !lower.startsWith('https://')) {
+    return false;
+  }
+
+  const targetHost = parseHost(trimmed);
+  const baseHost = parseHost(appBaseUrl);
+  if (!targetHost || !baseHost) return false;
+
+  return targetHost !== baseHost;
+}
+
+export function buildNativeNavigateScript(path: string): string {
+  const normalized = path.startsWith('/') ? path : `/${path}`;
+  return (
+    'try{' +
+    `window.dispatchEvent(new CustomEvent("huellicam:navigate",{detail:{path:${JSON.stringify(
+      normalized
+    )}}}));` +
+    '}catch(e){};' +
+    'true;'
+  );
+}
+
+function isBridgeSessionUser(candidate: unknown): candidate is BridgeSessionUser {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    return false;
+  }
+  const obj = candidate as Record<string, unknown>;
+  return (
+    typeof obj.id === 'string' &&
+    obj.id.length > 0 &&
+    typeof obj.email === 'string' &&
+    typeof obj.role === 'string' &&
+    ROLES.has(obj.role as Role) &&
+    typeof obj.firstName === 'string' &&
+    typeof obj.lastName === 'string'
+  );
+}
+
+export function parseWebViewBridgeMessage(raw: string): WebViewBridgeMessage | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    const obj = parsed as Record<string, unknown>;
+    switch (obj.type) {
+      case 'page:ready':
+      case 'auth:logout':
+      case 'wakelock:acquire':
+      case 'wakelock:release':
+      case 'call:ended':
+        return { type: obj.type };
+      case 'auth:session':
+        if (typeof obj.token === 'string' && obj.token.length > 0 && isBridgeSessionUser(obj.user)) {
+          return { type: 'auth:session', token: obj.token, user: obj.user };
+        }
+        return null;
+      case 'print:request':
+        if (typeof obj.title === 'string' && typeof obj.url === 'string') {
+          return {
+            type: 'print:request',
+            title: obj.title,
+            url: obj.url,
+            html: typeof obj.html === 'string' ? obj.html : undefined,
+          };
+        }
+        return null;
+      case 'external:open':
+        if (typeof obj.url === 'string' && obj.url.trim().length > 0) {
+          return { type: 'external:open', url: obj.url.trim() };
+        }
+        return null;
+      default:
+        return null;
+    }
+  } catch {
+    return null;
+  }
 }
 
 /**
- * Hardened React Native WebView configuration (BUG-07).
- *
- * Ensures storage persistence (domStorageEnabled), session cookies across origins,
- * inline camera and mic without manual action, and safe Android file picking.
+ * Hardened React Native WebView configuration for full SPA + LiveKit WebRTC support.
  */
 export const HARDENED_WEBVIEW_CONFIG = {
   domStorageEnabled: true,
@@ -96,6 +213,9 @@ export const HARDENED_WEBVIEW_CONFIG = {
   allowFileAccess: true,
   mediaCapturePermissionGrantType: 'grant' as const,
   originWhitelist: ['http://*', 'https://*'],
+  setSupportMultipleWindows: false,
+  pullToRefreshEnabled: false,
+  bounces: false,
 } as const;
 
 export function handleContentProcessTermination(

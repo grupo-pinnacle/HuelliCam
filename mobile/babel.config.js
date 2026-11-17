@@ -1,7 +1,7 @@
 module.exports = function (api) {
   api.cache(true);
   return {
-    presets: [['babel-preset-expo', { jsxImportSource: 'nativewind' }], 'nativewind/babel'],
+    presets: ['babel-preset-expo'],
     plugins: [
       // babel-preset-expo solo auto-agrega este plugin si resuelve `expo-router`
       // desde su propia ubicación (hoisted al root del monorepo, donde no existe).

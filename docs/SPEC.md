@@ -103,5 +103,5 @@ El proceso `backend/src/jobs/notifications.scheduler.ts` se ejecuta cada hora (h
 Las siguientes capacidades están contempladas en la evolución del producto pero **no están implementadas** en la versión actual del repositorio:
 - Integración de pasarela transaccional real bajo la interfaz `IPaymentGateway` (hoy existen métricas proyectadas y settings arancelarios en Admin).
 - Modelo dedicado de libreta de vacunación (`VaccinationRecord`), agenda periódica de medicación (`MedicationSchedule`) y veterinarios favoritos (`FavoriteVet`).
-- Migración de videollamadas en la app móvil desde el WebView actual hacia `@livekit/react-native`.
+- Reimplementación nativa completa en la app móvil (idéntica a la web y con SDK nativo de LiveKit) para reemplazar el shell actual 100% WebView.
 - Sincronización iCal/Google Calendar y consulta automática de matrículas contra APIs externas.

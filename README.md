@@ -30,11 +30,11 @@ El repositorio se estructura como un monorepo con tres workspaces (`backend`, `w
 | **Gestión de Mascotas e Historia Clínica** | Implementado | CRUD con soft-delete (`deletedAt`), peso, sexo, fecha de nacimiento (`birthDate`), microchip ISO (15 dígitos), alergias, condiciones crónicas y dossier imprimible. |
 | **Triaje Clínico y Cola de Guardia** | Implementado | Motor determinista basado en reglas (`clinicalTriage.engine.ts`), cola `WAITING`, asignación atómica (`consultationConcurrency.service.ts` + `ConsultationAuditLog`), timeout de espera (15 min) y ventana de gracia por desconexión (3 min). |
 | **Chat Clínico y Adjuntos** | Implementado | Socket.io con deduplicación por `clientMsgId`, sincronización incremental (`?after=`), carga multimedia con validación por *Magic Bytes* (JPEG/PNG/PDF, 10 MB/archivo, 50 MB/día) y descarga autenticada (`GET /api/media/:id`). |
-| **Videoconsultas WebRTC (LiveKit)** | Implementado | Emisión de tokens sin PII (`calls.service.ts`), timbrado (`POST /api/calls/:consultationId/ring`), sala `<LiveKitRoom>` en web (`web/src/vet/CallRoom.tsx`) y puente WebView en mobile (`mobile/app/(app)/call/[consultationId].tsx`). |
+| **Videoconsultas WebRTC (LiveKit)** | Implementado | Emisión de tokens sin PII (calls.service.ts), timbrado (POST /api/calls/:consultationId/ring), sala <LiveKitRoom> en web (web/src/vet/CallRoom.tsx) ejecutada también dentro del shell WebView móvil (mobile/app/index.tsx). |
 | **Recetas Digitales y Verificación QR** | Implementado | Emisión por veterinario asignado, generación de URL pública con QR y verificación sin login (`GET /api/prescriptions/:id` y ruta `/prescriptions/:id` / `/verify-rx`). |
 | **Notificaciones Push y Emails Automáticos** | Implementado | Bandeja in-app (`Notification`), despacho a Expo Push API (`PushToken`) y scheduler automático (`notifications.scheduler.ts`) con deduplicación (`EmailDispatchLog`) para recordatorios, controles cada 180 días y cumpleaños. |
 | **Panel de Administración y Gobernanza** | Implementado | Aprobación/rechazo de matrículas (`PENDING -> APPROVED/REJECTED`), CRUD de usuarios y mascotas con restauración, inspección de consultas, `AuditLog`, *feature flags* operativos, métricas ejecutivas y configuración arancelaria base. |
-| **App Mobile (Expo SDK 54)** | Implementado (Híbrido WebView) | Navegación Expo Router, autenticación segura, notificaciones push y ejecución de videollamadas mediante `react-native-webview` conectado a la web SPA. La migración a LiveKit nativo queda planificada como fase futura. |
+| **App Mobile (Expo SDK 54)** | Implementado (Shell 100% WebView) | Contenedor nativo eact-native-webview de la Web SPA responsive con splash, pantalla offline, WakeLock, impresión PDF nativa, permisos de cámara/mic, deep links y notificaciones push. La app nativa completa idéntica a la web queda como fase futura. |
 | **Pasarela de Pagos Externa** | Roadmap / Diseño | Definición arquitectónica de `IPaymentGateway` y parámetros base en admin (`pricing-settings`, flag `PAYMENTS_ENABLED`); el procesamiento transaccional con PSP externo (Stripe / Mercado Pago / PagoFlex) no está conectado aún. |
 
 ---
@@ -45,7 +45,7 @@ El repositorio se estructura como un monorepo con tres workspaces (`backend`, `w
 flowchart TB
     subgraph Clientes["Clientes (Monorepo Workspaces)"]
         WebClient["Web SPA (React 18.3.1 + Vite)\n• Portales Tutor, Veterinario y Admin\n• LiveKit WebRTC + Socket.io\n• TanStack Query v5"]
-        MobileClient["Mobile App (Expo SDK 54 + RN 0.81)\n• Expo Router + SecureStore\n• Push Notifications\n• WebView Bridge para Videoconsultas"]
+        MobileClient["Mobile App (Expo SDK 54 + RN 0.81)\n• Shell 100% WebView\n• Offline, WakeLock, Print/PDF\n• Push Notifications & Deep Links"]
     end
 
     subgraph Backend["Backend API (Node.js 20 + Express 5 + TypeScript)"]
@@ -78,7 +78,7 @@ flowchart TB
 .
 ├── backend/                # API REST (Express 5), Socket.io, Prisma ORM 6 y scheduler de emails
 ├── web/                    # SPA Web (React 18.3.1, Vite 6, Tailwind CSS v3, Storybook, Vitest)
-├── mobile/                 # App móvil (Expo SDK 54, Expo Router, WebView bridge para llamadas)
+├── mobile/                 # App móvil (Expo SDK 54, shell 100% WebView + bridge nativo)
 ├── docs/                   # Documentación técnica, arquitectura, contratos y compliance
 ├── scripts/                # Utilidades de assets Expo y verificación de consistencia documental
 ├── .github/workflows/      # Pipeline CI (typecheck, gobernanza, Jest, Vitest)

@@ -19,6 +19,7 @@ import "@livekit/components-styles";
 import { ReviewModal } from "../components/ui/ReviewModal";
 import { HamsterMascot } from "../components/ui/HamsterMascot";
 import { parseConsultationNotes } from "../lib/consultationNotes";
+import { postMobileBridgeMessage } from "../lib/mobileBridge";
 
 const WAITING_TIPS = [
   "Habilitá la cámara y el micrófono en tu navegador para que el veterinario pueda ver y escuchar a tu mascota.",
@@ -1095,27 +1096,34 @@ function Room({ id }: { id: string }) {
 
   // Mobile WebView handshake
   useEffect(() => {
-    if (typeof window !== "undefined" && (window as any).ReactNativeWebView) {
-      (window as any).ReactNativeWebView.postMessage(JSON.stringify({ type: "page:ready" }));
-    }
+    postMobileBridgeMessage({ type: "page:ready" });
   }, []);
 
-  // Screen WakeLock during call/waiting
+  // Screen WakeLock during call/waiting (Web API + React Native WebView bridge)
   useEffect(() => {
-    let wakeLockSentinel: any = null;
+    type WakeLockNavigator = Navigator & {
+      wakeLock?: { request: (type: "screen") => Promise<{ release: () => Promise<void> }> };
+    };
+    let wakeLockSentinel: { release: () => Promise<void> } | null = null;
+    const shouldKeepAwake = callState !== "ended" && callState !== "error";
+
     const requestWakeLock = async () => {
       try {
-        if (typeof navigator !== "undefined" && "wakeLock" in navigator && (navigator as any).wakeLock?.request) {
-          wakeLockSentinel = await (navigator as any).wakeLock.request("screen");
+        const nav = typeof navigator !== "undefined" ? (navigator as WakeLockNavigator) : undefined;
+        if (nav?.wakeLock?.request) {
+          wakeLockSentinel = await nav.wakeLock.request("screen");
         }
       } catch {}
     };
-    if (callState === "waiting" || callState === "connected") {
-      requestWakeLock();
+
+    if (shouldKeepAwake) {
+      void requestWakeLock();
+      postMobileBridgeMessage({ type: "wakelock:acquire" });
     }
+
     const handleVis = () => {
-      if (document.visibilityState === "visible" && (callState === "waiting" || callState === "connected")) {
-        requestWakeLock();
+      if (document.visibilityState === "visible" && shouldKeepAwake) {
+        void requestWakeLock();
       }
     };
     document.addEventListener("visibilitychange", handleVis);
@@ -1124,6 +1132,9 @@ function Room({ id }: { id: string }) {
       if (wakeLockSentinel) {
         wakeLockSentinel.release().catch(() => {});
         wakeLockSentinel = null;
+      }
+      if (shouldKeepAwake) {
+        postMobileBridgeMessage({ type: "wakelock:release" });
       }
     };
   }, [callState]);
@@ -1246,6 +1257,7 @@ function Room({ id }: { id: string }) {
     if (!fromClient) {
       void finish(id);
     }
+    postMobileBridgeMessage({ type: "call:ended" });
     setCallState("ended");
     if (fromClient) {
       setShowReviewModal(true);

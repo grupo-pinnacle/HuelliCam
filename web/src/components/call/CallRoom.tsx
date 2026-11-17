@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { LiveKitRoom, VideoConference } from '@livekit/components-react';
 import '@livekit/components-styles';
 import { PreJoinModal } from './PreJoinModal';
+import { postMobileBridgeMessage } from '../../lib/mobileBridge';
 
 interface CallRoomProps {
   token: string;
@@ -20,30 +21,32 @@ export const CallRoom: React.FC<CallRoomProps> = ({
 
   // Emit page:ready handshake for mobile WebView wrapper
   useEffect(() => {
-    if (typeof window !== 'undefined' && (window as any).ReactNativeWebView) {
-      (window as any).ReactNativeWebView.postMessage(JSON.stringify({ type: 'page:ready' }));
-    }
+    postMobileBridgeMessage({ type: 'page:ready' });
   }, []);
 
   // Screen WakeLock while in call
   useEffect(() => {
-    let wakeLockSentinel: any = null;
+    type WakeLockNavigator = Navigator & {
+      wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> };
+    };
+    let wakeLockSentinel: { release: () => Promise<void> } | null = null;
 
     const requestWakeLock = async () => {
       try {
-        if (typeof navigator !== 'undefined' && 'wakeLock' in navigator && (navigator as any).wakeLock?.request) {
-          wakeLockSentinel = await (navigator as any).wakeLock.request('screen');
+        const nav = typeof navigator !== 'undefined' ? (navigator as WakeLockNavigator) : undefined;
+        if (nav?.wakeLock?.request) {
+          wakeLockSentinel = await nav.wakeLock.request('screen');
         }
       } catch {
         // Silently swallow per specification
       }
     };
 
-    requestWakeLock();
+    void requestWakeLock();
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        requestWakeLock();
+        void requestWakeLock();
       }
     };
 
@@ -65,9 +68,7 @@ export const CallRoom: React.FC<CallRoomProps> = ({
   };
 
   const handleDisconnected = () => {
-    if (typeof window !== 'undefined' && (window as any).ReactNativeWebView) {
-      (window as any).ReactNativeWebView.postMessage(JSON.stringify({ type: 'call:ended' }));
-    }
+    postMobileBridgeMessage({ type: 'call:ended' });
     onDisconnected?.();
   };
 

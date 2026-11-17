@@ -11,6 +11,7 @@ import { parseConsultationNotes, formatConsultationNotes } from "../lib/consulta
 import { SPECIES_LIST, getBreedsForSpecies, getWeightAssessment, compressImageFile } from "../data/petBreeds";
 import { HamsterMascot } from "../components/ui/HamsterMascot";
 import { ChangePasswordModal } from "../components/common/ChangePasswordModal";
+import { isReactNativeWebView } from "../lib/mobileBridge";
 
 const VetApp = lazy(() => import("../vet/VetApp"));
 const CallRoom = lazy(() => import("../vet/CallRoom"));
@@ -232,8 +233,14 @@ export function AppShell({ children, path }: { children: ReactNode; path: string
         }
         @media (max-width: 820px) {
           .app-main--messages {
-            height: calc(100dvh - 68px) !important;
-            max-height: calc(100dvh - 68px) !important;
+            height: calc(100dvh - 68px - env(safe-area-inset-bottom)) !important;
+            max-height: calc(100dvh - 68px - env(safe-area-inset-bottom)) !important;
+          }
+        }
+        @media (max-width: 820px) and (max-height: 520px) {
+          .app-main--messages {
+            height: 100dvh !important;
+            max-height: 100dvh !important;
           }
         }
         .app-main--messages .wa-chat-container {
@@ -2837,9 +2844,17 @@ function PrescriptionsPage() {
                 </div>
                 <div>
                   <a
-                    href={rx.verifyUrl || `/prescriptions/${rx.id}`}
-                    target="_blank"
-                    rel="noreferrer"
+                    href={`/prescriptions/${rx.id}`}
+                    target={isReactNativeWebView() ? undefined : "_blank"}
+                    rel={isReactNativeWebView() ? undefined : "noreferrer"}
+                    onClick={
+                      isReactNativeWebView()
+                        ? (event) => {
+                            event.preventDefault();
+                            window.location.assign(`/prescriptions/${rx.id}`);
+                          }
+                        : undefined
+                    }
                     className="button button--secondary"
                     style={{
                       display: "inline-flex",

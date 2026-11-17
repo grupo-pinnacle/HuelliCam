@@ -1,20 +1,10 @@
 import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
-import api from '../lib/api';
-import { ApiResponse, Notification } from '../types';
+import api, { setMobileAuthToken } from '../lib/api';
 import { resolveNotificationHref } from '../lib/deepLinks';
+import { ApiResponse, BridgeSessionUser, Notification, Role } from '../types';
 
-/**
- * SDK 54 (expo-notifications 0.32.x) `NotificationBehavior` requires
- * `shouldShowBanner` / `shouldShowList` / `shouldPlaySound` / `shouldSetBadge`.
- * `shouldShowAlert` is still in the type but is already flagged
- * `@deprecated instead, specify shouldShowBanner and / or shouldShowList`, and
- * it is not part of the SDK 54 documented handler. It is deliberately omitted.
- *
- * Android computes `shouldPresentAlert = shouldShowBanner || shouldShowList ||
- * shouldShowAlert`, so the banner/list pair alone still presents the
- * notification.
- */
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowBanner: true,
@@ -24,46 +14,31 @@ Notifications.setNotificationHandler({
   }),
 });
 
-/**
- * The backend enum is closed: `z.enum(['ios', 'android', 'web'])`
- * (`backend/src/modules/notifications/notifications.schemas.ts:5`). Anything
- * outside it is rejected with 400, so it is filtered out before the POST.
- */
-export type BackendPlatform = 'ios' | 'android' | 'web';
+export type BackendPushPlatform = 'ios' | 'android' | 'web';
 
-const BACKEND_PLATFORMS: readonly BackendPlatform[] = ['ios', 'android', 'web'];
-
-/**
- * Narrows a `Platform.OS` value to the backend enum.
- *
- * `Platform.OS` also yields `macos`, `windows` and `web`-adjacent values under
- * Expo Go, none of which the backend accepts.
- */
-export function toBackendPlatform(os: string): BackendPlatform | null {
-  return (BACKEND_PLATFORMS as readonly string[]).includes(os) ? (os as BackendPlatform) : null;
+export function toBackendPlatform(os: string): BackendPushPlatform | null {
+  return os === 'ios' || os === 'android' || os === 'web' ? os : null;
 }
 
-export class MobileNotificationService {
-  /**
-   * Requests notification permission, acquires an Expo push token and registers
-   * it against the current session.
-   *
-   * Every failure mode degrades to `null` instead of throwing: a denied
-   * permission, a missing FCM credential (`app.json` has no
-   * `android.googleServicesFile`, so `getExpoPushTokenAsync` cannot succeed on
-   * a production Android build until one exists) and a rejected registration
-   * must never surface as an error or an unhandled rejection in the UI.
-   */
-  public static async registerPushToken(): Promise<string | null> {
-    // Checked first: no point prompting for a permission we could not use, and
-    // no request that is guaranteed to fail validation.
+let activeRole: Role = 'CLIENT';
+let lastSyncedSessionKey: string | null = null;
+
+export function getActiveSessionRole(): Role {
+  return activeRole;
+}
+
+function getExpoProjectId(): string | undefined {
+  const fromExpoConfig = Constants.expoConfig?.extra?.eas as
+    | { projectId?: string }
+    | undefined;
+  const fromEasConfig = Constants.easConfig as { projectId?: string } | undefined;
+  return fromEasConfig?.projectId || fromExpoConfig?.projectId;
+}
+
+const notificationsService = {
+  async registerPushToken(): Promise<string | null> {
     const platform = toBackendPlatform(Platform.OS);
-    if (!platform) {
-      console.warn(
-        `Push token registration skipped: Platform.OS "${Platform.OS}" is not in the backend enum`
-      );
-      return null;
-    }
+    if (!platform) return null;
 
     try {
       const { status: existingStatus } = await Notifications.getPermissionsAsync();
@@ -75,78 +50,105 @@ export class MobileNotificationService {
       }
 
       if (finalStatus !== 'granted') {
-        console.warn('Notification permission denied by user');
         return null;
       }
 
-      const tokenData = await Notifications.getExpoPushTokenAsync();
+      const projectId = getExpoProjectId();
+      const tokenData = await Notifications.getExpoPushTokenAsync(
+        projectId ? { projectId } : undefined
+      );
       const token = tokenData.data;
 
-      if (!token) {
-        console.warn('Expo push token acquisition returned an empty token');
-        return null;
-      }
+      if (!token) return null;
 
-      await api.post<ApiResponse>('/api/notifications/register-token', { token, platform });
+      await api.post('/api/notifications/register-token', {
+        token,
+        platform,
+      });
 
       return token;
     } catch (err) {
-      console.warn('Failed to register push token with backend:', err);
+      // Safe fallback when Firebase google-services.json or network is unavailable.
+      console.warn('Error registering push token:', err);
       return null;
     }
-  }
+  },
 
-  /**
-   * Installs the notification-tap listener and returns a teardown function.
-   *
-   * `onNavigate` receives a ready-to-use expo-router href, not a raw path, so
-   * the caller can `router.replace` it directly.
-   *
-   * Cold start: `getLastNotificationResponse()` is drained synchronously on
-   * subscribe, because a tap that launched the process never reaches
-   * `addNotificationResponseReceivedListener`. Taps are deduplicated by request
-   * identifier so a warm tap handled by the listener is not replayed.
-   */
-  public static setupNotificationListeners(onNavigate: (href: string) => void): () => void {
-    const handled = new Set<string>();
+  async syncSessionWithBackend(
+    token: string | null,
+    user?: BridgeSessionUser | null
+  ): Promise<string | null> {
+    if (!token || !user) {
+      setMobileAuthToken(null);
+      activeRole = 'CLIENT';
+      lastSyncedSessionKey = null;
+      return null;
+    }
 
-    const dispatch = (response: Notifications.NotificationResponse | null): void => {
+    activeRole = user.role;
+    if (user.role === 'ADMIN') {
+      setMobileAuthToken(null);
+      lastSyncedSessionKey = null;
+      return null;
+    }
+
+    const sessionKey = `${user.id}:${token}`;
+    setMobileAuthToken(token);
+
+    if (lastSyncedSessionKey === sessionKey) {
+      return null;
+    }
+    lastSyncedSessionKey = sessionKey;
+
+    return this.registerPushToken();
+  },
+
+  async fetchNotifications(): Promise<Notification[]> {
+    const res = await api.get<ApiResponse<Notification[]>>('/api/notifications');
+    return res.data.data || [];
+  },
+
+  async markAsRead(id: string): Promise<void> {
+    await api.patch(`/api/notifications/${id}/read`);
+  },
+
+  async markAllAsRead(): Promise<void> {
+    await api.patch('/api/notifications/read-all');
+  },
+
+  setupNotificationListeners(onNavigate: (href: string) => void): () => void {
+    let handledColdId: string | null = null;
+
+    const dispatch = (response: Notifications.NotificationResponse | null | undefined) => {
       if (!response) return;
-
       const identifier = response.notification.request.identifier;
-      if (handled.has(identifier)) return;
-      handled.add(identifier);
+      if (handledColdId !== null && identifier === handledColdId) return;
 
-      const href = resolveNotificationHref(response.notification.request.content.data);
-      if (href) onNavigate(href);
+      const data = response.notification.request.content.data;
+      const href = resolveNotificationHref(data, activeRole);
+      if (href) {
+        handledColdId = identifier;
+        onNavigate(href);
+      }
     };
 
-    // Launch tap (process started by the notification).
-    dispatch(Notifications.getLastNotificationResponse());
+    try {
+      const initialResponse = Notifications.getLastNotificationResponse();
+      if (initialResponse) {
+        dispatch(initialResponse);
+      }
+    } catch {
+      // Ignored in environments without getLastNotificationResponse support
+    }
 
-    const responseListener = Notifications.addNotificationResponseReceivedListener(dispatch);
+    const responseListener = Notifications.addNotificationResponseReceivedListener((response) => {
+      dispatch(response);
+    });
 
     return () => {
       responseListener.remove();
-      handled.clear();
     };
-  }
+  },
+};
 
-  public static async fetchNotifications(): Promise<Notification[]> {
-    const res = await api.get<ApiResponse<Notification[]>>('/api/notifications');
-    if (!res.data.success || !res.data.data) {
-      throw new Error(res.data.error?.message || 'Error cargando notificaciones');
-    }
-    return res.data.data;
-  }
-
-  public static async markAsRead(id: string): Promise<void> {
-    await api.patch(`/api/notifications/${id}/read`);
-  }
-
-  public static async markAllAsRead(): Promise<void> {
-    await api.patch('/api/notifications/read-all');
-  }
-}
-
-export default MobileNotificationService;
+export default notificationsService;

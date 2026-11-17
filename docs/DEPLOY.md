@@ -95,10 +95,11 @@ El repositorio incluye [vercel.json](../vercel.json) en la raíz del monorepo:
 
 ## 4. Aplicación Mobile (`mobile/`) — Android / EAS
 
-### 4.1 Variables Públicas
-- `EXPO_PUBLIC_API_URL`: URL pública del backend (`https://api.huellicam.com.ar`).
-- `EXPO_PUBLIC_WS_URL`: URL de Socket.io.
-- `EXPO_PUBLIC_WEB_URL`: URL de la SPA web utilizada por el puente WebView para videoconsultas (`/call/:consultationId`).
+### 4.1 Variables Públicas y Firebase Push
+- `EXPO_PUBLIC_WEB_URL`: URL HTTPS pública de la SPA web cargada por el shell 100% WebView (por ejemplo `https://app.huellicam.com.ar`; en desarrollo USB con `adb reverse` utiliza `http://localhost:5173`).
+- `EXPO_PUBLIC_API_URL`: URL pública del backend (`https://api.huellicam.com.ar`) para registro de tokens Push.
+- `EXPO_PUBLIC_WS_URL`: URL base de Socket.io.
+- **Firebase FCM (Android Push en Play Store):** Colocar `google-services.json` en `mobile/google-services.json` y declarar `"googleServicesFile": "./google-services.json"` bajo `"android"` en `mobile/app.json` antes de compilar con EAS (`production`). Mientras falte ese archivo, el registro de push falla de forma controlada sin interrumpir la app.
 
 ### 4.2 Opciones de Compilación Android
 1. **Google Play Store (`.aab`):**

@@ -6,46 +6,41 @@ import {
   resolveNotificationHref,
 } from '../lib/deepLinks';
 
-/**
- * Exercises the real production mapper in `src/lib/deepLinks.ts`. The previous
- * version of this file re-implemented the routing inside the `it()` bodies and
- * asserted on its own local `jest.fn()`, so it passed no matter what the app did.
- */
-describe('deep link URL -> route mapping', () => {
+describe('deep link URL -> WebView SPA route mapping', () => {
   it('exposes the scheme declared in app.json', () => {
     expect(APP_SCHEME).toBe('huellicam');
   });
 
-  it('routes a call link to the call screen', () => {
-    expect(resolveDeepLinkHref('huellicam://call/cons-100')).toBe('/(app)/call/cons-100');
+  it('routes a call link to /call/:id', () => {
+    expect(resolveDeepLinkHref('huellicam://call/cons-100')).toBe('/call/cons-100');
   });
 
-  it('routes a consultation link to the consultation detail screen', () => {
-    expect(resolveDeepLinkHref('huellicam://consultation/cons-200')).toBe(
-      '/(app)/consultation/cons-200'
+  it('routes consultation links according to active user role (CLIENT vs VET)', () => {
+    expect(resolveDeepLinkHref('huellicam://consultation/cons-200', 'CLIENT')).toBe(
+      '/client/consultations/cons-200'
+    );
+    expect(resolveDeepLinkHref('huellicam://consultation/cons-200', 'VET')).toBe(
+      '/vet/consultations/cons-200'
     );
   });
 
-  it('routes a prescription link to the prescription screen', () => {
-    expect(resolveDeepLinkHref('huellicam://prescriptions/rx-7')).toBe('/(app)/prescriptions/rx-7');
+  it('routes a prescription link to /prescriptions/:id', () => {
+    expect(resolveDeepLinkHref('huellicam://prescriptions/rx-7')).toBe('/prescriptions/rx-7');
   });
 
-  it('uses the param name each screen file actually declares', () => {
-    // consultation/[id].tsx reads `id`, not `consultationId`.
+  it('uses explicit screen targets during parsing', () => {
     expect(parseDeepLink('huellicam://consultation/cons-1')).toEqual({
       screen: 'consultation',
       param: 'id',
       id: 'cons-1',
     });
 
-    // prescriptions/[id].tsx also reads `id`.
     expect(parseDeepLink('huellicam://prescriptions/rx-1')).toEqual({
       screen: 'prescriptions',
       param: 'id',
       id: 'rx-1',
     });
 
-    // call/[consultationId].tsx reads `consultationId`.
     expect(parseDeepLink('huellicam://call/cons-1')).toEqual({
       screen: 'call',
       param: 'consultationId',
@@ -53,33 +48,27 @@ describe('deep link URL -> route mapping', () => {
     });
   });
 
-  it('accepts the three-slash native form emitted by some Android launchers', () => {
-    expect(resolveDeepLinkHref('huellicam:///call/cons-100')).toBe('/(app)/call/cons-100');
+  it('accepts three-slash native URIs emitted by Android launchers', () => {
+    expect(resolveDeepLinkHref('huellicam:///call/cons-100')).toBe('/call/cons-100');
   });
 
-  it('ignores a query string and a fragment', () => {
-    expect(resolveDeepLinkHref('huellicam://call/cons-100?from=push#top')).toBe(
-      '/(app)/call/cons-100'
-    );
+  it('ignores query strings and fragments', () => {
+    expect(resolveDeepLinkHref('huellicam://call/cons-100?from=push#top')).toBe('/call/cons-100');
   });
 
-  it('tolerates surrounding whitespace and a trailing slash', () => {
-    expect(resolveDeepLinkHref('  huellicam://call/cons-100/  ')).toBe('/(app)/call/cons-100');
+  it('tolerates surrounding whitespace and trailing slashes', () => {
+    expect(resolveDeepLinkHref('  huellicam://call/cons-100/  ')).toBe('/call/cons-100');
   });
 
-  it('matches the scheme case-insensitively, as custom schemes are case-insensitive', () => {
-    expect(resolveDeepLinkHref('Huellicam://call/cons-100')).toBe('/(app)/call/cons-100');
+  it('matches scheme case-insensitively', () => {
+    expect(resolveDeepLinkHref('Huellicam://call/cons-100')).toBe('/call/cons-100');
   });
 
-  it('decodes a percent-encoded id', () => {
-    expect(resolveDeepLinkHref('huellicam://call/cons%20100')).toBe('/(app)/call/cons%20100');
-  });
-
-  it('re-encodes a decoded separator so an id cannot inject an extra path segment', () => {
-    // `%2F` decodes to `/` during parsing; the href must not gain a segment.
+  it('decodes and safely re-encodes path segments', () => {
+    expect(resolveDeepLinkHref('huellicam://call/cons%20100')).toBe('/call/cons%20100');
     const href = resolveDeepLinkHref('huellicam://call/a%2Fb');
-    expect(href).toBe('/(app)/call/a%2Fb');
-    expect(href?.split('/')).toHaveLength(4);
+    expect(href).toBe('/call/a%2Fb');
+    expect(href?.split('/')).toHaveLength(3);
   });
 
   it.each([
@@ -99,43 +88,43 @@ describe('deep link URL -> route mapping', () => {
     expect(resolveDeepLinkHref(url)).toBeNull();
   });
 
-  it('builds an href from a target directly', () => {
+  it('maps chat targets cleanly by role', () => {
     expect(
-      buildDeepLinkHref({ screen: 'chat', param: 'consultationId', id: 'cons-9' })
-    ).toBe('/(app)/chat/cons-9');
+      buildDeepLinkHref({ screen: 'chat', param: 'consultationId', id: 'cons-9' }, 'CLIENT')
+    ).toBe('/client/messages');
+    expect(
+      buildDeepLinkHref({ screen: 'chat', param: 'consultationId', id: 'cons-9' }, 'VET')
+    ).toBe('/vet/messages');
   });
 });
 
-describe('push notification payload -> route mapping', () => {
-  it('routes CALL_INCOMING to the call screen', () => {
+describe('push notification payload -> WebView SPA route mapping', () => {
+  it('routes CALL_INCOMING to /call/:id', () => {
     expect(resolveNotificationHref({ type: 'CALL_INCOMING', consultationId: 'cons-100' })).toBe(
-      '/(app)/call/cons-100'
+      '/call/cons-100'
     );
   });
 
-  it('routes MESSAGE_NEW to the consultation detail screen', () => {
-    expect(resolveNotificationHref({ type: 'MESSAGE_NEW', consultationId: 'cons-200' })).toBe(
-      '/(app)/consultation/cons-200'
-    );
+  it('routes MESSAGE_NEW by user role', () => {
+    expect(
+      resolveNotificationHref({ type: 'MESSAGE_NEW', consultationId: 'cons-200' }, 'CLIENT')
+    ).toBe('/client/consultations/cons-200');
+    expect(
+      resolveNotificationHref({ type: 'MESSAGE_NEW', consultationId: 'cons-200' }, 'VET')
+    ).toBe('/vet/consultations/cons-200');
   });
 
-  it('routes PRESCRIPTION_NEW to the prescription screen', () => {
+  it('routes PRESCRIPTION_NEW to /prescriptions/:id', () => {
     expect(resolveNotificationHref({ type: 'PRESCRIPTION_NEW', prescriptionId: 'rx-7' })).toBe(
-      '/(app)/prescriptions/rx-7'
+      '/prescriptions/rx-7'
     );
-  });
-
-  it('accepts the generic `id` key for prescriptions', () => {
     expect(resolveNotificationHref({ type: 'PRESCRIPTION_NEW', id: 'rx-8' })).toBe(
-      '/(app)/prescriptions/rx-8'
+      '/prescriptions/rx-8'
     );
   });
 
-  it('ignores a SYSTEM notification, which addresses no screen', () => {
+  it('ignores SYSTEM notifications and incomplete payloads', () => {
     expect(resolveNotificationHref({ type: 'SYSTEM', consultationId: 'cons-1' })).toBeNull();
-  });
-
-  it('ignores a known type with no usable id', () => {
     expect(resolveNotificationHref({ type: 'CALL_INCOMING' })).toBeNull();
     expect(resolveNotificationHref({ type: 'CALL_INCOMING', consultationId: '  ' })).toBeNull();
   });
@@ -147,7 +136,7 @@ describe('push notification payload -> route mapping', () => {
     ['an array', [{ type: 'CALL_INCOMING' }]],
     ['a non-string type', { type: 42 }],
     ['an object with no type', { consultationId: 'cons-1' }],
-  ])('returns null for a payload that is %s', (_label, data) => {
+  ])('returns null for payload that is %s', (_label, data) => {
     expect(resolveNotificationHref(data)).toBeNull();
   });
 });
