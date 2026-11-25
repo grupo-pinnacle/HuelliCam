@@ -6,6 +6,8 @@ import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import prisma from './lib/prisma';
 import { errorHandler } from './middlewares/errorHandler';
+import { requestIdMiddleware } from './middlewares/requestId';
+import { isAllowedOrigin } from './config/cors';
 import authRoutes from './modules/auth/auth.routes';
 import petRoutes from './modules/pets/pets.routes';
 import consultationRoutes from './modules/consultations/consultations.routes';
@@ -20,6 +22,9 @@ const app: Express = express();
 
 // Trust reverse proxy (Coolify, Nginx, Traefik, Vercel, ALB) for secure cookies and accurate IPs
 app.set('trust proxy', 1);
+
+// Request / Correlation ID tracing must run first (including CORS preflight, 413, and webhooks)
+app.use(requestIdMiddleware);
 
 // Middlewares
 app.use(
@@ -36,12 +41,10 @@ app.use(
   })
 );
 
-import { isAllowedOrigin } from './config/cors';
-
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (isAllowedOrigin(origin)) {
+      if (!origin || isAllowedOrigin(origin)) {
         callback(null, true);
       } else {
         callback(null, false);
@@ -55,14 +58,21 @@ app.use(
       'X-Client-Platform',
       'X-Device-Id',
       'x-device-id',
+      'X-Request-Id',
+      'x-request-id',
+      'X-Correlation-Id',
+      'x-correlation-id',
       'sentry-trace',
       'baggage',
     ],
   })
 );
 
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// Preserve raw bytes for LiveKit HMAC SHA256 webhook verification before express.json()
+app.use('/api/calls/webhook', express.raw({ type: '*/*', limit: '100kb' }));
+
+app.use(express.json({ limit: '100kb' }));
+app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 app.use(cookieParser());
 
 // Rate limiters for sensitive auth endpoints

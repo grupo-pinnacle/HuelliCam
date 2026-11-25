@@ -1,8 +1,11 @@
 import bcrypt from 'bcryptjs';
+import { Role, VetStatus } from '@prisma/client';
 import prisma from '../../lib/prisma';
 import { AppError } from '../../middlewares/errorHandler';
 import { AuthService } from '../auth/auth.service';
 import { ChangePasswordDTO, UpdateProfileDTO } from './users.schemas';
+import { io } from '../../realtime/socket.server';
+import { presenceService } from '../../realtime/presence.service';
 
 const userSelectFields = {
   id: true,
@@ -48,11 +51,41 @@ export class UsersService {
       }
     }
 
-    return prisma.user.update({
+    const updated = await prisma.user.update({
       where: { id: userId },
       data: updateData,
       select: userSelectFields,
     });
+
+    if (typeof data.isOnline === 'boolean') {
+      const isOnlineValue = data.isOnline;
+      const lastSeenIso = (updated.lastSeen ?? new Date()).toISOString();
+
+      try {
+        await presenceService.setManualVetAvailability({
+          userId,
+          role: updated.role,
+          vetStatus: updated.vetStatus,
+          isOnline: isOnlineValue,
+        });
+      } catch {
+        // Non-blocking presence sync when Redis is temporarily unavailable
+      }
+
+      try {
+        if (updated.role === Role.VET && updated.vetStatus === VetStatus.APPROVED) {
+          io?.to('role:vets').emit('vet:presence', {
+            vetId: updated.id,
+            isOnline: isOnlineValue,
+            lastSeen: lastSeenIso,
+          });
+        }
+      } catch {
+        // Non-blocking realtime notification
+      }
+    }
+
+    return updated;
   }
 
   public async changePassword(userId: string, data: ChangePasswordDTO) {

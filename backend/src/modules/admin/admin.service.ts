@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import prisma from '../../lib/prisma';
 import { AppError } from '../../middlewares/errorHandler';
 import { io } from '../../realtime/socket.server';
+import { presenceService } from '../../realtime/presence.service';
 import {
   RejectVetDTO,
   AdminCreateUserDTO,
@@ -35,12 +36,27 @@ const userSelectFields = {
 };
 
 export class AdminService {
+  private disconnectUserSocketsAfterFlush(userId: string): void {
+    if (!io) return;
+    const timer = setTimeout(() => {
+      try {
+        io?.in(`user:${userId}`).disconnectSockets(true);
+      } catch {
+        // Ignore socket teardown errors
+      }
+    }, 25);
+    timer.unref();
+  }
+
   public async getStats() {
+    const useDistributedPresence = presenceService.isDistributedActive();
     const [pendingVets, approvedVets, rejectedVets, onlineVets] = await Promise.all([
       prisma.user.count({ where: { role: Role.VET, vetStatus: VetStatus.PENDING, deletedAt: null } }),
       prisma.user.count({ where: { role: Role.VET, vetStatus: VetStatus.APPROVED, deletedAt: null } }),
       prisma.user.count({ where: { role: Role.VET, vetStatus: VetStatus.REJECTED, deletedAt: null } }),
-      prisma.user.count({ where: { role: Role.VET, vetStatus: VetStatus.APPROVED, isOnline: true, deletedAt: null } }),
+      useDistributedPresence
+        ? presenceService.getOnlineVetsCount()
+        : prisma.user.count({ where: { role: Role.VET, vetStatus: VetStatus.APPROVED, isOnline: true, deletedAt: null } }),
     ]);
 
     const totalDecided = approvedVets + rejectedVets;
@@ -150,10 +166,14 @@ export class AdminService {
       throw new AppError('Veterinario no encontrado', 404, 'VET_NOT_FOUND');
     }
 
-    return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const updatedVet = await tx.user.update({
+    const updatedVet = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const updated = await tx.user.update({
         where: { id: vetId },
-        data: { vetStatus: VetStatus.REJECTED },
+        data: {
+          vetStatus: VetStatus.REJECTED,
+          isOnline: false,
+          tokenVersion: { increment: 1 },
+        },
         select: userSelectFields,
       });
 
@@ -166,8 +186,40 @@ export class AdminService {
         },
       });
 
-      return updatedVet;
+      return updated;
     });
+
+    if (vet.vetStatus === VetStatus.APPROVED) {
+      await presenceService.clearUserPresence(vetId).catch(() => {});
+      if (io) {
+        try {
+          if (io.sockets?.sockets) {
+            for (const s of io.sockets.sockets.values()) {
+              if (s.data?.user?.id === vetId) {
+                s.data.user.vetStatus = VetStatus.REJECTED;
+              }
+            }
+          }
+          io.in(`user:${vetId}`).socketsLeave('role:vets');
+          io.to('role:vets').emit('vet:presence', {
+            vetId,
+            isOnline: false,
+            lastSeen: new Date().toISOString(),
+          });
+          io.to(`user:${vetId}`).emit('auth:session_terminated', {
+            reason: 'VET_REJECTED',
+            message:
+              dto?.reason ||
+              'Tu perfil veterinario fue rechazado por un administrador.',
+          });
+          this.disconnectUserSocketsAfterFlush(vetId);
+        } catch {
+          // Non-blocking realtime notification
+        }
+      }
+    }
+
+    return updatedVet;
   }
 
   // ==========================================
@@ -193,7 +245,7 @@ export class AdminService {
       ];
     }
 
-    return prisma.user.findMany({
+    const users = await prisma.user.findMany({
       where,
       select: {
         ...userSelectFields,
@@ -207,6 +259,24 @@ export class AdminService {
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    if (presenceService.isDistributedActive() && users.length > 0) {
+      try {
+        const presenceMap = await presenceService.getUsersPresence(users.map((u) => u.id));
+        return users.map((u) => {
+          const presence = presenceMap.get(u.id);
+          return {
+            ...u,
+            isOnline: presence?.isOnline ?? false,
+            lastSeen: presence?.lastSeen ?? u.lastSeen,
+          };
+        });
+      } catch {
+        return users;
+      }
+    }
+
+    return users;
   }
 
   public async createUser(adminId: string, dto: AdminCreateUserDTO) {
@@ -308,14 +378,28 @@ export class AdminService {
       select: userSelectFields,
     });
 
+    await presenceService.clearUserPresence(userId).catch(() => {});
+
     // Notify user in real-time if connected via Socket.io
     if (io) {
-      io.to(`user:${userId}`).emit('auth:session_terminated', {
-        reason: 'ACCOUNT_BANNED',
-        message:
-          reason ||
-          'Tu cuenta ha sido suspendida permanentemente por un administrador por infracción de términos de servicio.',
-      });
+      try {
+        io.to(`user:${userId}`).emit('auth:session_terminated', {
+          reason: 'ACCOUNT_BANNED',
+          message:
+            reason ||
+            'Tu cuenta ha sido suspendida permanentemente por un administrador por infracción de términos de servicio.',
+        });
+        if (updated.role === Role.VET && updated.vetStatus === VetStatus.APPROVED) {
+          io.to('role:vets').emit('vet:presence', {
+            vetId: userId,
+            isOnline: false,
+            lastSeen: new Date().toISOString(),
+          });
+        }
+        this.disconnectUserSocketsAfterFlush(userId);
+      } catch {
+        // Non-blocking realtime notification
+      }
     }
 
     await prisma.auditLog.create({
@@ -571,7 +655,7 @@ export class AdminService {
       ];
     }
 
-    return prisma.consultation.findMany({
+    const consultations = await prisma.consultation.findMany({
       where,
       include: {
         client: { select: userSelectFields },
@@ -587,6 +671,38 @@ export class AdminService {
       orderBy: { createdAt: 'desc' },
       take: 100,
     });
+
+    if (presenceService.isDistributedActive() && consultations.length > 0) {
+      try {
+        const userIds: string[] = [];
+        for (const c of consultations) {
+          if (c.client?.id) userIds.push(c.client.id);
+          if (c.vet?.id) userIds.push(c.vet.id);
+        }
+        const presenceMap = await presenceService.getUsersPresence(userIds);
+        return consultations.map((c) => ({
+          ...c,
+          client: c.client
+            ? {
+                ...c.client,
+                isOnline: presenceMap.get(c.client.id)?.isOnline ?? false,
+                lastSeen: presenceMap.get(c.client.id)?.lastSeen ?? c.client.lastSeen,
+              }
+            : c.client,
+          vet: c.vet
+            ? {
+                ...c.vet,
+                isOnline: presenceMap.get(c.vet.id)?.isOnline ?? false,
+                lastSeen: presenceMap.get(c.vet.id)?.lastSeen ?? c.vet.lastSeen,
+              }
+            : c.vet,
+        }));
+      } catch {
+        return consultations;
+      }
+    }
+
+    return consultations;
   }
 
   public async getConsultationMessages(consultationId: string) {
@@ -635,16 +751,13 @@ export class AdminService {
       throw new AppError('Usuario no encontrado', 404, 'USER_NOT_FOUND');
     }
 
-    if (dto.suspendAccount) {
-      await prisma.user.update({
-        where: { id: targetUserId },
-        data: {
-          deletedAt: new Date(),
-          isOnline: false,
-          tokenVersion: { increment: 1 },
-        },
-      });
-    }
+    await prisma.user.update({
+      where: { id: targetUserId },
+      data: {
+        tokenVersion: { increment: 1 },
+        ...(dto.suspendAccount ? { deletedAt: new Date(), isOnline: false } : {}),
+      },
+    });
 
     let revokedCount = 0;
     if ((prisma as any).refreshToken?.deleteMany) {
@@ -654,11 +767,25 @@ export class AdminService {
       revokedCount = res?.count ?? 0;
     }
 
+    await presenceService.clearUserPresence(targetUserId).catch(() => {});
+
     if (io) {
-      io.to(`user:${targetUserId}`).emit('auth:session_terminated', {
-        reason: 'SESSION_REVOKED',
-        message: dto.reason,
-      });
+      try {
+        io.to(`user:${targetUserId}`).emit('auth:session_terminated', {
+          reason: 'SESSION_REVOKED',
+          message: dto.reason,
+        });
+        if (user.role === Role.VET && user.vetStatus === VetStatus.APPROVED) {
+          io.to('role:vets').emit('vet:presence', {
+            vetId: targetUserId,
+            isOnline: false,
+            lastSeen: new Date().toISOString(),
+          });
+        }
+        this.disconnectUserSocketsAfterFlush(targetUserId);
+      } catch {
+        // Non-blocking realtime notification
+      }
     }
 
     await prisma.auditLog.create({

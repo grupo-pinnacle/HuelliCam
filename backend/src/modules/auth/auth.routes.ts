@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { AuthController } from './auth.controller';
 import { authenticate } from './auth.middleware';
+import { passwordResetIpLimiter, passwordResetEmailLimiter } from '../../middlewares/rateLimiter';
 
 const router = Router();
 const controller = new AuthController();
@@ -11,9 +12,9 @@ router.post('/refresh', controller.refresh);
 router.post('/logout', authenticate, controller.logout);
 router.get('/me', authenticate, controller.me);
 
-// Password recovery routes
-router.post('/forgot-password', controller.forgotPassword);
-router.post('/verify-reset-code', controller.verifyResetCode);
-router.post('/reset-password', controller.resetPassword);
+// Password recovery routes (hardened with IP & Email rate limiting)
+router.post('/forgot-password', passwordResetIpLimiter, passwordResetEmailLimiter, controller.forgotPassword);
+router.post('/verify-reset-code', passwordResetIpLimiter, passwordResetEmailLimiter, controller.verifyResetCode);
+router.post('/reset-password', passwordResetIpLimiter, passwordResetEmailLimiter, controller.resetPassword);
 
 export default router;

@@ -5,6 +5,8 @@ import { AppError } from '../../middlewares/errorHandler';
 import { emailService } from '../../services/email.service';
 
 export class PasswordResetService {
+  private failedAttemptsMap = new Map<string, number>();
+
   /**
    * Genera un código de 6 dígitos seguro, lo guarda hasheado y envía el correo con Resend.
    */
@@ -20,6 +22,19 @@ export class PasswordResetService {
       return true;
     }
 
+    // Rate limiting: máximo 5 solicitudes por 15 minutos por correo
+    const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000);
+    const count = await prisma.passwordResetToken.count({
+      where: { email: normalizedEmail, createdAt: { gte: fifteenMinAgo } },
+    });
+    if (count >= 5) {
+      throw new AppError(
+        'Demasiados intentos de recuperación de contraseña para este correo. Intente nuevamente en 15 minutos.',
+        429,
+        'TOO_MANY_REQUESTS'
+      );
+    }
+
     // Invalida tokens previos pendientes para este email
     await prisma.passwordResetToken.updateMany({
       where: { email: normalizedEmail, usedAt: null },
@@ -29,7 +44,7 @@ export class PasswordResetService {
     // Generar código numérico criptográfico de 6 dígitos
     const code = crypto.randomInt(100000, 999999).toString();
     const codeHash = await bcrypt.hash(code, 10);
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutos
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutos (TTL <= 10 min)
 
     await prisma.passwordResetToken.create({
       data: {
@@ -46,6 +61,7 @@ export class PasswordResetService {
 
   /**
    * Valida el código de 6 dígitos ingresado por el usuario.
+   * Invalida el token al 3er intento fallido.
    */
   public async verifyCode(emailInput: string, codeInput: string): Promise<boolean> {
     const email = String(emailInput).toLowerCase().trim();
@@ -66,9 +82,26 @@ export class PasswordResetService {
 
     const isMatch = await bcrypt.compare(code, activeToken.codeHash);
     if (!isMatch) {
+      const currentAttempts = (this.failedAttemptsMap.get(activeToken.id) || 0) + 1;
+      this.failedAttemptsMap.set(activeToken.id, currentAttempts);
+
+      if (currentAttempts >= 3) {
+        this.failedAttemptsMap.delete(activeToken.id);
+        await prisma.passwordResetToken.updateMany({
+          where: { id: activeToken.id, usedAt: null },
+          data: { usedAt: new Date() },
+        });
+        throw new AppError(
+          'Has superado el número máximo de intentos. El código ha sido invalidado.',
+          400,
+          'MAX_ATTEMPTS_EXCEEDED'
+        );
+      }
+
       throw new AppError('El código ingresado es incorrecto', 400, 'INVALID_RESET_CODE');
     }
 
+    this.failedAttemptsMap.delete(activeToken.id);
     return true;
   }
 

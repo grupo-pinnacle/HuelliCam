@@ -182,17 +182,11 @@ export default function WebViewShellScreen() {
   }, [navigateInsideWebView]);
 
   const ensureCallMediaPermissions = useCallback(async () => {
-    const needsCam = !cameraPermission?.granted;
-    const needsMic = !micPermission?.granted;
-    if (!needsCam && !needsMic) return;
-
     await Promise.all([
-      needsCam ? requestCameraPermission() : Promise.resolve(null),
-      needsMic ? requestMicPermission() : Promise.resolve(null),
+      requestCameraPermission(),
+      requestMicPermission(),
     ]);
   }, [
-    cameraPermission?.granted,
-    micPermission?.granted,
     requestCameraPermission,
     requestMicPermission,
   ]);

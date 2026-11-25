@@ -1,20 +1,17 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { io, Socket } from 'socket.io-client';
-import api, { getAccessToken } from '../services/api';
-import { getWsUrl } from '../lib/ws';
+import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { useSocket } from '../context/SocketContext';
 import CallRoom from '../components/call/CallRoom';
 import { ReviewModal } from '../components/ui/ReviewModal';
 import { PrescriptionModal } from '../components/ui/PrescriptionModal';
 import { Message, ApiResponse, Consultation } from '../types';
-import { Stethoscope, CheckCircle2, Search, Paperclip, Loader2, X, FileText, CheckCircle, ShieldCheck, ClipboardList, MessageSquare, Video } from 'lucide-react';
+import { Stethoscope, CheckCircle2, Search, Paperclip, Loader2, X, FileText, CheckCircle, ClipboardList, MessageSquare, Video } from 'lucide-react';
 import VetPatientProfile from '../components/dashboard/VetPatientProfile';
 import { HamsterMascot } from '../components/ui/HamsterMascot';
 import { parseConsultationNotes } from '../lib/consultationNotes';
 import { postMobileBridgeMessage } from '../lib/mobileBridge';
-
-const POLLING_INTERVAL_MS = 5000;
 
 // ------------------------------------------------------------
 // State machine for the consultation lifecycle:
@@ -116,6 +113,9 @@ export const ConsultationRoom: React.FC = () => {
   const { id: consultationId } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { socket, isConnected, joinConsultation, leaveConsultation, emitEvent } = useSocket();
+  const roomActionsRef = useRef({ joinConsultation, leaveConsultation });
+  roomActionsRef.current = { joinConsultation, leaveConsultation };
 
   // --- State machine ---
   const [phase, setPhase] = useState<RoomPhase>('loading');
@@ -136,16 +136,41 @@ export const ConsultationRoom: React.FC = () => {
   // --- LiveKit credentials (only populated when phase === 'active') ---
   const [livekitToken, setLivekitToken] = useState<string | null>(null);
   const [livekitWsUrl, setLivekitWsUrl] = useState<string | undefined>(undefined);
+  const activeConsultationIdRef = useRef<string | undefined>(consultationId);
+  const consultationEpochRef = useRef<number>(0);
+  if (activeConsultationIdRef.current !== consultationId) {
+    activeConsultationIdRef.current = consultationId;
+    consultationEpochRef.current += 1;
+  }
+  const isMountedRef = useRef<boolean>(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+  const isStaleTarget = useCallback(
+    (targetId: string | undefined, targetEpoch: number): boolean =>
+      !isMountedRef.current ||
+      activeConsultationIdRef.current !== targetId ||
+      consultationEpochRef.current !== targetEpoch,
+    []
+  );
+  const phaseRef = useRef<RoomPhase>(phase);
+  phaseRef.current = phase;
+  const isTerminalPhase = () =>
+    phaseRef.current === 'completed' || phaseRef.current === 'cancelled';
+  const livekitTokenRef = useRef<string | null>(livekitToken);
+  livekitTokenRef.current = livekitToken;
+  const tokenFetchPromiseRef = useRef<Promise<void> | null>(null);
 
   // --- Live Chat state ---
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState<string>('');
-  const [socket, setSocket] = useState<Socket | null>(null);
   const [uploadingPhoto, setUploadingPhoto] = useState<boolean>(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [zoomImage, setZoomImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ----------------------------------------------------------------
   // Helper: fetch consultation status and drive the state machine
@@ -167,35 +192,80 @@ export const ConsultationRoom: React.FC = () => {
   // Helper: fetch LiveKit token (only call when status === ACTIVE)
   // ----------------------------------------------------------------
   const fetchToken = useCallback(async (): Promise<void> => {
-    if (!consultationId) return;
-    try {
-      const res = await api.post<ApiResponse<{ token: string; wsUrl: string }>>(
-        `/api/calls/${consultationId}/token`
-      );
-      if (res.data.success && res.data.data?.token) {
-        setLivekitToken(res.data.data.token);
-        if (res.data.data.wsUrl) {
-          setLivekitWsUrl(res.data.data.wsUrl);
-        }
-        setPhase('active');
-      } else {
-        throw new Error(res.data.error?.message || 'No se pudo obtener el token WebRTC');
-      }
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Error conectando con la videollamada');
-      setPhase('error');
+    const targetId = consultationId;
+    const targetEpoch = consultationEpochRef.current;
+    if (!targetId || isStaleTarget(targetId, targetEpoch)) return;
+    if (isTerminalPhase()) return;
+    if (livekitTokenRef.current) {
+      phaseRef.current = 'active';
+      setPhase('active');
+      return;
     }
-  }, [consultationId]);
+    if (tokenFetchPromiseRef.current) {
+      return tokenFetchPromiseRef.current;
+    }
+    let task: Promise<void> | null = null;
+    task = (async () => {
+      try {
+        const res = await api.post<ApiResponse<{ token: string; wsUrl: string }>>(
+          `/api/calls/${targetId}/token`
+        );
+        if (isStaleTarget(targetId, targetEpoch) || isTerminalPhase()) return;
+        if (res.data.success && res.data.data?.token) {
+          livekitTokenRef.current = res.data.data.token;
+          setLivekitToken(res.data.data.token);
+          if (res.data.data.wsUrl) {
+            setLivekitWsUrl(res.data.data.wsUrl);
+          }
+          phaseRef.current = 'active';
+          setPhase('active');
+        } else {
+          throw new Error(res.data.error?.message || 'No se pudo obtener el token WebRTC');
+        }
+      } catch (err: unknown) {
+        if (isStaleTarget(targetId, targetEpoch) || isTerminalPhase()) return;
+        const message =
+          err instanceof Error ? err.message : 'Error conectando con la videollamada';
+        setErrorMsg(message || 'Error conectando con la videollamada');
+        phaseRef.current = 'error';
+        setPhase('error');
+      } finally {
+        if (tokenFetchPromiseRef.current === task && !isStaleTarget(targetId, targetEpoch)) {
+          tokenFetchPromiseRef.current = null;
+        }
+      }
+    })();
+    tokenFetchPromiseRef.current = task;
+    return task;
+  }, [consultationId, isStaleTarget]);
 
   // ----------------------------------------------------------------
-  // Stop polling helper
+  // Helper: sync consultation status cleanly on socket events/reconnect
   // ----------------------------------------------------------------
-  const stopPolling = useCallback(() => {
-    if (pollingRef.current) {
-      clearInterval(pollingRef.current);
-      pollingRef.current = null;
+  const syncConsultation = useCallback(async (): Promise<void> => {
+    const targetId = consultationId;
+    const targetEpoch = consultationEpochRef.current;
+    if (!targetId || isStaleTarget(targetId, targetEpoch) || isTerminalPhase()) return;
+    const updated = await fetchConsultation();
+    if (!updated) return;
+    if (isStaleTarget(targetId, targetEpoch) || isTerminalPhase()) return;
+    setConsultation(updated);
+    if (updated.status === 'ACTIVE') {
+      if (isTerminalPhase()) return;
+      if (!livekitTokenRef.current) {
+        await fetchToken();
+      } else {
+        phaseRef.current = 'active';
+        setPhase('active');
+      }
+    } else if (updated.status === 'COMPLETED') {
+      phaseRef.current = 'completed';
+      setPhase('completed');
+    } else if (updated.status === 'CANCELLED') {
+      phaseRef.current = 'cancelled';
+      setPhase('cancelled');
     }
-  }, []);
+  }, [consultationId, fetchConsultation, fetchToken, isStaleTarget]);
 
   // ----------------------------------------------------------------
   // Wake Lock API: prevent screen timeout during waiting or active call
@@ -232,19 +302,47 @@ export const ConsultationRoom: React.FC = () => {
   }, [phase]);
 
   // ----------------------------------------------------------------
-  // Main state machine: on mount, fetch consultation and react
+  // Main state machine: on mount or consultationId change, reset & fetch
   // ----------------------------------------------------------------
   useEffect(() => {
     if (!consultationId) return;
 
     let isMounted = true;
+    const targetId = consultationId;
+    const targetEpoch = consultationEpochRef.current;
+
+    phaseRef.current = 'loading';
+    setPhase('loading');
+    livekitTokenRef.current = null;
+    setLivekitToken(null);
+    setLivekitWsUrl(undefined);
+    tokenFetchPromiseRef.current = null;
+    setConsultation(null);
+    setMessages([]);
+    setErrorMsg(null);
+    setShowReviewModal(true);
+    setReviewSubmitted(false);
+    setShowPrescriptionModal(false);
+    setShowCompleteModal(false);
+    setShowPatientProfile(false);
+    setDiagnosisNotes('');
+    setIsCompleting(false);
+    setCompleteError(null);
+    setInputMessage('');
+    setUploadingPhoto(false);
+    setChatError(null);
+    setZoomImage(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
 
     const bootstrap = async () => {
       const data = await fetchConsultation();
-      if (!isMounted) return;
+      if (!isMounted || isStaleTarget(targetId, targetEpoch)) return;
 
       if (!data) {
         setErrorMsg('No se pudo cargar la información de la consulta.');
+        phaseRef.current = 'error';
         setPhase('error');
         return;
       }
@@ -253,24 +351,8 @@ export const ConsultationRoom: React.FC = () => {
 
       switch (data.status) {
         case 'WAITING':
+          phaseRef.current = 'waiting';
           setPhase('waiting');
-          // Poll every 5s until status changes while waiting for vet assignment
-          pollingRef.current = setInterval(async () => {
-            const polled = await fetchConsultation();
-            if (!isMounted || !polled) return;
-            setConsultation(polled);
-
-            if (polled.status === 'ACTIVE') {
-              stopPolling();
-              await fetchToken();
-            } else if (polled.status === 'CANCELLED') {
-              stopPolling();
-              if (isMounted) setPhase('cancelled');
-            } else if (polled.status === 'COMPLETED') {
-              stopPolling();
-              if (isMounted) setPhase('completed');
-            }
-          }, POLLING_INTERVAL_MS);
           break;
 
         case 'ACTIVE':
@@ -278,26 +360,28 @@ export const ConsultationRoom: React.FC = () => {
           break;
 
         case 'COMPLETED':
+          phaseRef.current = 'completed';
           setPhase('completed');
           break;
 
         case 'CANCELLED':
+          phaseRef.current = 'cancelled';
           setPhase('cancelled');
           break;
 
         default:
           setErrorMsg(`Estado de consulta desconocido: ${data.status}`);
+          phaseRef.current = 'error';
           setPhase('error');
       }
     };
 
-    bootstrap();
+    void bootstrap();
 
     return () => {
       isMounted = false;
-      stopPolling();
     };
-  }, [consultationId, fetchConsultation, fetchToken, stopPolling]);
+  }, [consultationId, fetchConsultation, fetchToken, isStaleTarget]);
 
   // ----------------------------------------------------------------
   // Close Lightbox on Escape key
@@ -363,89 +447,177 @@ export const ConsultationRoom: React.FC = () => {
   }, [phase]);
 
   // ----------------------------------------------------------------
-  // Connect Socket.io for Realtime Chat — only while ACTIVE
+  // Join consultation room & react to lifecycle events without polling
+  // ----------------------------------------------------------------
+  const shouldJoinRoom = Boolean(consultationId) && (phase === 'waiting' || phase === 'active');
+
+  useEffect(() => {
+    if (!consultationId || !shouldJoinRoom) return;
+    roomActionsRef.current.joinConsultation(consultationId);
+    return () => {
+      roomActionsRef.current.leaveConsultation(consultationId);
+    };
+  }, [consultationId, shouldJoinRoom]);
+
+  useEffect(() => {
+    if (!socket || !consultationId || !shouldJoinRoom) return;
+    let hadConnected = Boolean(socket.connected);
+
+    const matchesConsultation = (payload?: {
+      consultationId?: string;
+      data?: { consultationId?: string };
+      metadata?: { consultationId?: string };
+    }) => {
+      const cid =
+        payload?.consultationId ?? payload?.metadata?.consultationId ?? payload?.data?.consultationId;
+      return Boolean(cid && cid === consultationId);
+    };
+
+    const handleSyncEvent = (payload?: {
+      consultationId?: string;
+      data?: { consultationId?: string };
+      metadata?: { consultationId?: string };
+    }) => {
+      if (!matchesConsultation(payload)) return;
+      void syncConsultation();
+    };
+
+    const handleCancelled = (payload?: {
+      consultationId?: string;
+      data?: { consultationId?: string };
+      metadata?: { consultationId?: string };
+    }) => {
+      if (!matchesConsultation(payload)) return;
+      phaseRef.current = 'cancelled';
+      setPhase('cancelled');
+    };
+
+    const handleCallEnded = (payload?: {
+      consultationId?: string;
+      data?: { consultationId?: string };
+      metadata?: { consultationId?: string };
+    }) => {
+      if (!matchesConsultation(payload)) return;
+      phaseRef.current = 'completed';
+      setPhase('completed');
+    };
+
+    const handleConnect = () => {
+      const wasAlreadyConnected = hadConnected;
+      hadConnected = true;
+      if (wasAlreadyConnected || phaseRef.current === 'waiting') {
+        void syncConsultation();
+      }
+    };
+
+    socket.on?.('consultation:assigned', handleSyncEvent);
+    socket.on?.('consultation:critical_resume', handleSyncEvent);
+    socket.on?.('notification:new', handleSyncEvent);
+    socket.on?.('consultation:cancelled', handleCancelled);
+    socket.on?.('call:ended', handleCallEnded);
+    socket.on?.('connect', handleConnect);
+
+    return () => {
+      socket.off?.('consultation:assigned', handleSyncEvent);
+      socket.off?.('consultation:critical_resume', handleSyncEvent);
+      socket.off?.('notification:new', handleSyncEvent);
+      socket.off?.('consultation:cancelled', handleCancelled);
+      socket.off?.('call:ended', handleCallEnded);
+      socket.off?.('connect', handleConnect);
+    };
+  }, [socket, consultationId, shouldJoinRoom, syncConsultation]);
+
+  // ----------------------------------------------------------------
+  // Realtime Chat history & message:new listener — only while ACTIVE
   // ----------------------------------------------------------------
   useEffect(() => {
     if (phase !== 'active' || !consultationId) return;
+    let cancelled = false;
 
-    const wsUrl = getWsUrl();
-    const token = getAccessToken();
-    const newSocket = io(wsUrl, {
-      withCredentials: true,
-      transports: ['polling', 'websocket'],
-      reconnection: true,
-      auth: {
-        token: token ? `Bearer ${token}` : undefined,
-      },
-    });
-
-    setSocket(newSocket);
-
-    newSocket.on('connect', () => {
-      newSocket.emit('join:consultation', { consultationId });
-    });
-
-    newSocket.on('message:new', (msg: Message) => {
-      setMessages((prev) => [...prev, msg]);
-    });
-
-    // ⚠️ Backend does NOT emit 'consultation:completed' (not in socket.types.ts).
-    // Poll HTTP every 5s to detect COMPLETED / CANCELLED from the ACTIVE phase.
-    pollingRef.current = setInterval(async () => {
-      const polled = await fetchConsultation();
-      if (!polled) return;
-      if (polled.status === 'COMPLETED') {
-        stopPolling();
-        setPhase('completed');
-      } else if (polled.status === 'CANCELLED') {
-        stopPolling();
-        setPhase('cancelled');
-      }
-    }, POLLING_INTERVAL_MS);
-
-    // Load initial message history
     api.get<ApiResponse<Message[]>>(`/api/consultations/${consultationId}/messages`)
       .then((res) => {
-        if (res.data.success && res.data.data) {
+        if (!cancelled && res.data.success && res.data.data) {
           setMessages(res.data.data);
         }
       })
       .catch((err) => console.warn('Error loading chat history:', err));
 
-    return () => {
-      newSocket.disconnect();
+    const handleMessageNew = (msg: Message) => {
+      if (msg.consultationId && msg.consultationId !== consultationId) return;
+      setMessages((prev) => {
+        if (prev.some((m) => (m.id && m.id === msg.id) || (m.clientMsgId && m.clientMsgId === msg.clientMsgId))) {
+          return prev;
+        }
+        return [...prev, msg];
+      });
     };
-  }, [phase, consultationId, stopPolling]);
+
+    socket?.on?.('message:new', handleMessageNew);
+
+    return () => {
+      cancelled = true;
+      socket?.off?.('message:new', handleMessageNew);
+    };
+  }, [phase, consultationId, socket]);
 
   // ----------------------------------------------------------------
   // Message sending
   // ----------------------------------------------------------------
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputMessage.trim() || !socket || !consultationId) return;
+    const content = inputMessage.trim();
+    const targetId = consultationId;
+    const targetEpoch = consultationEpochRef.current;
+    if (!content || !targetId) return;
 
     const clientMsgId = `web-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
-    socket.emit(
-      'message:send',
-      {
-        consultationId,
-        content: inputMessage.trim(),
-        clientMsgId,
-      },
-      (res: any) => {
-        if (res && res.success && res.data) {
-          // Message processed cleanly
+    if (socket && isConnected) {
+      emitEvent<ApiResponse<Message>>(
+        'message:send',
+        {
+          consultationId: targetId,
+          content,
+          clientMsgId,
+        },
+        (res) => {
+          if (isStaleTarget(targetId, targetEpoch)) return;
+          if (res?.success && res.data) {
+            const created = res.data;
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === created.id || m.clientMsgId === clientMsgId)) return prev;
+              return [...prev, created];
+            });
+          }
         }
-      }
-    );
+      );
+    } else {
+      void api
+        .post<ApiResponse<Message>>(`/api/consultations/${targetId}/messages`, {
+          content,
+          clientMsgId,
+        })
+        .then((res) => {
+          if (isStaleTarget(targetId, targetEpoch)) return;
+          if (res.data.success && res.data.data) {
+            const created = res.data.data;
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === created.id || m.clientMsgId === clientMsgId)) return prev;
+              return [...prev, created];
+            });
+          }
+        })
+        .catch(() => {});
+    }
 
     setInputMessage('');
   };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !consultationId || !socket) return;
+    const targetId = consultationId;
+    const targetEpoch = consultationEpochRef.current;
+    if (!file || !targetId) return;
     setChatError(null);
 
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
@@ -459,34 +631,55 @@ export const ConsultationRoom: React.FC = () => {
 
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('consultationId', consultationId);
+    formData.append('consultationId', targetId);
 
     try {
       setUploadingPhoto(true);
       const res = await api.post<ApiResponse<{ id: string; fileName: string }>>('/api/media', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
+      if (isStaleTarget(targetId, targetEpoch)) return;
 
       if (res.data.success && res.data.data?.id) {
         const mediaId = res.data.data.id;
         const attachmentUrl = `/api/media/${mediaId}`;
         const clientMsgId = `web-media-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+        const content = inputMessage.trim() || `[Foto: ${file.name}]`;
 
-        socket.emit('message:send', {
-          consultationId,
-          content: inputMessage.trim() || `[Foto: ${file.name}]`,
-          attachmentUrl,
-          clientMsgId,
-        });
+        if (socket && isConnected) {
+          emitEvent('message:send', {
+            consultationId: targetId,
+            content,
+            attachmentUrl,
+            clientMsgId,
+          });
+        } else {
+          await api.post(`/api/consultations/${targetId}/messages`, {
+            content,
+            attachmentUrl,
+            clientMsgId,
+          });
+          if (isStaleTarget(targetId, targetEpoch)) return;
+        }
         setInputMessage('');
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
+      if (isStaleTarget(targetId, targetEpoch)) return;
       console.error('Error subiendo imagen clínica:', err);
-      setChatError(err.response?.data?.error?.message || 'Error al subir la imagen clínica');
+      const errorMessage =
+        typeof err === 'object' &&
+        err !== null &&
+        'response' in err &&
+        typeof (err as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message === 'string'
+          ? (err as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message
+          : undefined;
+      setChatError(errorMessage || 'Error al subir la imagen clínica');
     } finally {
-      setUploadingPhoto(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+      if (!isStaleTarget(targetId, targetEpoch)) {
+        setUploadingPhoto(false);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
       }
     }
   };
@@ -496,14 +689,16 @@ export const ConsultationRoom: React.FC = () => {
   // so the consultation doesn't stay stuck in WAITING/ACTIVE in the DB.
   // ----------------------------------------------------------------
   const handleCancel = async () => {
-    stopPolling();
-    if (consultationId) {
+    const targetId = consultationId;
+    const targetEpoch = consultationEpochRef.current;
+    if (targetId) {
       try {
-        await api.patch(`/api/consultations/${consultationId}/cancel`);
+        await api.patch(`/api/consultations/${targetId}/cancel`);
       } catch {
         // Best-effort — navigate back even if cancel fails
       }
     }
+    if (isStaleTarget(targetId, targetEpoch)) return;
     navigate(-1);
   };
 
@@ -512,7 +707,9 @@ export const ConsultationRoom: React.FC = () => {
   // ----------------------------------------------------------------
   const handleCompleteConsultation = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!consultationId) return;
+    const targetId = consultationId;
+    const targetEpoch = consultationEpochRef.current;
+    if (!targetId) return;
     setCompleteError(null);
     if (!diagnosisNotes.trim() || diagnosisNotes.trim().length < 2) {
       setCompleteError('Por favor ingrese la evolución o diagnóstico clínico (mínimo 2 caracteres).');
@@ -521,17 +718,22 @@ export const ConsultationRoom: React.FC = () => {
 
     try {
       setIsCompleting(true);
-      const res = await api.patch<ApiResponse<Consultation>>(`/api/consultations/${consultationId}/complete`, {
+      const res = await api.patch<ApiResponse<Consultation>>(`/api/consultations/${targetId}/complete`, {
         diagnosisNotes: diagnosisNotes.trim(),
       });
+      if (isStaleTarget(targetId, targetEpoch)) return;
       if (res.data.success) {
         setShowCompleteModal(false);
+        phaseRef.current = 'completed';
         setPhase('completed');
       }
     } catch (err: any) {
+      if (isStaleTarget(targetId, targetEpoch)) return;
       setCompleteError(err.response?.data?.error?.message || 'Error al completar la consulta');
     } finally {
-      setIsCompleting(false);
+      if (!isStaleTarget(targetId, targetEpoch)) {
+        setIsCompleting(false);
+      }
     }
   };
 
@@ -781,6 +983,7 @@ export const ConsultationRoom: React.FC = () => {
 
         <div className="flex-1 w-full h-full pt-14">
           <CallRoom
+            key={consultationId}
             token={livekitToken!}
             serverUrl={livekitWsUrl}
             onDisconnected={() => {

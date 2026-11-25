@@ -1,4 +1,4 @@
-import { ensureDatabaseSchema } from '../server';
+import * as serverModule from '../server';
 import prisma from '../lib/prisma';
 
 jest.mock('../lib/prisma', () => ({
@@ -14,27 +14,10 @@ jest.mock('../realtime/socket.server', () => ({
   }),
 }));
 
-describe('Self-Healing Database Schema Synchronization', () => {
-  const originalEnv = process.env.NODE_ENV;
-
-  afterEach(() => {
-    process.env.NODE_ENV = originalEnv;
-  });
-
-  it('should skip schema sync during unit tests (NODE_ENV=test)', async () => {
-    process.env.NODE_ENV = 'test';
-    await ensureDatabaseSchema();
+describe('Database Schema Governance & Startup Stability', () => {
+  it('should not expose ensureDatabaseSchema or execute dynamic runtime DDL', () => {
+    expect((serverModule as any).ensureDatabaseSchema).toBeUndefined();
     expect(prisma.$executeRawUnsafe).not.toHaveBeenCalled();
   });
-
-  it('should execute idempotent DDL statements in non-test runtime', async () => {
-    process.env.NODE_ENV = 'development';
-    await ensureDatabaseSchema();
-    expect(prisma.$executeRawUnsafe).toHaveBeenCalledWith(
-      expect.stringContaining('ALTER TABLE consultations')
-    );
-    expect(prisma.$executeRawUnsafe).toHaveBeenCalledWith(
-      expect.stringContaining('CREATE TABLE IF NOT EXISTS consultation_audit_log')
-    );
-  });
 });
+

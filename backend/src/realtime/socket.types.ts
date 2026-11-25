@@ -1,4 +1,4 @@
-import { Role } from '@prisma/client';
+import { Role, VetStatus } from '@prisma/client';
 
 export interface SocketUser {
   id: string;
@@ -7,6 +7,7 @@ export interface SocketUser {
   lastName: string;
   role: Role;
   tokenVersion: number;
+  vetStatus?: VetStatus | null;
 }
 
 export interface ClientToServerEvents {
@@ -24,15 +25,38 @@ export interface ClientToServerEvents {
   'call:rejected': (data: { consultationId: string; reason?: string }) => void;
   'call:ended': (data: { consultationId: string }) => void;
   'leave:consultation': (data: { consultationId: string }) => void;
+  'presence:heartbeat': (callback?: (ack: { ok: boolean; expiresAt?: number }) => void) => void;
 }
 
 export interface ServerToClientEvents {
   'message:new': (message: any) => void;
   'call:incoming': (data: { consultationId: string; callerName: string; roomName: string }) => void;
+  'call:answered': (data: { consultationId: string }) => void;
+  'call:rejected': (data: { consultationId: string; reason?: string }) => void;
   'call:ended': (data: { consultationId: string; endedBy?: string }) => void;
-  'prescription:new': (prescription: any) => void;
+  'prescription:new': (data: {
+    consultationId: string;
+    prescriptionId: string;
+    petId: string;
+  }) => void;
   'notification:new': (notification: any) => void;
   'consultation:new': (consultation: any) => void;
+  'consultation:assigned': (data: {
+    consultationId: string;
+    vetId: string | null;
+    clientId: string;
+    status: string;
+  }) => void;
+  'consultation:cancelled': (data: {
+    consultationId: string;
+    cancelledBy: string;
+    status: string;
+  }) => void;
+  'vet:presence': (data: {
+    vetId: string;
+    isOnline: boolean;
+    lastSeen: string | null;
+  }) => void;
   'auth:session_terminated': (data: { reason: string; message: string }) => void;
   'session:invalidated': (data: { reason: string; consultationId?: string }) => void;
   'consultation:critical_resume': (data: {
@@ -49,4 +73,5 @@ export interface InterServerEvents {}
 export interface SocketData {
   user: SocketUser;
   deviceId?: string;
+  correlationId?: string;
 }

@@ -11,7 +11,7 @@ El esquema actual en [schema.prisma](../backend/prisma/schema.prisma) define **4
 ### 1.1 Enums
 - **`Role`:** `CLIENT` | `VET` | `ADMIN`
 - **`VetStatus`:** `PENDING` | `APPROVED` | `REJECTED`
-- **`CallStatus`:** `INITIATED` | `ACTIVE` | `ENDED`
+- **`CallStatus`:** `INITIATED` | `ACTIVE` | `ENDED` | `FAILED`
 - **`ConsultationStatus`:**
   - Flujo principal: `WAITING`, `ACTIVE`, `COMPLETED`, `CANCELLED`
   - Estados de concurrencia y recuperación de sesión: `TRIAGE_CRITICAL_QUEUED`, `CLAIM_PENDING_SYNC`, `LIVEKIT_CONNECTING`, `IN_CALL_ACTIVE`, `AWAITING_EMERGENCY_CALLBACK`, `HANDOFF_IN_PROGRESS`
@@ -25,7 +25,7 @@ El esquema actual en [schema.prisma](../backend/prisma/schema.prisma) define **4
 | `Consultation` | `consultations` | Ciclo clínico de atención, notas de triaje, `diagnosisNotes`, timestamps, y campos de concurrencia (`activeDeviceId`, `transportStatus`, `stateVersion`, `claimedAt`, `livekitRoomSid`). |
 | `ConsultationAuditLog` | `consultation_audit_log` | Trazabilidad granular de transiciones, reclamos, desconexiones y handoff por dispositivo sobre una consulta. |
 | `Message` | `messages` | Mensajes del chat clínico con clave única de idempotencia (`clientMsgId`) y adjunto opcional (`attachmentUrl`). |
-| `Call` | `calls` | Registro de salas de videollamada (`roomName`, `status`, duración). |
+| `Call` | `calls` | Registro de salas de videollamada (`roomName`, `livekitRoomSid`, `status`, `startedAt`, `endedAt`, `durationSeconds`, `participantCount`, `errorCode`, `errorMessage`, `disconnectReason`, `lastEvent`, `metadata`). |
 | `Prescription` | `prescriptions` | Recetas médicas digitales emitidas por el veterinario (`medication`, `dosage`, `frequency`, `durationDays`, `indications`). |
 | `Review` | `reviews` | Calificación única por consulta (`1..5` estrellas) y comentario opcional. |
 | `AuditLog` | `audit_logs` | Auditoría inmutable de acciones administrativas (aprobación/rechazo SENASA, CRUDs, revocación de sesiones, cambio de feature flags y tarifas). |
@@ -99,8 +99,9 @@ Prefijo base de la API: `/api` (más endpoint de salud `GET /health`). Todas las
 
 | Método | Ruta | Descripción | Acceso |
 |---|---|---|---|
-| `POST` | `/api/calls/:consultationId/token` | Genera JWT LiveKit (`identity: user.id` o compuesto por dispositivo, `name: user.firstName`) y `wsUrl`. Requiere estado `ACTIVE`. | Participantes / ADMIN |
-| `POST` | `/api/calls/:consultationId/ring` | Emite `call:incoming` vía Socket.io y envía notificación push al par. | Participantes / ADMIN |
+| `POST` | `/api/calls/webhook` | Webhook firmado con HMAC SHA256 de LiveKit (`room_started`, `participant_joined`, `participant_left`, `participant_connection_aborted`, `room_finished`) que actualiza telemetría en `Call`. | LiveKit Webhook (HMAC) |
+| `POST` | `/api/calls/:consultationId/token` | Genera JWT LiveKit (`identity: user.id` o compuesto por dispositivo, `name: user.firstName`) y `wsUrl` persistiendo `Call` (`INITIATED`). Requiere estado `ACTIVE`. | Participantes / ADMIN |
+| `POST` | `/api/calls/:consultationId/ring` | Emite `call:incoming` vía Socket.io, asegura registro `Call` y envía notificación push al par. | Participantes / ADMIN |
 
 ### 2.7 Archivos Médicos (`/api/media`)
 

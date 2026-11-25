@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, EmptyState, Icon, Modal, PageHeader, Status, Tabs, go } from "../shared";
 import api from "../services/api";
 import { availability, getPatient, todayIndex, weekDays, type AgendaEvent } from "./data";
@@ -94,6 +95,7 @@ export function AvailabilityPage() {
 }
 
 export function AppointmentsPage() {
+  const queryClient = useQueryClient();
   const { events, setEvents, notify, forceEmpty, consults } = useVet();
   const [tab, setTab] = useState("Agenda diaria");
   const [day, setDay] = useState(todayIndex);
@@ -129,6 +131,6 @@ export function AppointmentsPage() {
         <label className="v-select"><span>Hora</span><select value={nt} onChange={(e) => setNt(e.target.value)}>{["18:00", "18:30", "19:00", "19:30", "20:00", "20:30", "21:00", "21:30"].map((t) => <option key={t}>{t}</option>)}</select></label>
       </div>
     </Modal>}
-    {cancel && <Modal title="¿Querés cancelar esta consulta?" text={`La consulta de ${getPatient(cancel.petId).name} cambiará a Cancelada.`} cancel="Volver" confirm="Confirmar cancelación" destructive onClose={() => setCancel(null)} onConfirm={async () => { const consultId = cancel.consultId; if (consultId) { try { await api.patch(`/api/consultations/${consultId}/cancel`, { reason: "Cancelada desde la agenda" }); } catch (err) { console.warn("Backend cancel notice:", err); } } setEvents((l) => l.map((e) => e.id === cancel.id ? { ...e, status: "Cancelada" } : e)); notify("Consulta cancelada."); setCancel(null); }}/>}
+    {cancel && <Modal title="¿Querés cancelar esta consulta?" text={`La consulta de ${getPatient(cancel.petId).name} cambiará a Cancelada.`} cancel="Volver" confirm="Confirmar cancelación" destructive onClose={() => setCancel(null)} onConfirm={async () => { const consultId = cancel.consultId; if (consultId) { try { await api.patch(`/api/consultations/${consultId}/cancel`, { reason: "Cancelada desde la agenda" }); void queryClient.invalidateQueries({ queryKey: ["consultations"] }); } catch (err) { console.warn("Backend cancel notice:", err); } } setEvents((l) => l.map((e) => e.id === cancel.id ? { ...e, status: "Cancelada" } : e)); notify("Consulta cancelada."); setCancel(null); }}/>}
   </>;
 }

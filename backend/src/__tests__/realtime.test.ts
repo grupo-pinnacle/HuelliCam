@@ -5,7 +5,7 @@ import jwt from 'jsonwebtoken';
 import { Prisma } from '@prisma/client';
 import app from '../app';
 import prisma from '../lib/prisma';
-import { initializeSocketServer, io as serverIo } from '../realtime/socket.server';
+import { initializeSocketServer, io as serverIo, whenSocketRedisReady } from '../realtime/socket.server';
 
 jest.mock('../lib/prisma', () => ({
   __esModule: true,
@@ -535,18 +535,106 @@ describe('Realtime & Chat Socket Gateway (TASK-3.1 & TASK-3.2)', () => {
     });
   });
 
+  // VULN-05: Non-approved (PENDING) vets must NOT join role:vets
+  it('should NOT join role:vets room when user is a PENDING VET (VULN-05)', (done) => {
+    const mockPendingVet = {
+      ...mockClient,
+      id: 'vet-uuid-pending-realtime',
+      role: 'VET' as const,
+      vetStatus: 'PENDING' as const,
+    };
+
+    const pendingVetToken = jwt.sign(
+      { userId: mockPendingVet.id, role: mockPendingVet.role, tokenVersion: 1 },
+      JWT_SECRET,
+      { algorithm: 'HS256' }
+    );
+
+    mockPrismaUser.findUnique.mockResolvedValue(mockPendingVet);
+
+    const pendingSocket = Client(`http://localhost:${port}`, {
+      auth: { token: `Bearer ${pendingVetToken}` },
+      transports: ['websocket'],
+    });
+
+    let received = false;
+    pendingSocket.on('consultation:new', () => {
+      received = true;
+    });
+
+    pendingSocket.on('connect', () => {
+      serverIo.to('role:vets').emit('consultation:new', { id: 'cons-leak' } as any);
+
+      setTimeout(() => {
+        expect(received).toBe(false);
+        pendingSocket.disconnect();
+        done();
+      }, 100);
+    });
+  });
+
+  // VULN-09: Socket signaling rate limit
+  it('should enforce rate limit on sensitive signaling events (VULN-09)', (done) => {
+    mockPrismaUser.findUnique.mockResolvedValue(mockClient);
+
+    const socket = Client(`http://localhost:${port}`, {
+      auth: { token: `Bearer ${validToken}` },
+      transports: ['websocket'],
+    });
+
+    socket.on('connect', () => {
+      let responses = 0;
+      let rateLimitHit = false;
+
+      // Emit 25 rapid signaling events (limit is 20 per 10s)
+      for (let i = 0; i < 25; i++) {
+        socket.emit(
+          'message:send',
+          {
+            consultationId: 'cons-123',
+            content: `Flood test message ${i}`,
+            clientMsgId: `msg-${i}`,
+          },
+          (res: any) => {
+            responses++;
+            if (res?.error?.code === 'RATE_LIMIT_EXCEEDED') {
+              rateLimitHit = true;
+            }
+            if (responses === 25) {
+              expect(rateLimitHit).toBe(true);
+              socket.disconnect();
+              done();
+            }
+          }
+        );
+      }
+    });
+  });
+
   // Unit Test del Cerco: Fallback ante ausencia o fallo de Redis
-  it('should gracefully handle Redis connection failure without crashing and operate on in-memory adapter', () => {
+  it('should gracefully handle Redis connection failure without crashing and operate on in-memory adapter', async () => {
     const dummyHttpServer = createServer();
     const prevRedisUrl = process.env.REDIS_URL;
     process.env.REDIS_URL = 'redis://127.0.0.1:63799';
 
-    const testIo = initializeSocketServer(dummyHttpServer);
-    expect(testIo).toBeDefined();
-
-    // Restore environment and real server instance
-    process.env.REDIS_URL = prevRedisUrl;
-    initializeSocketServer(httpServer);
+    let testIo: ReturnType<typeof initializeSocketServer> | undefined;
+    try {
+      testIo = initializeSocketServer(dummyHttpServer);
+      expect(testIo).toBeDefined();
+      await expect(whenSocketRedisReady()).resolves.toBeUndefined();
+    } finally {
+      if (prevRedisUrl === undefined) {
+        delete process.env.REDIS_URL;
+      } else {
+        process.env.REDIS_URL = prevRedisUrl;
+      }
+      testIo?.close();
+      if (dummyHttpServer.listening) {
+        await new Promise<void>((resolve) => dummyHttpServer.close(() => resolve()));
+      }
+      initializeSocketServer(httpServer);
+      await whenSocketRedisReady();
+    }
   });
 });
 

@@ -137,14 +137,21 @@ describe('BUG-07: Hardened React Native WebView Configuration', () => {
     expect(HARDENED_WEBVIEW_CONFIG.thirdPartyCookiesEnabled).toBe(true);
   });
 
-  it('enforces seamless inline WebRTC audio/video playback and capture', () => {
+  it('enforces seamless inline WebRTC audio/video playback and prompts user consent', () => {
     expect(HARDENED_WEBVIEW_CONFIG.allowsInlineMediaPlayback).toBe(true);
     expect(HARDENED_WEBVIEW_CONFIG.mediaPlaybackRequiresUserAction).toBe(false);
-    expect(HARDENED_WEBVIEW_CONFIG.mediaCapturePermissionGrantType).toBe('grant');
+    expect(HARDENED_WEBVIEW_CONFIG.mediaCapturePermissionGrantType).toBe('prompt');
   });
 
-  it('enforces allowFileAccess for native Android/iOS file picker', () => {
-    expect(HARDENED_WEBVIEW_CONFIG.allowFileAccess).toBe(true);
+  it('enforces allowFileAccess=false to protect local filesystem', () => {
+    expect(HARDENED_WEBVIEW_CONFIG.allowFileAccess).toBe(false);
+  });
+
+  it('restricts originWhitelist to official Huellicam and localhost domains', () => {
+    expect(HARDENED_WEBVIEW_CONFIG.originWhitelist).not.toContain('http://*');
+    expect(HARDENED_WEBVIEW_CONFIG.originWhitelist).not.toContain('https://*');
+    expect(HARDENED_WEBVIEW_CONFIG.originWhitelist).toContain('https://app.huellicam.com.ar');
+    expect(HARDENED_WEBVIEW_CONFIG.originWhitelist).toContain('https://huellicam-web.vercel.app');
   });
 
   it('reloads webview safely when content process terminates in background', () => {

@@ -200,6 +200,17 @@ export function parseWebViewBridgeMessage(raw: string): WebViewBridgeMessage | n
   }
 }
 
+export const HUELLICAM_ORIGIN_WHITELIST = [
+  'https://*.huellicam.com.ar',
+  'https://huellicam.com.ar',
+  'https://app.huellicam.com.ar',
+  'https://admin.huellicam.com.ar',
+  'https://huellicam-web.vercel.app',
+  'http://localhost:*',
+  'http://127.0.0.1:*',
+  'http://10.0.2.2:*',
+];
+
 /**
  * Hardened React Native WebView configuration for full SPA + LiveKit WebRTC support.
  */
@@ -210,9 +221,9 @@ export const HARDENED_WEBVIEW_CONFIG = {
   thirdPartyCookiesEnabled: true,
   allowsInlineMediaPlayback: true,
   mediaPlaybackRequiresUserAction: false,
-  allowFileAccess: true,
-  mediaCapturePermissionGrantType: 'grant' as const,
-  originWhitelist: ['http://*', 'https://*'],
+  allowFileAccess: false,
+  mediaCapturePermissionGrantType: 'prompt' as const,
+  originWhitelist: HUELLICAM_ORIGIN_WHITELIST,
   setSupportMultipleWindows: false,
   pullToRefreshEnabled: false,
   bounces: false,

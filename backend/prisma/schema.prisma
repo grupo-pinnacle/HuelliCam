@@ -1,6 +1,7 @@
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 generator client {
@@ -36,6 +37,7 @@ enum CallStatus {
   INITIATED
   ACTIVE
   ENDED
+  FAILED
 }
 
 model User {
@@ -169,18 +171,27 @@ model Message {
 }
 
 model Call {
-  id              String     @id @default(uuid())
-  consultationId  String     @map("consultation_id")
-  roomName        String     @map("room_name")
-  status          CallStatus @default(INITIATED)
-  startedAt       DateTime?  @map("started_at")
-  endedAt         DateTime?  @map("ended_at")
-  durationSeconds Int?       @map("duration_seconds")
-  createdAt       DateTime   @default(now()) @map("created_at")
-  updatedAt       DateTime   @updatedAt @map("updated_at")
+  id               String     @id @default(uuid())
+  consultationId   String     @map("consultation_id")
+  roomName         String     @map("room_name")
+  livekitRoomSid   String?    @map("livekit_room_sid")
+  status           CallStatus @default(INITIATED)
+  startedAt        DateTime?  @map("started_at")
+  endedAt          DateTime?  @map("ended_at")
+  durationSeconds  Int?       @map("duration_seconds")
+  participantCount Int        @default(0) @map("participant_count")
+  errorCode        String?    @map("error_code")
+  errorMessage     String?    @map("error_message")
+  disconnectReason String?    @map("disconnect_reason")
+  lastEvent        String?    @map("last_event")
+  metadata         Json?
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
 
   consultation Consultation @relation(fields: [consultationId], references: [id])
 
+  @@index([consultationId, createdAt(sort: Desc)])
+  @@index([roomName, createdAt(sort: Desc)])
   @@map("calls")
 }
 

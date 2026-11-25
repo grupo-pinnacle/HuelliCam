@@ -5,6 +5,8 @@ import { AppError } from '../../middlewares/errorHandler';
 import { CreatePrescriptionDTO } from './prescriptions.schemas';
 import { notificationsService } from '../notifications/notifications.service';
 import { emailService } from '../../services/email.service';
+import { io } from '../../realtime/socket.server';
+import { logger, serializeError } from '../../lib/logger';
 
 export class PrescriptionsService {
   private getPublicBaseUrl(): string {
@@ -26,7 +28,7 @@ export class PrescriptionsService {
     try {
       qrCodeDataUrl = await QRCode.toDataURL(verifyUrl);
     } catch (err) {
-      console.error('Failed to generate QR code for prescription:', err);
+      logger.error({ prescriptionId, err: serializeError(err) }, 'Failed to generate QR code for prescription');
     }
     return { verifyUrl, qrCodeDataUrl };
   }
@@ -105,6 +107,28 @@ export class PrescriptionsService {
       )
       .catch(() => {});
 
+    try {
+      if (io) {
+        const clientId = consultation.clientId ?? prescription.consultation?.clientId;
+        const vetId = consultation.vetId ?? prescription.vetId;
+        const petId = consultation.petId ?? prescription.consultation?.pet?.id ?? '';
+        const rooms = Array.from(
+          new Set([
+            `consultation:${consultationId}`,
+            ...(clientId ? [`user:${clientId}`] : []),
+            ...(vetId ? [`user:${vetId}`] : []),
+          ])
+        );
+        io.to(rooms).emit('prescription:new', {
+          consultationId,
+          prescriptionId: prescription.id,
+          petId,
+        });
+      }
+    } catch {
+      // Non-blocking realtime notification
+    }
+
     // Despachar correo electrónico vía Resend con los detalles completos del tratamiento
     if (prescription.consultation.client?.email) {
       const vetFullName = user.lastName ? `Dr. ${user.firstName} ${user.lastName}` : `Dr. ${user.firstName}`;
@@ -122,7 +146,12 @@ export class PrescriptionsService {
           indications: prescription.indications,
           verifyUrl,
         })
-        .catch((err) => console.warn('[Prescriptions] Error sending prescription email:', err));
+        .catch((err) =>
+          logger.warn(
+            { prescriptionId: prescription.id, err: serializeError(err) },
+            '[Prescriptions] Error sending prescription email'
+          )
+        );
     }
 
     return {

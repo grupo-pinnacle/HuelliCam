@@ -8,6 +8,12 @@ const envOrigins = [
   .map((o) => o.trim());
 
 const defaultOrigins = [
+  'https://app.huellicam.com.ar',
+  'https://admin.huellicam.com.ar',
+  'https://huellicam-web.vercel.app',
+];
+
+const devOrigins = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
   'http://localhost:5174',
@@ -16,38 +22,19 @@ const defaultOrigins = [
   'http://127.0.0.1:4173',
   'http://localhost:3000',
   'http://127.0.0.1:3000',
-  'https://huellicam-web.vercel.app',
-  'https://app.huellicam.com.ar',
 ];
 
-export const allowedOrigins = Array.from(new Set([...defaultOrigins, ...envOrigins]));
+export const allowedOrigins = Array.from(
+  new Set([
+    ...defaultOrigins,
+    ...(process.env.NODE_ENV !== 'production' ? devOrigins : []),
+    ...envOrigins,
+  ])
+);
 
 export const isAllowedOrigin = (origin?: string): boolean => {
-  if (!origin || process.env.NODE_ENV === 'test') return true;
+  if (!origin) return true; // Mobile clients, same-origin, curl, server-to-server
   const cleanOrigin = origin.replace(/\/$/, '');
-  if (allowedOrigins.includes(cleanOrigin) || allowedOrigins.includes(origin)) {
-    return true;
-  }
-  // Allow localhost and 127.0.0.1 on any port in development / non-production
-  if (process.env.NODE_ENV !== 'production' && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(cleanOrigin)) {
-    return true;
-  }
-  // Allow VS Code Dev Tunnels and Codespaces
-  if (
-    cleanOrigin.endsWith('.devtunnels.ms') ||
-    cleanOrigin.endsWith('.app.github.dev') ||
-    cleanOrigin.endsWith('.ngrok-free.app') ||
-    cleanOrigin.endsWith('.ngrok.io')
-  ) {
-    return true;
-  }
-  // Allow Vercel preview and production deployments for Huellicam
-  if (/^https:\/\/huellicam[a-z0-9-]*\.vercel\.app$/.test(cleanOrigin)) {
-    return true;
-  }
-  // Allow official Huellicam subdomains
-  if (/^https:\/\/([a-z0-9-]+\.)?huellicam\.com\.ar$/.test(cleanOrigin)) {
-    return true;
-  }
-  return false;
+  return allowedOrigins.includes(cleanOrigin) || allowedOrigins.includes(origin);
 };
+
