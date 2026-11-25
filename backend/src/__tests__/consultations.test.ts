@@ -224,25 +224,37 @@ describe('Consultations Module (/api/consultations)', () => {
   describe('PATCH /api/consultations/:id/assign (Race Condition Handling)', () => {
     it('should allow an approved VET to assign a WAITING consultation', async () => {
       mockPrismaUser.findUnique.mockResolvedValue(mockVet);
-      mockPrismaConsultation.findUnique.mockResolvedValue({
+      const waitingConsultation = {
         id: 'consultation-uuid-waiting-1',
         clientId: mockClient.id,
         vetId: null,
         petId: 'pet-uuid-1',
         status: 'WAITING',
         notes: 'Guardia',
+        stateVersion: 1,
+        deletedAt: null,
         createdAt: new Date(),
         updatedAt: new Date(),
-      } as any);
-
-      mockPrismaConsultation.update.mockResolvedValue({
+      } as any;
+      const activeConsultation = {
         id: 'consultation-uuid-waiting-1',
         clientId: mockClient.id,
         vetId: mockVet.id,
         petId: 'pet-uuid-1',
         status: 'ACTIVE',
+        stateVersion: 2,
         startedAt: new Date(),
-      } as any);
+        pet: {} as any,
+        client: mockClient as any,
+        vet: mockVet as any,
+      } as any;
+
+      mockPrismaConsultation.findUnique
+        .mockResolvedValueOnce(waitingConsultation)
+        .mockResolvedValueOnce(waitingConsultation)
+        .mockResolvedValueOnce(activeConsultation);
+
+      (mockPrismaConsultation.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
 
       const res = await request(app)
         .patch('/api/consultations/consultation-uuid-waiting-1/assign')
@@ -252,6 +264,50 @@ describe('Consultations Module (/api/consultations)', () => {
       expect(res.body.success).toBe(true);
       expect(res.body.data.status).toBe('ACTIVE');
       expect(res.body.data.vetId).toBe(mockVet.id);
+      expect(mockPrismaConsultation.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: 'consultation-uuid-waiting-1',
+            status: 'WAITING',
+            vetId: null,
+            deletedAt: null,
+            stateVersion: 1,
+          }),
+          data: expect.objectContaining({
+            vetId: mockVet.id,
+            status: 'ACTIVE',
+            stateVersion: 2,
+          }),
+        })
+      );
+    });
+
+    it('should REJECT assignment with HTTP 409 if optimistic CAS detects a concurrent vet won the race', async () => {
+      mockPrismaUser.findUnique.mockResolvedValue(mockVet2);
+      const waitingConsultation = {
+        id: 'consultation-uuid-race-1',
+        clientId: mockClient.id,
+        vetId: null,
+        petId: 'pet-uuid-1',
+        status: 'WAITING',
+        notes: 'Guardia',
+        stateVersion: 1,
+        deletedAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as any;
+
+      mockPrismaConsultation.findUnique
+        .mockResolvedValueOnce(waitingConsultation)
+        .mockResolvedValueOnce(waitingConsultation);
+      (mockPrismaConsultation.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+
+      const res = await request(app)
+        .patch('/api/consultations/consultation-uuid-race-1/assign')
+        .set('Authorization', `Bearer ${vet2Token}`);
+
+      expect(res.status).toBe(409);
+      expect(res.body.error.code).toBe('CONSULTATION_ALREADY_ASSIGNED');
     });
 
     it('should REJECT assignment if consultation is ALREADY ACTIVE or claimed by another vet with HTTP 409', async () => {
@@ -367,6 +423,33 @@ describe('Consultations Module (/api/consultations)', () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.data).toEqual([]);
+    });
+
+    it('should redact client phone and email for WAITING consultations (VULN-06 PII Protection)', async () => {
+      mockPrismaUser.findUnique.mockResolvedValue(mockVet);
+      (mockPrismaConsultation.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+      mockPrismaConsultation.findMany.mockResolvedValue([
+        {
+          id: 'consultation-uuid-waiting-pii',
+          clientId: mockClient.id,
+          vetId: null,
+          status: 'WAITING',
+          pet: { id: 'pet-1', name: 'Luna', species: 'DOG' } as any,
+          client: { ...mockClient, phone: '+541155551234', email: 'owner@example.com' } as any,
+          review: null,
+        } as any,
+      ]);
+
+      const res = await request(app)
+        .get('/api/consultations/mine')
+        .set('Authorization', `Bearer ${vetToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data[0].status).toBe('WAITING');
+      expect(res.body.data[0].client.phone).toBeUndefined();
+      expect(res.body.data[0].client.email).toBeUndefined();
+      expect(res.body.data[0].client.firstName).toBe(mockClient.firstName);
     });
   });
 

@@ -12,6 +12,7 @@ import {
 } from './consultations.schemas';
 import { evaluateClinicalTriage } from './clinicalTriage.engine';
 import { io } from '../../realtime/socket.server';
+import { logger, serializeError } from '../../lib/logger';
 
 const userSelectFields = {
   id: true,
@@ -144,6 +145,22 @@ export class ConsultationsService {
       });
 
       await this.callsService.deleteLiveKitRoom(consultationId).catch(() => {});
+
+      try {
+        const rooms = [
+          `consultation:${consultationId}`,
+          'role:vets',
+          ...(updated.clientId ? [`user:${updated.clientId}`] : []),
+        ];
+        io?.to(rooms).emit('consultation:cancelled', {
+          consultationId,
+          cancelledBy: 'SYSTEM_TIMEOUT',
+          status: updated.status,
+        });
+      } catch {
+        // Non-blocking realtime notification
+      }
+
       return updated;
     }
 
@@ -173,6 +190,22 @@ export class ConsultationsService {
       });
 
       await this.callsService.deleteLiveKitRoom(consultationId).catch(() => {});
+
+      try {
+        const rooms = [
+          `consultation:${consultationId}`,
+          'role:vets',
+          ...(updated.clientId ? [`user:${updated.clientId}`] : []),
+        ];
+        io?.to(rooms).emit('consultation:cancelled', {
+          consultationId,
+          cancelledBy: 'SYSTEM_VET_DISCONNECT_TIMEOUT',
+          status: updated.status,
+        });
+      } catch {
+        // Non-blocking realtime notification
+      }
+
       return updated;
     }
 
@@ -208,19 +241,43 @@ export class ConsultationsService {
       throw new AppError('La consulta ya ha sido asignada o no se encuentra en espera', 409, 'CONSULTATION_ALREADY_ASSIGNED');
     }
 
-    const updated = await prisma.consultation.update({
-      where: { id: consultationId },
+    const hasVersion = typeof consultation.stateVersion === 'number';
+    const casResult = await prisma.consultation.updateMany({
+      where: {
+        id: consultationId,
+        status: ConsultationStatus.WAITING,
+        vetId: null,
+        deletedAt: null,
+        ...(hasVersion ? { stateVersion: consultation.stateVersion } : {}),
+      },
       data: {
         vetId: vetUser.id,
         status: ConsultationStatus.ACTIVE,
         startedAt: new Date(),
+        ...(hasVersion ? { stateVersion: consultation.stateVersion + 1 } : {}),
       },
+    });
+
+    if (casResult.count === 0) {
+      throw new AppError(
+        'La consulta ya ha sido asignada o no se encuentra en espera',
+        409,
+        'CONSULTATION_ALREADY_ASSIGNED'
+      );
+    }
+
+    const updated = await prisma.consultation.findUnique({
+      where: { id: consultationId },
       include: {
         pet: true,
         client: { select: userSelectFields },
         vet: { select: userSelectFields },
       },
     });
+
+    if (!updated) {
+      throw new AppError('Consulta no encontrada', 404, 'CONSULTATION_NOT_FOUND');
+    }
 
     await notificationsService
       .createAndDispatch(
@@ -231,6 +288,26 @@ export class ConsultationsService {
         { consultationId: updated.id }
       )
       .catch(() => {});
+
+    try {
+      const rooms = [
+        `consultation:${consultationId}`,
+        'role:vets',
+        ...(updated.clientId ? [`user:${updated.clientId}`] : []),
+      ];
+      io?.to(rooms).emit('consultation:assigned', {
+        consultationId: updated.id,
+        vetId: updated.vetId,
+        clientId: updated.clientId,
+        status: updated.status,
+      });
+      logger.info(
+        { consultationId: updated.id, vetId: updated.vetId, clientId: updated.clientId },
+        'Consultation assigned'
+      );
+    } catch {
+      // Non-blocking realtime notification
+    }
 
     return updated;
   }
@@ -276,14 +353,23 @@ export class ConsultationsService {
     // Tear down LiveKit cloud room to release bandwidth
     await this.callsService.deleteLiveKitRoom(consultationId).catch(() => {});
 
-    // Broadcast call:ended event via Socket.io to consultation room
+    // Broadcast call:ended event via Socket.io to consultation & participant rooms
     try {
-      io?.to(`consultation:${consultationId}`).emit('call:ended', {
+      const clientId = completed.clientId ?? consultation.clientId;
+      const vetId = completed.vetId ?? consultation.vetId;
+      const rooms = Array.from(
+        new Set([
+          `consultation:${consultationId}`,
+          ...(clientId ? [`user:${clientId}`] : []),
+          ...(vetId ? [`user:${vetId}`] : []),
+        ])
+      );
+      io?.to(rooms).emit('call:ended', {
         consultationId,
         endedBy: requester.id,
       });
     } catch (err) {
-      console.warn('Could not broadcast call:ended:', err);
+      logger.warn({ consultationId, err: serializeError(err) }, 'Could not broadcast call:ended');
     }
 
     return completed;
@@ -323,6 +409,22 @@ export class ConsultationsService {
 
     // Tear down LiveKit room
     await this.callsService.deleteLiveKitRoom(consultationId).catch(() => {});
+
+    try {
+      const clientId = cancelled.clientId ?? consultation.clientId;
+      const rooms = [
+        `consultation:${consultationId}`,
+        'role:vets',
+        ...(clientId ? [`user:${clientId}`] : []),
+      ];
+      io?.to(rooms).emit('consultation:cancelled', {
+        consultationId,
+        cancelledBy: requester.id,
+        status: cancelled.status ?? ConsultationStatus.CANCELLED,
+      });
+    } catch {
+      // Non-blocking realtime notification
+    }
 
     return cancelled;
   }
@@ -374,12 +476,15 @@ export class ConsultationsService {
         });
       }
     } catch (err) {
-      console.warn('[ConsultationsService.getMine] Error expiring timed out triage consultations:', err);
+      logger.warn(
+        { err: serializeError(err) },
+        '[ConsultationsService.getMine] Error expiring timed out triage consultations'
+      );
     }
 
     try {
       if (requester.role === Role.VET) {
-        return await prisma.consultation.findMany({
+        const consultations = await prisma.consultation.findMany({
           where: {
             OR: [{ vetId: requester.id }, { status: ConsultationStatus.WAITING }],
             deletedAt: null,
@@ -391,6 +496,21 @@ export class ConsultationsService {
             prescriptions: { select: { id: true, medication: true, createdAt: true }, orderBy: { createdAt: 'desc' } },
           },
           orderBy: { createdAt: 'desc' },
+        });
+
+        return consultations.map((c) => {
+          if (c.status === ConsultationStatus.WAITING && c.client) {
+            const { email, phone, ...restClient } = c.client;
+            return {
+              ...c,
+              client: {
+                ...restClient,
+                email: undefined,
+                phone: undefined,
+              },
+            };
+          }
+          return c;
         });
       }
 
@@ -405,7 +525,10 @@ export class ConsultationsService {
         orderBy: { createdAt: 'desc' },
       });
     } catch (err: any) {
-      console.warn('[ConsultationsService.getMine] Resilient fallback on DB query failure:', err?.message || err);
+      logger.warn(
+        { err: serializeError(err) },
+        '[ConsultationsService.getMine] Resilient fallback on DB query failure'
+      );
       return [];
     }
   }
@@ -557,7 +680,7 @@ export class ConsultationsService {
       try {
         io?.to(`consultation:${consultationId}`).emit('message:new', message as any);
       } catch (err) {
-        console.warn('Could not broadcast message via socket:', err);
+        logger.warn({ consultationId, err: serializeError(err) }, 'Could not broadcast message via socket');
       }
 
       return message;

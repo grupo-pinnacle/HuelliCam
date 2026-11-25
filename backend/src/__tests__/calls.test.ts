@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import request from 'supertest';
 import app from '../app';
 import prisma from '../lib/prisma';
@@ -11,14 +12,42 @@ jest.mock('../lib/prisma', () => ({
     },
     consultation: {
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      updateMany: jest.fn(),
+    },
+    call: {
+      findFirst: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
     },
   },
 }));
 
 const mockPrismaUser = prisma.user as jest.Mocked<typeof prisma.user>;
-const mockPrismaConsultation = prisma.consultation as jest.Mocked<typeof prisma.consultation>;
+const mockPrismaConsultation = prisma.consultation as unknown as {
+  findUnique: jest.Mock;
+  findFirst: jest.Mock;
+  updateMany: jest.Mock;
+};
+const mockPrismaCall = prisma.call as unknown as {
+  findFirst: jest.Mock;
+  create: jest.Mock;
+  update: jest.Mock;
+};
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-jwt-secret-key-change-in-production-min-32-chars-long';
+const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY || 'devkey';
+const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET || 'secret';
+
+function signWebhookPayload(payload: Record<string, unknown>, pretty = false) {
+  const rawBody = JSON.stringify(payload, null, pretty ? 2 : 0);
+  const sha256 = crypto.createHash('sha256').update(rawBody, 'utf8').digest('base64');
+  const authHeader = jwt.sign({ iss: LIVEKIT_API_KEY, sha256 }, LIVEKIT_API_SECRET, {
+    algorithm: 'HS256',
+    expiresIn: '5m',
+  });
+  return { rawBody, authHeader };
+}
 
 describe('Calls Module (/api/calls)', () => {
   const mockClient = {
@@ -51,10 +80,22 @@ describe('Calls Module (/api/calls)', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockPrismaCall.findFirst.mockResolvedValue(null);
+    mockPrismaCall.create.mockImplementation(async (args: any) => ({
+      id: 'call-created-1',
+      ...args.data,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }));
+    mockPrismaCall.update.mockImplementation(async (args: any) => ({
+      id: args.where.id,
+      ...args.data,
+    }));
+    mockPrismaConsultation.updateMany.mockResolvedValue({ count: 1 } as any);
   });
 
   describe('POST /api/calls/:consultationId/token (LiveKit SFU)', () => {
-    it('should generate LiveKit JWT token WITHOUT any PII (no email, no phone)', async () => {
+    it('should generate LiveKit JWT token WITHOUT any PII and persist Call row', async () => {
       mockPrismaUser.findUnique.mockResolvedValue(mockClient);
       mockPrismaConsultation.findUnique.mockResolvedValue({
         id: 'consultation-call-1',
@@ -84,6 +125,16 @@ describe('Calls Module (/api/calls)', () => {
       expect(res.body.success).toBe(true);
       expect(res.body.data.token).toBeDefined();
 
+      expect(mockPrismaCall.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            consultationId: 'consultation-call-1',
+            roomName: 'consultation-call-1',
+            status: 'INITIATED',
+          }),
+        })
+      );
+
       // Decode LiveKit JWT token to inspect claims
       const decoded: any = jwt.decode(res.body.data.token);
 
@@ -92,6 +143,8 @@ describe('Calls Module (/api/calls)', () => {
       expect(decoded.email).toBeUndefined(); // ZERO PII
       expect(decoded.phone).toBeUndefined(); // ZERO PII
       expect(decoded.video.room).toBe('consultation-call-1');
+      const startTimestamp = decoded.nbf ?? decoded.iat;
+      expect(decoded.exp - startTimestamp).toBeLessThanOrEqual(15 * 60); // VULN-08: TTL <= 15m
     });
 
     it('should REJECT token generation if consultation is not ACTIVE', async () => {
@@ -156,6 +209,136 @@ describe('Calls Module (/api/calls)', () => {
       expect(res.body.success).toBe(true);
       expect(res.body.data.status).toBe('RINGING');
       expect(res.body.data.targetUserId).toBe('vet-uuid-1');
+    });
+  });
+
+  describe('POST /api/calls/webhook (LiveKit Telemetry & Invalidation)', () => {
+    it('should reject missing or invalid signature with 401 and perform 0 call mutations', async () => {
+      const res = await request(app)
+        .post('/api/calls/webhook')
+        .set('Content-Type', 'application/json')
+        .send(JSON.stringify({ event: 'room_finished', room: { name: 'consultation-call-1' } }));
+
+      expect(res.status).toBe(401);
+      expect(mockPrismaCall.update).not.toHaveBeenCalled();
+
+      const badRes = await request(app)
+        .post('/api/calls/webhook')
+        .set('Content-Type', 'application/webhook+json')
+        .set('Authorization', 'invalid.jwt.signature')
+        .send(JSON.stringify({ event: 'room_finished', room: { name: 'consultation-call-1' } }));
+
+      expect(badRes.status).toBe(401);
+      expect(mockPrismaCall.update).not.toHaveBeenCalled();
+    });
+
+    it('should verify pretty application/json signature and update Call lifecycle + duration', async () => {
+      const startedAt = new Date(Date.now() - 45_000);
+      mockPrismaCall.findFirst.mockResolvedValue({
+        id: 'call-1',
+        consultationId: 'consultation-call-1',
+        roomName: 'consultation-call-1',
+        livekitRoomSid: null,
+        status: 'ACTIVE',
+        startedAt,
+        endedAt: null,
+        durationSeconds: null,
+        participantCount: 1,
+        errorCode: null,
+        errorMessage: null,
+        disconnectReason: null,
+        lastEvent: 'room_started',
+        metadata: null,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+      } as any);
+
+      const { rawBody, authHeader } = signWebhookPayload(
+        {
+          event: 'room_finished',
+          room: { name: 'consultation-call-1', sid: 'RM_UNIT_1' },
+          createdAt: Math.floor(Date.now() / 1000),
+        },
+        true
+      );
+
+      const res = await request(app)
+        .post('/api/calls/webhook')
+        .set('Content-Type', 'application/json')
+        .set('Authorization', authHeader)
+        .send(rawBody);
+
+      expect(res.status).toBe(200);
+      expect(mockPrismaCall.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'call-1' },
+          data: expect.objectContaining({
+            status: 'ENDED',
+            livekitRoomSid: 'RM_UNIT_1',
+            durationSeconds: expect.any(Number),
+          }),
+        })
+      );
+    });
+
+    it('should keep duplicate room_finished idempotent and record participant_connection_aborted telemetry', async () => {
+      const startedAt = new Date(Date.now() - 60_000);
+      mockPrismaCall.findFirst.mockResolvedValueOnce({
+        id: 'call-ended-1',
+        consultationId: 'consultation-call-1',
+        roomName: 'consultation-call-1',
+        status: 'ENDED',
+        startedAt,
+        endedAt: new Date(),
+        durationSeconds: 60,
+      } as any);
+
+      const dup = signWebhookPayload({
+        event: 'room_finished',
+        room: { name: 'consultation-call-1', sid: 'RM_DUP' },
+      });
+
+      const dupRes = await request(app)
+        .post('/api/calls/webhook')
+        .set('Content-Type', 'application/webhook+json')
+        .set('Authorization', dup.authHeader)
+        .send(dup.rawBody);
+
+      expect(dupRes.status).toBe(200);
+      expect(mockPrismaCall.update).not.toHaveBeenCalled();
+
+      mockPrismaCall.findFirst.mockResolvedValueOnce({
+        id: 'call-abort-1',
+        consultationId: 'consultation-call-1',
+        roomName: 'consultation-call-1',
+        status: 'ACTIVE',
+        startedAt,
+        participantCount: 2,
+        metadata: null,
+      } as any);
+
+      const abort = signWebhookPayload({
+        event: 'participant_connection_aborted',
+        room: { name: 'consultation-call-1', sid: 'RM_ABORT' },
+        participant: { identity: 'client-1', sid: 'PA_1' },
+      });
+
+      const abortRes = await request(app)
+        .post('/api/calls/webhook')
+        .set('Content-Type', 'application/webhook+json')
+        .set('Authorization', abort.authHeader)
+        .send(abort.rawBody);
+
+      expect(abortRes.status).toBe(200);
+      expect(mockPrismaCall.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'call-abort-1' },
+          data: expect.objectContaining({
+            errorCode: 'PARTICIPANT_CONNECTION_ABORTED',
+            disconnectReason: 'PARTICIPANT_CONNECTION_ABORTED',
+          }),
+        })
+      );
     });
   });
 });

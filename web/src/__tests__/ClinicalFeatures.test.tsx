@@ -42,7 +42,12 @@ describe('Web Audio Ringtone Synthesizer (Zero External Assets)', () => {
       close: vi.fn(),
     };
 
-    vi.stubGlobal('AudioContext', vi.fn(() => mockAudioContext));
+    vi.stubGlobal(
+      'AudioContext',
+      vi.fn(function () {
+        return mockAudioContext;
+      })
+    );
 
     expect(() => startRingtone()).not.toThrow();
     expect(mockAudioContext.createOscillator).toHaveBeenCalled();

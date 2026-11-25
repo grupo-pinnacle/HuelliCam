@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
 import { Prisma } from '@prisma/client';
+import { logger, serializeError } from '../lib/logger';
+import { getRequestId } from './requestId';
 
 export class AppError extends Error {
   public readonly statusCode: number;
@@ -24,6 +26,21 @@ export const errorHandler = (
   next: NextFunction
 ): void => {
   const timestamp = new Date().toISOString();
+  const requestId = getRequestId(req);
+  const requestIdField = requestId ? { requestId } : {};
+
+  if ((err as any).type === 'entity.too.large' || (err as any).status === 413 || (err as any).statusCode === 413) {
+    res.status(413).json({
+      success: false,
+      error: {
+        code: 'PAYLOAD_TOO_LARGE',
+        message: 'El cuerpo de la solicitud excede el límite permitido de 100kb',
+        ...requestIdField,
+        timestamp,
+      },
+    });
+    return;
+  }
 
   if (err instanceof AppError) {
     res.status(err.statusCode).json({
@@ -32,6 +49,7 @@ export const errorHandler = (
         code: err.code,
         message: err.message,
         details: err.details,
+        ...requestIdField,
         timestamp,
       },
     });
@@ -44,10 +62,11 @@ export const errorHandler = (
       error: {
         code: 'VALIDATION_ERROR',
         message: 'Datos de entrada invalidos',
-        details: err.errors.map((e) => ({
+        details: err.issues.map((e) => ({
           path: e.path.join('.'),
           message: e.message,
         })),
+        ...requestIdField,
         timestamp,
       },
     });
@@ -61,8 +80,14 @@ export const errorHandler = (
     (err instanceof Prisma.PrismaClientKnownRequestError &&
       ['P1000', 'P1001', 'P1002', 'P1003', 'P1017'].includes(err.code))
   ) {
-    console.error('❌ [DATABASE_UNAVAILABLE] Fallo de conexión con PostgreSQL/Supabase:');
-    console.error('👉 Diagnóstico: Si usas Supabase Free Tier, comprueba en https://supabase.com/dashboard que el proyecto no esté pausado por inactividad.');
+    logger.error(
+      {
+        code: 'DATABASE_UNAVAILABLE',
+        ...(requestId ? { requestId } : {}),
+        err: serializeError(err),
+      },
+      'DATABASE_UNAVAILABLE: Fallo de conexión con PostgreSQL/Supabase'
+    );
 
     res.status(503).json({
       success: false,
@@ -71,6 +96,7 @@ export const errorHandler = (
         message:
           'No fue posible conectar con el servidor de base de datos. Si el entorno utiliza Supabase, verifique que el proyecto se encuentre activo en https://supabase.com/dashboard.',
         details: process.env.NODE_ENV === 'development' ? err.message : null,
+        ...requestIdField,
         timestamp,
       },
     });
@@ -85,13 +111,21 @@ export const errorHandler = (
         code: 'CONFLICT',
         message: 'El recurso ya existe o viola una restricción de unicidad',
         details: process.env.NODE_ENV === 'development' ? err.meta : null,
+        ...requestIdField,
         timestamp,
       },
     });
     return;
   }
 
-  console.error('Unhandled Server Error:', err);
+  logger.error(
+    {
+      code: 'INTERNAL_SERVER_ERROR',
+      ...(requestId ? { requestId } : {}),
+      err: serializeError(err),
+    },
+    'Unhandled Server Error'
+  );
 
   res.status(500).json({
     success: false,
@@ -99,6 +133,7 @@ export const errorHandler = (
       code: 'INTERNAL_SERVER_ERROR',
       message: 'Ocurrio un error interno en el servidor',
       details: process.env.NODE_ENV === 'development' ? err.message : null,
+      ...requestIdField,
       timestamp,
     },
   });

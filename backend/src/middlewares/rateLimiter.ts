@@ -29,3 +29,38 @@ export const consultationRateLimiter = rateLimit({
     },
   },
 });
+
+export const passwordResetIpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes window
+  max: 5, // max 5 attempts per 15 min per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: {
+      code: 'TOO_MANY_REQUESTS',
+      message: 'Demasiadas solicitudes de recuperación de contraseña desde esta IP. Intente nuevamente en 15 minutos.',
+      timestamp: new Date().toISOString(),
+    },
+  },
+});
+
+export const passwordResetEmailLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes window
+  max: 5, // max 5 attempts per 15 min per email
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { keyGeneratorIpFallback: false },
+  keyGenerator: (req) => {
+    const email = req.body?.email;
+    return email ? String(email).trim().toLowerCase() : (req.ip || 'anonymous');
+  },
+  message: {
+    success: false,
+    error: {
+      code: 'TOO_MANY_REQUESTS',
+      message: 'Demasiadas solicitudes de recuperación de contraseña para este correo. Intente nuevamente en 15 minutos.',
+      timestamp: new Date().toISOString(),
+    },
+  },
+});

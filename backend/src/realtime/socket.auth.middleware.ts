@@ -4,6 +4,7 @@ import cookie from 'cookie';
 import prisma from '../lib/prisma';
 import { SocketData, SocketUser } from './socket.types';
 import { config } from '../config/env';
+import { resolveOrCreateCorrelationId } from '../lib/logger';
 
 const JWT_SECRET = config.JWT_SECRET;
 
@@ -60,6 +61,7 @@ export const socketAuthMiddleware = async (
       lastName: user.lastName,
       role: user.role,
       tokenVersion: user.tokenVersion,
+      vetStatus: user.vetStatus,
     };
 
     socket.data.user = socketUser;
@@ -72,13 +74,11 @@ export const socketAuthMiddleware = async (
       socket.data.deviceId = rawDeviceId.trim();
     }
 
-    // Set online status in DB
-    await prisma.user
-      .update({
-        where: { id: user.id },
-        data: { isOnline: true },
-      })
-      .catch(() => {});
+    const rawCorrelationId =
+      socket.handshake.auth?.correlationId ??
+      socket.handshake.headers?.['x-correlation-id'] ??
+      socket.handshake.headers?.['x-request-id'];
+    socket.data.correlationId = resolveOrCreateCorrelationId(rawCorrelationId);
 
     next();
   } catch (error) {

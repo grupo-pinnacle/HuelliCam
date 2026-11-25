@@ -1,11 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { io, Socket } from "socket.io-client";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Icon, Modal, Status, Toast, go } from "../shared";
-import api, { getAccessToken } from "../services/api";
-import { getWsUrl } from "../lib/ws";
-import { ClinicalChatThread, type ClinicalChatMessage } from "../components/chat/ClinicalChatThread";
+import api from "../services/api";
+import { ClinicalChatThread, type ClinicalChatDoc, type ClinicalChatMessage } from "../components/chat/ClinicalChatThread";
 import { useAuth } from "../context/AuthContext";
+import { useSocket } from "../context/SocketContext";
 import type { ApiResponse, Consultation as BackendConsultation, Prescription as BackendPrescription, User } from "../types";
 import { parseConsultationNotes } from "../lib/consultationNotes";
 import {
@@ -37,26 +36,27 @@ export const useVet = () => {
 
 export function VetProvider({ children, forceEmpty }: { children: ReactNode; forceEmpty: boolean }) {
   const { user } = useAuth();
+  const { socket } = useSocket();
   const queryClient = useQueryClient();
   const [avail, setAvail] = useState<Avail>("Disponible");
   const [pending, setPending] = useState<Avail | null>(null);
   const [toast, setToast] = useState<{ msg: string; id: number; leaving?: boolean } | null>(null);
 
-  // Sync vet availability presence with backend on mount
+  // Sync vet availability presence with backend on mount (only for VET role)
   useEffect(() => {
-    if (user?.role === "VET") {
+    if (!forceEmpty && user?.role === "VET") {
       api.patch('/api/users/profile', { isOnline: true }).catch(() => {});
     }
-  }, [user?.role]);
+  }, [user?.role, forceEmpty]);
 
-  // Backend query for consultations & queue with real-time polling
+  // Backend query for consultations & queue (strictly gated on VET & !forceEmpty)
   const vetConsultsQuery = useQuery({
     queryKey: ['consultations', 'vet'],
-    queryFn: async () => {
-      const res = await api.get<ApiResponse<BackendConsultation[]>>('/api/consultations/mine');
+    enabled: !forceEmpty && user?.role === "VET",
+    queryFn: async ({ signal }) => {
+      const res = await api.get<ApiResponse<BackendConsultation[]>>('/api/consultations/mine', { signal });
       return (res.data.success && res.data.data) ? res.data.data : [];
     },
-    refetchInterval: 4000,
   });
 
   const notify = useCallback((msg: string) => setToast({ msg, id: Date.now() }), []);
@@ -67,43 +67,32 @@ export function VetProvider({ children, forceEmpty }: { children: ReactNode; for
     return () => { window.clearTimeout(leave); window.clearTimeout(remove); };
   }, [toast?.id]);
 
-  // Real-time socket sync for incoming guard triage consultations
+  // Real-time UI toast notification for incoming guard triage consultations (query invalidation handled by SocketContext)
   useEffect(() => {
-    if (!user || user.role !== "VET") return;
-    const wsUrl = getWsUrl();
-    const token = getAccessToken();
-    const socket = io(wsUrl, {
-      withCredentials: true,
-      transports: ["polling", "websocket"],
-      reconnection: true,
-      auth: {
-        token: token ? `Bearer ${token}` : undefined,
-      },
-    });
+    if (!socket || forceEmpty || user?.role !== "VET") return;
 
-    socket.on("consultation:new", (newCons: BackendConsultation) => {
-      queryClient.invalidateQueries({ queryKey: ["consultations", "vet"] });
+    const handleConsultationNew = (newCons?: BackendConsultation) => {
       const petName = newCons?.pet?.name || "un paciente";
       notify(`🚨 Nueva solicitud de guardia para ${petName}`);
-    });
+    };
+
+    socket.on?.("consultation:new", handleConsultationNew);
 
     return () => {
-      socket.off("consultation:new");
-      socket.disconnect();
+      socket.off?.("consultation:new", handleConsultationNew);
     };
-  }, [user, queryClient, notify]);
+  }, [socket, forceEmpty, user?.role, notify]);
 
   // Dynamically register real patients from DB consultations
   useEffect(() => {
-    if (vetConsultsQuery.data) {
-      vetConsultsQuery.data.forEach((c) => {
-        if (c.pet) {
-          const patient = mapBackendPetToPatient(c.pet, c.client);
-          registerPatient(patient);
-        }
-      });
-    }
-  }, [vetConsultsQuery.data]);
+    if (forceEmpty || user?.role !== "VET" || !vetConsultsQuery.data) return;
+    vetConsultsQuery.data.forEach((c) => {
+      if (c.pet) {
+        const patient = mapBackendPetToPatient(c.pet, c.client);
+        registerPatient(patient);
+      }
+    });
+  }, [vetConsultsQuery.data, forceEmpty, user?.role]);
 
   // Derived real queue from WAITING consultations in DB
   const mappedRealQueue = useMemo((): QueueItem[] => {
@@ -249,7 +238,7 @@ export function VetProvider({ children, forceEmpty }: { children: ReactNode; for
   const finish = useCallback(async (id: string, notes?: string) => {
     try {
       await api.patch(`/api/consultations/${id}/complete`, { diagnosisNotes: notes || "Consulta telemática finalizada con éxito." });
-      queryClient.invalidateQueries({ queryKey: ['consultations', 'vet'] });
+      void queryClient.invalidateQueries({ queryKey: ['consultations'] });
       setAvail("Disponible");
       notify("Consulta finalizada con éxito");
     } catch {
@@ -376,6 +365,23 @@ export function Sheet({ eyebrow, title, onClose, children, footer }: { eyebrow?:
   </div>;
 }
 
+interface VetChatRawMessage {
+  id?: string;
+  clientMsgId?: string;
+  consultationId?: string;
+  content?: string;
+  senderId?: string;
+  sender?: { firstName?: string; lastName?: string };
+  createdAt?: string | null;
+  timeStr?: string;
+  kind?: string;
+  src?: string;
+  name?: string;
+  pos?: string;
+  mine?: boolean;
+  localDoc?: ClinicalChatDoc;
+}
+
 export function ChatPanel({
   petId,
   consultationId,
@@ -392,6 +398,9 @@ export function ChatPanel({
   consultLabel?: string;
 }) {
   const { user } = useAuth();
+  const { socket, isConnected, joinConsultation, leaveConsultation, emitEvent } = useSocket();
+  const roomActionsRef = useRef({ joinConsultation, leaveConsultation });
+  roomActionsRef.current = { joinConsultation, leaveConsultation };
   const { threads, send, markRead, notify, consults } = useVet();
   const pet = getPatient(petId);
   const thread = threads.find((t) => t.petId === petId);
@@ -399,78 +408,93 @@ export function ChatPanel({
   // Resolve consultationId from props or consults
   const activeConsultationId = consultationId || consults.find((c) => c.petId === petId || c.id === petId)?.id;
 
-  const [messages, setMessages] = useState<any[]>([]);
+  const [messages, setMessages] = useState<VetChatRawMessage[]>([]);
   const [text, setText] = useState("");
   const [box, setBox] = useState<number | null>(null);
-  const [socket, setSocket] = useState<Socket | null>(null);
-  const [connected, setConnected] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+  const activeConsultationIdRef = useRef(activeConsultationId);
+  const consultationEpochRef = useRef(0);
+  if (activeConsultationIdRef.current !== activeConsultationId) {
+    activeConsultationIdRef.current = activeConsultationId;
+    consultationEpochRef.current += 1;
+  }
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Mark read
   useEffect(() => {
     markRead(petId);
   }, [petId, markRead, messages.length]);
 
-  // Load and sync real messages if activeConsultationId is available
+  // Local demo thread fallback when there is no active consultation ID
   useEffect(() => {
-    if (!activeConsultationId) {
-      if (thread?.msgs) {
-        setMessages(
-          thread.msgs.map((m) => ({
-            id: m.id,
-            content: m.text || m.name || "",
-            senderId: m.mine ? user?.id : "other",
-            createdAt: null,
-            timeStr: m.time,
-            kind: m.kind,
-            src: m.src,
-            name: m.name,
-            pos: m.pos,
-          }))
-        );
-      }
+    if (activeConsultationId) return;
+    if (!thread?.msgs) {
+      setMessages([]);
       return;
     }
+    setMessages(
+      thread.msgs.map((m) => ({
+        id: m.id,
+        content: m.text || m.name || "",
+        senderId: m.mine ? user?.id : "other",
+        createdAt: null,
+        timeStr: m.time,
+        kind: m.kind,
+        src: m.src,
+        name: m.name,
+        pos: m.pos,
+      }))
+    );
+  }, [activeConsultationId, thread?.msgs, user?.id]);
 
-    const wsUrl = getWsUrl();
-    const token = getAccessToken();
-    const s = io(wsUrl, {
-      withCredentials: true,
-      transports: ["polling", "websocket"],
-      reconnection: true,
-      auth: { token: token ? `Bearer ${token}` : undefined },
-    });
-    setSocket(s);
-
-    s.on("connect", () => {
-      setConnected(true);
-      s.emit("join:consultation", { consultationId: activeConsultationId });
-    });
-
-    s.on("disconnect", () => setConnected(false));
-
-    s.on("message:new", (msg: any) => {
-      setMessages((prev) => {
-        if (prev.some((m) => (m.id && m.id === msg.id) || (m.clientMsgId && m.clientMsgId === msg.clientMsgId))) {
-          return prev;
-        }
-        return [...prev, msg];
-      });
-    });
+  // Join room & fetch message history once per activeConsultationId
+  useEffect(() => {
+    if (!activeConsultationId) return;
+    let cancelled = false;
+    setMessages([]);
+    roomActionsRef.current.joinConsultation(activeConsultationId);
 
     api
-      .get<ApiResponse<any[]>>(`/api/consultations/${activeConsultationId}/messages`)
+      .get<ApiResponse<VetChatRawMessage[]>>(`/api/consultations/${activeConsultationId}/messages`)
       .then((res) => {
-        if (res.data.success && res.data.data) {
+        if (!cancelled && res.data.success && res.data.data) {
           setMessages(res.data.data);
         }
       })
       .catch(() => {});
 
     return () => {
-      s.disconnect();
+      cancelled = true;
+      roomActionsRef.current.leaveConsultation(activeConsultationId);
     };
-  }, [activeConsultationId, user?.id, thread?.msgs]);
+  }, [activeConsultationId]);
+
+  // Listen to incoming real-time messages on the shared singleton socket
+  useEffect(() => {
+    if (!socket || !activeConsultationId) return;
+
+    const handleMessageNew = (msg: VetChatRawMessage) => {
+      if (msg.consultationId && msg.consultationId !== activeConsultationId) return;
+      setMessages((prev) => {
+        if (prev.some((m) => (m.id && m.id === msg.id) || (m.clientMsgId && m.clientMsgId === msg.clientMsgId))) {
+          return prev;
+        }
+        return [...prev, msg];
+      });
+    };
+
+    socket.on?.("message:new", handleMessageNew);
+
+    return () => {
+      socket.off?.("message:new", handleMessageNew);
+    };
+  }, [socket, activeConsultationId]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -479,36 +503,63 @@ export function ChatPanel({
   const submit = async () => {
     if (!text.trim()) return;
     const content = text.trim();
+    const targetCid = activeConsultationId;
+    const targetEpoch = consultationEpochRef.current;
+    const isStaleTarget = () =>
+      !isMountedRef.current ||
+      activeConsultationIdRef.current !== targetCid ||
+      consultationEpochRef.current !== targetEpoch;
     setText("");
 
-    if (activeConsultationId) {
+    if (targetCid) {
       const clientMsgId = `vet-msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-      if (socket && connected) {
-        socket.emit(
+      if (socket && isConnected) {
+        emitEvent<ApiResponse<VetChatRawMessage>>(
           "message:send",
-          { consultationId: activeConsultationId, content, clientMsgId },
-          (res: any) => {
+          { consultationId: targetCid, content, clientMsgId },
+          (res) => {
+            if (isStaleTarget()) return;
             if (res?.success && res?.data) {
+              const createdMsg = res.data;
               setMessages((prev) => {
-                if (prev.some((m) => m.id === res.data.id || m.clientMsgId === clientMsgId)) return prev;
-                return [...prev, res.data];
+                if (
+                  prev.some(
+                    (m) =>
+                      (createdMsg.id && m.id === createdMsg.id) ||
+                      (m.clientMsgId && m.clientMsgId === clientMsgId)
+                  )
+                ) {
+                  return prev;
+                }
+                return [...prev, createdMsg];
               });
             }
           }
         );
       } else {
         try {
-          const res = await api.post<ApiResponse<any>>(`/api/consultations/${activeConsultationId}/messages`, {
+          const res = await api.post<ApiResponse<VetChatRawMessage>>(`/api/consultations/${targetCid}/messages`, {
             content,
             clientMsgId,
           });
+          if (isStaleTarget()) return;
           if (res.data.success && res.data.data) {
+            const createdMsg = res.data.data;
             setMessages((prev) => {
-              if (prev.some((m) => m.id === res.data.data.id || m.clientMsgId === clientMsgId)) return prev;
-              return [...prev, res.data.data];
+              if (
+                prev.some(
+                  (m) =>
+                    (createdMsg.id && m.id === createdMsg.id) ||
+                    (m.clientMsgId && m.clientMsgId === clientMsgId)
+                )
+              ) {
+                return prev;
+              }
+              return [...prev, createdMsg];
             });
           }
         } catch {
+          if (isStaleTarget()) return;
           notify("No se pudo enviar el mensaje.");
         }
       }
@@ -522,8 +573,14 @@ export function ChatPanel({
   };
 
   const handleAttachFile = async (file: File, isImage: boolean) => {
+    const targetCid = activeConsultationId;
+    const targetEpoch = consultationEpochRef.current;
+    const isStaleTarget = () =>
+      !isMountedRef.current ||
+      activeConsultationIdRef.current !== targetCid ||
+      consultationEpochRef.current !== targetEpoch;
     const localUrl = URL.createObjectURL(file);
-    if (!activeConsultationId) {
+    if (!targetCid) {
       send(petId, { text: isImage ? `📷 ${file.name}` : `📄 ${file.name}` });
       setMessages((prev) => [
         ...prev,
@@ -548,45 +605,59 @@ export function ChatPanel({
     try {
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("consultationId", activeConsultationId);
+      formData.append("consultationId", targetCid);
       const up = await api.post<ApiResponse<{ id?: string; url?: string }>>("/api/media", formData);
+      if (isStaleTarget()) return;
       if (up.data?.data?.url) attachmentUrl = up.data.data.url;
       else if (up.data?.data?.id) attachmentUrl = `/api/media/${up.data.data.id}`;
     } catch {
+      if (isStaleTarget()) return;
       // Fallback to local clinical attachment entry
     }
+
+    if (isStaleTarget()) return;
 
     const clientMsgId = `vet-file-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const content = `📎 Adjunto: ${file.name}`;
     try {
-      const res = await api.post<ApiResponse<any>>(`/api/consultations/${activeConsultationId}/messages`, {
+      const res = await api.post<ApiResponse<VetChatRawMessage>>(`/api/consultations/${targetCid}/messages`, {
         content,
         clientMsgId,
         ...(attachmentUrl ? { attachmentUrl } : {}),
       });
+      if (isStaleTarget()) return;
       if (res.data.success && res.data.data) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            ...res.data.data,
-            localDoc: {
-              title: file.name,
-              sub: `${isImage ? "Imagen" : "Documento"} clínico · ${(file.size / 1024).toFixed(1)} KB`,
-              bannerTag: isImage ? "FOTO / ARCHIVO CLÍNICO" : "DOCUMENTO ADJUNTO",
-              fileUrl: localUrl,
-              isImage,
-            },
-          },
-        ]);
+        const createdMsg = res.data.data;
+        const localDoc = {
+          title: file.name,
+          sub: `${isImage ? "Imagen" : "Documento"} clínico · ${(file.size / 1024).toFixed(1)} KB`,
+          bannerTag: isImage ? "FOTO / ARCHIVO CLÍNICO" : "DOCUMENTO ADJUNTO",
+          fileUrl: localUrl,
+          isImage,
+        };
+        setMessages((prev) => {
+          const existingIdx = prev.findIndex(
+            (m) =>
+              (createdMsg.id && m.id === createdMsg.id) ||
+              (m.clientMsgId && m.clientMsgId === clientMsgId)
+          );
+          if (existingIdx >= 0) {
+            const updated = [...prev];
+            updated[existingIdx] = { ...prev[existingIdx], ...createdMsg, localDoc };
+            return updated;
+          }
+          return [...prev, { ...createdMsg, localDoc }];
+        });
       }
     } catch {
+      if (isStaleTarget()) return;
       notify("No se pudo adjuntar el archivo.");
     }
   };
 
   const images = (thread?.msgs ?? []).filter((m) => m.kind === "image");
   const mappedMessages: ClinicalChatMessage[] = messages.map((m) => {
-    const mine = m.senderId === user?.id || m.mine;
+    const mine = Boolean((m.senderId && m.senderId === user?.id) || m.mine);
     const time = m.createdAt
       ? new Date(m.createdAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })
       : m.timeStr || "Ahora";
@@ -624,8 +695,8 @@ export function ChatPanel({
         showHeader={header}
         contactName={`${pet.tutor} · ${pet.name}`}
         avatarNode={<PetPhoto pet={pet} size={40} />}
-        statusText={`${connected || activeConsultationId ? "En línea" : "Conectado"} · ${pet.kind}, ${pet.breed}`}
-        isOnline={Boolean(connected || activeConsultationId)}
+        statusText={`${isConnected || activeConsultationId ? "En línea" : "Conectado"} · ${pet.kind}, ${pet.breed}`}
+        isOnline={Boolean(isConnected || activeConsultationId)}
         onBack={onBack}
         headerActions={actions}
         messages={mappedMessages}

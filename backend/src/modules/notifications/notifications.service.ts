@@ -2,6 +2,7 @@ import prisma from '../../lib/prisma';
 import { AppError } from '../../middlewares/errorHandler';
 import { RegisterPushTokenDTO } from './notifications.schemas';
 import { io } from '../../realtime/socket.server';
+import { logger, serializeError } from '../../lib/logger';
 
 export class NotificationsService {
   public async registerPushToken(userId: string, dto: RegisterPushTokenDTO) {
@@ -112,11 +113,11 @@ export class NotificationsService {
           },
           body: JSON.stringify(messages),
         }).catch((err) => {
-          console.warn('[Push Dispatch] Error sending push to Expo:', err);
+          logger.warn({ userId, err: serializeError(err) }, '[Push Dispatch] Error sending push to Expo');
         });
       }
     } catch (err) {
-      console.warn('[Push Dispatch] Error querying push tokens:', err);
+      logger.warn({ userId, err: serializeError(err) }, '[Push Dispatch] Error querying push tokens');
     }
 
     return notification;

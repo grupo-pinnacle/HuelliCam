@@ -1,6 +1,7 @@
 import { config } from '../config/env';
 import prisma from '../lib/prisma';
 import { emailService } from '../services/email.service';
+import { logger, serializeError } from '../lib/logger';
 
 const CHECKUP_INTERVAL_DAYS = 180;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -44,17 +45,17 @@ export class NotificationsScheduler {
   public start() {
     if (this.timer || this.bootTimer) return;
     if (!this.isEnabled()) {
-      console.log('[Scheduler] Email notifications scheduler disabled in this environment (set ENABLE_EMAIL_SCHEDULER=true to enable).');
+      logger.info('[Scheduler] Email notifications scheduler disabled in this environment (set ENABLE_EMAIL_SCHEDULER=true to enable).');
       return;
     }
 
     this.bootTimer = setTimeout(() => {
       this.bootTimer = null;
-      this.runChecks().catch((err) => console.warn('[Scheduler] Initial run failed:', err));
+      this.runChecks().catch((err) => logger.warn({ err: serializeError(err) }, '[Scheduler] Initial run failed'));
     }, 5000);
 
     this.timer = setInterval(() => {
-      this.runChecks().catch((err) => console.warn('[Scheduler] Periodic run failed:', err));
+      this.runChecks().catch((err) => logger.warn({ err: serializeError(err) }, '[Scheduler] Periodic run failed'));
     }, this.intervalMs);
   }
 

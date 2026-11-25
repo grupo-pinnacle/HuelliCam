@@ -38,4 +38,30 @@ describe('CORS Preflight & Header Policy', () => {
     expect(allowedHeaders).toContain('x-device-id');
     expect(allowedHeaders).toContain('authorization');
   });
+
+  it('should REJECT unauthorized or wildcard origins not present in strict whitelist', async () => {
+    const maliciousRes = await request(app)
+      .options('/api/auth/login')
+      .set('Origin', 'https://huellicam-attacker.vercel.app')
+      .set('Access-Control-Request-Method', 'POST');
+
+    expect(maliciousRes.headers['access-control-allow-origin']).toBeUndefined();
+
+    const ngrokRes = await request(app)
+      .options('/api/auth/login')
+      .set('Origin', 'https://random-tunnel.ngrok.io')
+      .set('Access-Control-Request-Method', 'POST');
+
+    expect(ngrokRes.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  it('should allow production whitelisted domain https://app.huellicam.com.ar', async () => {
+    const res = await request(app)
+      .options('/api/auth/login')
+      .set('Origin', 'https://app.huellicam.com.ar')
+      .set('Access-Control-Request-Method', 'POST');
+
+    expect(res.status).toBe(204);
+    expect(res.headers['access-control-allow-origin']).toBe('https://app.huellicam.com.ar');
+  });
 });

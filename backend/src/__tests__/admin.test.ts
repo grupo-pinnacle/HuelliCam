@@ -183,4 +183,28 @@ describe('Admin Module (/api/admin)', () => {
       });
     });
   });
+
+  describe('POST /api/admin/users/:id/revoke-sessions (VULN-07)', () => {
+    it('should unconditionally increment tokenVersion even when suspendAccount is false', async () => {
+      mockPrismaUser.findUnique.mockResolvedValueOnce(mockAdmin).mockResolvedValueOnce(mockPendingVet as any);
+      mockPrismaUser.update.mockResolvedValue({ ...mockPendingVet, tokenVersion: 2 } as any);
+      mockPrismaAudit.create.mockResolvedValue({} as any);
+
+      const res = await request(app)
+        .post('/api/admin/users/vet-pending-1/revoke-sessions')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ suspendAccount: false, reason: 'Security token refresh' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(mockPrismaUser.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'vet-pending-1' },
+          data: expect.objectContaining({
+            tokenVersion: { increment: 1 },
+          }),
+        })
+      );
+    });
+  });
 });

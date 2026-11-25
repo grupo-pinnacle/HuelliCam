@@ -3,12 +3,14 @@ import { Prisma } from '@prisma/client';
 import prisma from '../../lib/prisma';
 import { SocketData } from '../socket.types';
 import { createMessageSchema } from '../../modules/consultations/consultations.schemas';
+import { logger, serializeError } from '../../lib/logger';
 
 export const registerChatGateway = (
   io: Server,
   socket: Socket<any, any, any, SocketData>
 ) => {
   const user = socket.data.user;
+  const correlationId = socket.data.correlationId;
 
   // Event: join:consultation
   socket.on('join:consultation', async (data: { consultationId: string }) => {
@@ -30,7 +32,10 @@ export const registerChatGateway = (
         socket.join(`consultation:${data.consultationId}`);
       }
     } catch (err) {
-      console.error('Error in join:consultation socket event:', err);
+      logger.error(
+        { correlationId, socketId: socket.id, userId: user?.id, err: serializeError(err) },
+        'Error in join:consultation socket event'
+      );
     }
   });
 
@@ -40,7 +45,10 @@ export const registerChatGateway = (
       if (!data?.consultationId) return;
       socket.leave(`consultation:${data.consultationId}`);
     } catch (err) {
-      console.error('Error in leave:consultation socket event:', err);
+      logger.error(
+        { correlationId, socketId: socket.id, userId: user?.id, err: serializeError(err) },
+        'Error in leave:consultation socket event'
+      );
     }
   });
 
@@ -69,7 +77,10 @@ export const registerChatGateway = (
       if (!isAuth) return;
       io.to(`consultation:${data.consultationId}`).emit('call:answered', data);
     } catch (err) {
-      console.error('Error in call:answered event:', err);
+      logger.error(
+        { correlationId, socketId: socket.id, userId: user?.id, err: serializeError(err) },
+        'Error in call:answered event'
+      );
     }
   });
 
@@ -81,7 +92,10 @@ export const registerChatGateway = (
       if (!isAuth) return;
       io.to(`consultation:${data.consultationId}`).emit('call:rejected', data);
     } catch (err) {
-      console.error('Error in call:rejected event:', err);
+      logger.error(
+        { correlationId, socketId: socket.id, userId: user?.id, err: serializeError(err) },
+        'Error in call:rejected event'
+      );
     }
   });
 
@@ -96,7 +110,10 @@ export const registerChatGateway = (
         endedBy: user?.id,
       });
     } catch (err) {
-      console.error('Error in call:ended event:', err);
+      logger.error(
+        { correlationId, socketId: socket.id, userId: user?.id, err: serializeError(err) },
+        'Error in call:ended event'
+      );
     }
   });
 
@@ -228,7 +245,10 @@ export const registerChatGateway = (
           callback({ success: true, data: message });
         }
       } catch (err: any) {
-        console.error('Error handling message:send:', err);
+        logger.error(
+          { correlationId, socketId: socket.id, userId: user?.id, err: serializeError(err) },
+          'Error handling message:send'
+        );
         if (callback) {
           callback({
             success: false,

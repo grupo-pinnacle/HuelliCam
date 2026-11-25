@@ -3,6 +3,7 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import AuthExperience from '../pages/AuthExperience';
+import { ChangePasswordModal } from '../components/common/ChangePasswordModal';
 import api from '../services/api';
 
 const mockNavigate = vi.fn();
@@ -86,7 +87,6 @@ describe('Authenticated Password Change & /forgot-password Routing', () => {
   });
 
   it('submits ChangePasswordModal to PATCH /api/users/password cleanly', async () => {
-    const { ChangePasswordModal } = await import('../components/common/ChangePasswordModal');
     const onClose = vi.fn();
     vi.mocked(api.patch).mockResolvedValueOnce({
       data: { success: true, data: { accessToken: 'fresh-token-123' } },

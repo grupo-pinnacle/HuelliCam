@@ -11,3 +11,17 @@ describe('GET /health', () => {
     expect(response.body).toHaveProperty('database');
   });
 });
+
+describe('Payload Size Limit (VULN-10)', () => {
+  it('should reject request bodies exceeding 100kb with 413 PAYLOAD_TOO_LARGE', async () => {
+    // Generate a payload exceeding 100kb
+    const largeString = 'a'.repeat(105 * 1024);
+    const response = await request(app)
+      .post('/api/auth/login')
+      .set('Content-Type', 'application/json')
+      .send({ email: 'test@example.com', password: largeString });
+
+    expect(response.status).toBe(413);
+    expect(response.body.error.code).toBe('PAYLOAD_TOO_LARGE');
+  });
+});

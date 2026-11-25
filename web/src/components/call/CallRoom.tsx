@@ -3,6 +3,7 @@ import { LiveKitRoom, VideoConference } from '@livekit/components-react';
 import '@livekit/components-styles';
 import { PreJoinModal } from './PreJoinModal';
 import { postMobileBridgeMessage } from '../../lib/mobileBridge';
+import { LIVEKIT_ROOM_OPTIONS } from '../../lib/livekitConfig';
 
 interface CallRoomProps {
   token: string;
@@ -84,6 +85,7 @@ export const CallRoom: React.FC<CallRoomProps> = ({
         token={token}
         serverUrl={serverUrl}
         connect={true}
+        options={LIVEKIT_ROOM_OPTIONS}
         onDisconnected={handleDisconnected}
         data-lk-theme="default"
         style={{ height: '100%' }}

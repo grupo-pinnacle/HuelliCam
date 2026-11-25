@@ -11,6 +11,9 @@ process.env.JWT_REFRESH_SECRET =
   process.env.REFRESH_TOKEN_SECRET ||
   'dev-refresh-secret-key-change-in-production-min-32-chars-long';
 process.env.REFRESH_TOKEN_SECRET = process.env.JWT_REFRESH_SECRET;
+process.env.LIVEKIT_URL = process.env.LIVEKIT_URL || 'wss://huellicam-dev.livekit.cloud';
+process.env.LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY || 'devkey';
+process.env.LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET || 'secret';
 process.env.STORAGE_DRIVER = process.env.STORAGE_DRIVER || 'local';
 process.env.AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME || 'huellicam-media';
 

@@ -1,5 +1,6 @@
 import { Resend } from 'resend';
 import { config } from '../config/env';
+import { logger, serializeError } from '../lib/logger';
 
 export interface EmailOptions {
   to: string;
@@ -15,7 +16,9 @@ export class EmailService {
   private readonly fromEmail: string;
 
   constructor() {
-    this.fromEmail = config.EMAIL_FROM && !config.EMAIL_FROM.includes('huellicam.com.ar') ? config.EMAIL_FROM : RESEND_FALLBACK_FROM;
+    this.fromEmail = config.EMAIL_FROM && config.EMAIL_FROM.includes('huellicam.com.ar')
+      ? config.EMAIL_FROM
+      : (config.EMAIL_FROM || RESEND_FALLBACK_FROM);
     if (config.RESEND_API_KEY) {
       this.resend = new Resend(config.RESEND_API_KEY);
     }
@@ -25,14 +28,15 @@ export class EmailService {
     const { to, subject, html, text } = options;
 
     if (!this.resend) {
-      // Entorno local de desarrollo o sin API KEY: logging claro y seguro
-      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      console.log('📧 [MOCK EMAIL DISPATCHER - RESEND NOT CONFIGURED]');
-      console.log(`Para: ${to}`);
-      console.log(`Asunto: ${subject}`);
-      console.log('Contenido (HTML):');
-      console.log(html);
-      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      logger.info(
+        {
+          to,
+          subject,
+          mock: true,
+          ...(process.env.NODE_ENV !== 'production' ? { html } : {}),
+        },
+        'Mock email dispatcher (Resend not configured)'
+      );
       return true;
     }
 
@@ -47,7 +51,10 @@ export class EmailService {
 
       if (response.error) {
         if (this.fromEmail !== RESEND_FALLBACK_FROM) {
-          console.warn(`[EmailService] Resend rejected sender "${this.fromEmail}". Retrying with fallback "${RESEND_FALLBACK_FROM}"...`);
+          logger.warn(
+            { fromEmail: this.fromEmail, fallbackFrom: RESEND_FALLBACK_FROM },
+            'Resend rejected sender, retrying with fallback'
+          );
           response = await this.resend.emails.send({
             from: RESEND_FALLBACK_FROM,
             to,
@@ -59,18 +66,17 @@ export class EmailService {
       }
 
       if (response.error) {
-        console.warn(`[EmailService] Resend error delivering to ${to}:`, response.error);
+        logger.warn({ to, resendError: response.error }, 'Resend error delivering email');
         if (process.env.NODE_ENV !== 'production') {
-          console.log(`[EmailService] Non-production fallback code dump for ${to}:`);
-          console.log(text || html);
+          logger.debug({ to, preview: text || html }, 'Non-production email fallback dump');
         }
         return false;
       }
 
-      console.log(`[EmailService] Email sent successfully to ${to} (ID: ${response.data?.id})`);
+      logger.info({ to, emailId: response.data?.id }, 'Email sent successfully');
       return true;
     } catch (err) {
-      console.error(`[EmailService] Fatal exception sending email to ${to}:`, err);
+      logger.error({ to, err: serializeError(err) }, 'Fatal exception sending email');
       return false;
     }
   }
@@ -97,7 +103,7 @@ export class EmailService {
           <p>Hola <strong>${userName}</strong>,</p>
           <p>Recibimos una solicitud para restablecer la contraseña de tu cuenta. Ingresá este código de 6 dígitos en la aplicación:</p>
           <div class="code-box">${code}</div>
-          <p>Este código expira en <strong>15 minutos</strong>. Si no solicitaste este cambio, podés ignorar este correo; tu cuenta sigue segura.</p>
+          <p>Este código expira en <strong>10 minutos</strong>. Si no solicitaste este cambio, podés ignorar este correo; tu cuenta sigue segura.</p>
           <div class="footer">
             © ${new Date().getFullYear()} Huellicam · Telemedicina y Cuidado Veterinario Integral
           </div>

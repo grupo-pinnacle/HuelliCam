@@ -2,9 +2,8 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button, EmptyState, Field, Icon, Logo, MessageBubble, Modal, PageHeader, Status, Tabs, Toast, go, photos, type IconName, type MessageState } from "../shared";
 import { useAuth } from "../context/AuthContext";
-import api, { getAccessToken } from "../services/api";
-import { io } from "socket.io-client";
-import { getWsUrl } from "../lib/ws";
+import { useSocket } from "../context/SocketContext";
+import api from "../services/api";
 import ClientScopedStyle from "../styles/ClientScopedStyle";
 import type { ApiResponse, Pet as BackendPet, Consultation as BackendConsultation, Prescription as BackendPrescription } from "../types";
 import { parseConsultationNotes, formatConsultationNotes } from "../lib/consultationNotes";
@@ -1844,9 +1843,25 @@ function saveChatMessages(chatId: string, messages: WAMessageItem[]) {
   } catch {}
 }
 
+interface ClientChatRawMessage {
+  id?: string;
+  clientMsgId?: string;
+  consultationId?: string;
+  senderId?: string;
+  content: string;
+  createdAt?: string;
+  sender?: {
+    firstName?: string;
+    lastName?: string;
+  };
+}
+
 export function MessagesPage() {
   const { pets, consultations } = useClientData();
   const { user } = useAuth();
+  const { socket, joinConsultation, leaveConsultation } = useSocket();
+  const roomActionsRef = useRef({ joinConsultation, leaveConsultation });
+  roomActionsRef.current = { joinConsultation, leaveConsultation };
   const petName = pets[0]?.name || "tu mascota";
 
   const [activeChip, setActiveChip] = useState<string>("Todos");
@@ -1944,58 +1959,19 @@ export function MessagesPage() {
     }
   }, [consultationsKey]);
 
+  const activeMatchingCons = consultations.find((c) => c.id === activeChatId);
+  const activeConsultationId = activeMatchingCons?.id || "";
+  const activeVetNameRef = useRef<string>("");
+  activeVetNameRef.current = activeMatchingCons?.vet || "";
+
   useEffect(() => {
-    const matchingCons = consultations.find((c) => c.id === activeChatId);
-    if (!matchingCons) return;
-
-    const token = getAccessToken();
-    const wsUrl = getWsUrl();
-    const s = io(wsUrl, {
-      withCredentials: true,
-      transports: ["polling", "websocket"],
-      reconnection: true,
-      auth: { token: token ? `Bearer ${token}` : undefined },
-    });
-
-    s.on("connect", () => {
-      s.emit("join:consultation", { consultationId: matchingCons.id });
-    });
-
-    s.on("message:new", (msg: any) => {
-      const isMine = msg.senderId === user?.id;
-      const time = msg.createdAt
-        ? new Date(msg.createdAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })
-        : "Ahora";
-      const newWAMsg: WAMessageItem = {
-        id: msg.id || msg.clientMsgId,
-        sender: isMine ? "me" : "them",
-        senderName: msg.sender ? `${msg.sender.firstName} ${msg.sender.lastName || ""}`.trim() : matchingCons.vet,
-        text: msg.content,
-        time,
-        state: "read",
-      };
-
-      setConversations((prev) =>
-        prev.map((c) => {
-          if (c.id === matchingCons.id) {
-            if (c.messages.some((m) => m.id === newWAMsg.id)) return c;
-            const updated = [...c.messages, newWAMsg];
-            saveChatMessages(c.id, updated);
-            return {
-              ...c,
-              lastTime: time,
-              preview: msg.content,
-              messages: updated,
-            };
-          }
-          return c;
-        })
-      );
-    });
+    if (!activeConsultationId) return;
+    let cancelled = false;
 
     api
-      .get<ApiResponse<any[]>>(`/api/consultations/${matchingCons.id}/messages`)
+      .get<ApiResponse<ClientChatRawMessage[]>>(`/api/consultations/${activeConsultationId}/messages`)
       .then((res) => {
+        if (cancelled) return;
         if (res.data.success && res.data.data) {
           const mappedMsgs: WAMessageItem[] = res.data.data.map((m) => {
             const isMine = m.senderId === user?.id;
@@ -2003,9 +1979,9 @@ export function MessagesPage() {
               ? new Date(m.createdAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })
               : "Ahora";
             return {
-              id: m.id || m.clientMsgId,
+              id: m.id || m.clientMsgId || `${time}-${Math.random()}`,
               sender: isMine ? "me" : "them",
-              senderName: m.sender ? `${m.sender.firstName} ${m.sender.lastName || ""}`.trim() : matchingCons.vet,
+              senderName: m.sender ? `${m.sender.firstName ?? ""} ${m.sender.lastName ?? ""}`.trim() : activeVetNameRef.current,
               text: m.content,
               time,
               state: "read",
@@ -2014,7 +1990,7 @@ export function MessagesPage() {
 
           setConversations((prev) =>
             prev.map((c) => {
-              if (c.id === matchingCons.id) {
+              if (c.id === activeConsultationId) {
                 const merged = mappedMsgs.length > 0 ? mappedMsgs : c.messages;
                 saveChatMessages(c.id, merged);
                 return {
@@ -2030,9 +2006,54 @@ export function MessagesPage() {
       .catch(() => {});
 
     return () => {
-      s.disconnect();
+      cancelled = true;
     };
-  }, [activeChatId, consultations, user?.id]);
+  }, [activeConsultationId, user?.id]);
+
+  useEffect(() => {
+    if (!activeConsultationId) return;
+    roomActionsRef.current.joinConsultation(activeConsultationId);
+
+    const handleNewMessage = (msg: ClientChatRawMessage) => {
+      if (msg?.consultationId && msg.consultationId !== activeConsultationId) return;
+      const isMine = msg.senderId === user?.id;
+      const time = msg.createdAt
+        ? new Date(msg.createdAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })
+        : "Ahora";
+      const newWAMsg: WAMessageItem = {
+        id: msg.id || msg.clientMsgId || `${time}-${Math.random()}`,
+        sender: isMine ? "me" : "them",
+        senderName: msg.sender ? `${msg.sender.firstName ?? ""} ${msg.sender.lastName ?? ""}`.trim() : activeVetNameRef.current,
+        text: msg.content,
+        time,
+        state: "read",
+      };
+
+      setConversations((prev) =>
+        prev.map((c) => {
+          if (c.id === activeConsultationId) {
+            if (c.messages.some((m) => m.id === newWAMsg.id)) return c;
+            const updated = [...c.messages, newWAMsg];
+            saveChatMessages(c.id, updated);
+            return {
+              ...c,
+              lastTime: time,
+              preview: msg.content,
+              messages: updated,
+            };
+          }
+          return c;
+        })
+      );
+    };
+
+    socket?.on?.("message:new", handleNewMessage);
+
+    return () => {
+      socket?.off?.("message:new", handleNewMessage);
+      roomActionsRef.current.leaveConsultation(activeConsultationId);
+    };
+  }, [socket, activeConsultationId, user?.id]);
 
   const handleSelectChat = (chatId: string) => {
     setActiveChatId(chatId);

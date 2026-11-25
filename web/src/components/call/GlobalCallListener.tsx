@@ -1,12 +1,10 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { io, Socket } from 'socket.io-client';
-import { useAuth } from '../../context/AuthContext';
+import { useSocket } from '../../context/SocketContext';
 import { startRingtone, stopRingtone } from '../../lib/ringtone';
-import { Video, PhoneCall, PhoneOff, Stethoscope, ShieldCheck } from 'lucide-react';
+import { Video, PhoneCall, PhoneOff, ShieldCheck } from 'lucide-react';
 
-import api, { getAccessToken, getDeviceId } from '../../services/api';
-import { getWsUrl } from '../../lib/ws';
+import api from '../../services/api';
 
 interface IncomingCallData {
   consultationId: string;
@@ -15,67 +13,41 @@ interface IncomingCallData {
 }
 
 export const GlobalCallListener: React.FC = () => {
-  const { user } = useAuth();
+  const { socket, emitEvent } = useSocket();
   const navigate = useNavigate();
   const [incomingCall, setIncomingCall] = useState<IncomingCallData | null>(null);
-  const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
-    if (!user) return;
+    if (typeof window === 'undefined') return;
+    const handleSessionTerminated = () => {
+      stopRingtone();
+      setIncomingCall(null);
+    };
+    window.addEventListener('huellicam:session_terminated', handleSessionTerminated);
+    return () => {
+      window.removeEventListener('huellicam:session_terminated', handleSessionTerminated);
+    };
+  }, []);
 
-    const wsUrl = getWsUrl();
-    const token = getAccessToken();
-    const deviceId = getDeviceId();
-    const socket = io(wsUrl, {
-      withCredentials: true,
-      transports: ['polling', 'websocket'],
-      reconnection: true,
-      auth: {
-        token: token ? `Bearer ${token}` : undefined,
-        deviceId,
-      },
-    });
-    socketRef.current = socket;
+  useEffect(() => {
+    if (!socket) {
+      stopRingtone();
+      setIncomingCall(null);
+      return;
+    }
 
-    socket.on('call:incoming', (data: IncomingCallData) => {
+    const handleIncomingCall = (data: IncomingCallData) => {
       setIncomingCall(data);
       startRingtone();
-    });
+    };
 
-    socket.on('auth:session_terminated', (data: { reason: string; message: string }) => {
-      stopRingtone();
-      setIncomingCall(null);
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(
-          new CustomEvent('huellicam:session_terminated', {
-            detail: data,
-          })
-        );
-      }
-    });
-
-    socket.on('session:invalidated', (data: { reason?: string; message?: string }) => {
-      stopRingtone();
-      setIncomingCall(null);
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(
-          new CustomEvent('huellicam:session_terminated', {
-            detail: {
-              reason: data?.reason || 'MULTIPLE_DEVICES_DETECTED',
-              message: data?.message || 'Tu sesión fue transferida a otro dispositivo.',
-            },
-          })
-        );
-      }
-    });
-
-    socket.on('consultation:critical_resume', (data: { consultationId: string }) => {
+    const handleCriticalResume = (data: { consultationId: string }) => {
       stopRingtone();
       setIncomingCall(null);
       if (data?.consultationId) {
         navigate(`/call/${data.consultationId}`);
       }
-    });
+    };
 
     const handleDismissCall = (payload?: { consultationId?: string }) => {
       stopRingtone();
@@ -84,21 +56,19 @@ export const GlobalCallListener: React.FC = () => {
       );
     };
 
-    socket.on('call:ended', handleDismissCall);
-    socket.on('call:cancelled', handleDismissCall);
+    socket.on?.('call:incoming', handleIncomingCall);
+    socket.on?.('consultation:critical_resume', handleCriticalResume);
+    socket.on?.('call:ended', handleDismissCall);
+    socket.on?.('call:cancelled', handleDismissCall);
 
     return () => {
       stopRingtone();
-      socket.off('call:incoming');
-      socket.off('auth:session_terminated');
-      socket.off('session:invalidated');
-      socket.off('consultation:critical_resume');
-      socket.off('call:ended', handleDismissCall);
-      socket.off('call:cancelled', handleDismissCall);
-      socket.disconnect();
-      socketRef.current = null;
+      socket.off?.('call:incoming', handleIncomingCall);
+      socket.off?.('consultation:critical_resume', handleCriticalResume);
+      socket.off?.('call:ended', handleDismissCall);
+      socket.off?.('call:cancelled', handleDismissCall);
     };
-  }, [user, navigate]);
+  }, [socket, navigate]);
 
   const handleAccept = async () => {
     if (!incomingCall) return;
@@ -117,9 +87,7 @@ export const GlobalCallListener: React.FC = () => {
   const handleReject = () => {
     if (!incomingCall) return;
     stopRingtone();
-    if (socketRef.current) {
-      socketRef.current.emit('call:rejected', { consultationId: incomingCall.consultationId });
-    }
+    emitEvent('call:rejected', { consultationId: incomingCall.consultationId });
     setIncomingCall(null);
   };
 

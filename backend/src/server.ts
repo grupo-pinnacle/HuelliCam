@@ -1,103 +1,16 @@
 import app from './app';
-import { initializeSocketServer } from './realtime/socket.server';
+import { initializeSocketServer, whenSocketRedisReady } from './realtime/socket.server';
+import { disconnectQueue } from './realtime/disconnectQueue';
+import { closeAllRedisClients } from './lib/redis';
 import prisma from './lib/prisma';
 import { config } from './config/env';
+import { notificationsScheduler } from './jobs/notifications.scheduler';
+import { logger, serializeError } from './lib/logger';
 
 const PORT = config.PORT || process.env.PORT || 3001;
 
-export async function ensureDatabaseSchema(): Promise<void> {
-  if (process.env.NODE_ENV === 'test') return;
-  try {
-    await prisma.$executeRawUnsafe(`
-      ALTER TABLE consultations 
-        ADD COLUMN IF NOT EXISTS active_device_id TEXT,
-        ADD COLUMN IF NOT EXISTS transport_status TEXT DEFAULT 'OFFLINE',
-        ADD COLUMN IF NOT EXISTS state_version INTEGER DEFAULT 1,
-        ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ,
-        ADD COLUMN IF NOT EXISTS livekit_room_sid TEXT;
-    `);
-
-    const enumValues = [
-      'TRIAGE_CRITICAL_QUEUED',
-      'CLAIM_PENDING_SYNC',
-      'LIVEKIT_CONNECTING',
-      'IN_CALL_ACTIVE',
-      'AWAITING_EMERGENCY_CALLBACK',
-      'HANDOFF_IN_PROGRESS',
-    ];
-    for (const val of enumValues) {
-      try {
-        await prisma.$executeRawUnsafe(`ALTER TYPE "ConsultationStatus" ADD VALUE IF NOT EXISTS '${val}';`);
-      } catch {
-        // Ignored if type does not exist or already added
-      }
-    }
-
-    await prisma.$executeRawUnsafe(`
-      CREATE TABLE IF NOT EXISTS consultation_audit_log (
-        id BIGSERIAL PRIMARY KEY,
-        consultation_id TEXT NOT NULL REFERENCES consultations(id) ON DELETE CASCADE,
-        event_type TEXT NOT NULL,
-        previous_state TEXT,
-        new_state TEXT,
-        actor_id TEXT,
-        device_id TEXT,
-        metadata JSONB DEFAULT '{}'::jsonb,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-
-    await prisma.$executeRawUnsafe(`
-      CREATE INDEX IF NOT EXISTS idx_audit_log_consultation_created 
-        ON consultation_audit_log (consultation_id, created_at DESC);
-    `);
-
-    await prisma.$executeRawUnsafe(`
-      CREATE TABLE IF NOT EXISTS password_reset_tokens (
-        id TEXT PRIMARY KEY,
-        email TEXT NOT NULL,
-        code_hash TEXT NOT NULL,
-        expires_at TIMESTAMPTZ NOT NULL,
-        used_at TIMESTAMPTZ,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-
-    await prisma.$executeRawUnsafe(`
-      CREATE INDEX IF NOT EXISTS idx_password_reset_email_exp 
-        ON password_reset_tokens (email, expires_at);
-    `);
-
-    await prisma.$executeRawUnsafe(`
-      ALTER TABLE pets
-        ADD COLUMN IF NOT EXISTS birth_date TIMESTAMPTZ;
-    `);
-
-    await prisma.$executeRawUnsafe(`
-      CREATE TABLE IF NOT EXISTS email_dispatch_logs (
-        id TEXT PRIMARY KEY,
-        dedupe_key TEXT NOT NULL UNIQUE,
-        type TEXT NOT NULL,
-        entity_id TEXT,
-        recipient_email TEXT NOT NULL,
-        sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-    `);
-
-    await prisma.$executeRawUnsafe(`
-      CREATE INDEX IF NOT EXISTS idx_email_dispatch_type_entity_sent
-        ON email_dispatch_logs (type, entity_id, sent_at);
-    `);
-  } catch (err) {
-    console.warn('[Schema Sync] Database schema self-check notice:', err);
-  }
-}
-
-import { notificationsScheduler } from './jobs/notifications.scheduler';
-
-const server = app.listen(PORT, async () => {
-  console.log(`🚀 Huellicam Backend Server running on port ${PORT}`);
-  await ensureDatabaseSchema();
+const server = app.listen(PORT, () => {
+  logger.info({ port: PORT }, `Huellicam Backend Server running on port ${PORT}`);
   if (process.env.NODE_ENV !== 'test') {
     notificationsScheduler.start();
   }
@@ -105,47 +18,92 @@ const server = app.listen(PORT, async () => {
 
 const io = initializeSocketServer(server);
 
+const redisReadyPromise =
+  typeof whenSocketRedisReady === 'function' ? whenSocketRedisReady() : Promise.resolve();
+
+redisReadyPromise.catch((err) => {
+  const isProduction = (process.env.NODE_ENV || config.NODE_ENV) === 'production';
+  if (isProduction) {
+    logger.fatal({ err: serializeError(err) }, 'Fallo inicializando Redis en producción. Apagando servidor');
+    void gracefulShutdown('REDIS_CONNECTION_FAILED', 1);
+  }
+});
+
 let isShuttingDown = false;
 
-export const gracefulShutdown = async (signal: string) => {
+export const gracefulShutdown = async (signal: string, exitCode = 0) => {
   if (isShuttingDown) return;
   isShuttingDown = true;
 
-  console.log(`\n🛑 Recibida señal ${signal}. Iniciando drench & Graceful Shutdown...`);
+  logger.info({ signal }, `Recibida señal ${signal}. Iniciando Graceful Shutdown`);
 
   // Force exit timeout after 10 seconds if connections don't drain
   const forceExitTimeout = setTimeout(() => {
-    console.error('⚠️ Graceful shutdown excedió tiempo límite (10s). Forzando salida.');
+    logger.error('Graceful shutdown excedió tiempo límite (10s). Forzando salida.');
     process.exit(1);
   }, 10000);
 
   try {
-    // 1. Stop accepting new HTTP connections
-    await new Promise<void>((resolve) => {
-      server.close((err) => {
-        if (err) console.error('Error cerrando HTTP server:', err);
-        else console.log('✅ Servidor HTTP cerrado.');
-        resolve();
-      });
-    });
+    // 1. Flush pre-shutdown debounced disconnects BEFORE closing io / httpServer
+    //    (httpServer.once('close') invokes disconnectQueue.clear(), which would wipe pending entries)
+    await disconnectQueue.flushAll();
 
-    // 2. Disconnect Socket.io clients
+    // 2. Close Socket.io first so connected WebSockets don't block httpServer.close().
+    //    currentIo.close() sets isClosing = true synchronously (suppressing teardown enqueues)
+    //    and closes httpServer internally.
     if (io) {
-      io.close();
-      console.log('✅ Socket.io gateway desconectado.');
+      await new Promise<void>((resolve) => {
+        try {
+          Promise.resolve(
+            io.close((err) => {
+              if (err && (err as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') {
+                logger.error({ err: serializeError(err) }, 'Error cerrando Socket.io / HTTP server');
+              }
+              resolve();
+            })
+          ).catch((err) => {
+            logger.error({ err: serializeError(err) }, 'Error cerrando Socket.io');
+            resolve();
+          });
+        } catch (err) {
+          logger.error({ err: serializeError(err) }, 'Error cerrando Socket.io');
+          resolve();
+        }
+      });
+      logger.info('Socket.io gateway desconectado.');
     }
 
-    // 3. Disconnect Prisma ORM
+    // 3. Stop accepting new HTTP connections if server is still listening (e.g. io absent)
+    if (server.listening) {
+      await new Promise<void>((resolve) => {
+        server.close((err) => {
+          if (err) logger.error({ err: serializeError(err) }, 'Error cerrando HTTP server');
+          else logger.info('Servidor HTTP cerrado.');
+          resolve();
+        });
+      });
+    } else {
+      logger.info('Servidor HTTP cerrado.');
+    }
+
+    // 4. Discard any teardown-induced disconnect timers from io.close()
+    disconnectQueue.clear();
+
+    // 5. Close all Redis clients cleanly after io.close() / adapter.close()
+    await closeAllRedisClients();
+    logger.info('Conexiones Redis cerradas.');
+
+    // 6. Disconnect Prisma ORM
     await prisma.$disconnect();
-    console.log('✅ Conexión con PostgreSQL / Prisma cerrada.');
+    logger.info('Conexión con PostgreSQL / Prisma cerrada.');
 
     clearTimeout(forceExitTimeout);
-    console.log('🎉 Graceful Shutdown completado con éxito.');
+    logger.info('Graceful Shutdown completado con éxito.');
     if (process.env.NODE_ENV !== 'test') {
-      process.exit(0);
+      process.exit(exitCode);
     }
   } catch (error) {
-    console.error('Error durante Graceful Shutdown:', error);
+    logger.error({ err: serializeError(error) }, 'Error durante Graceful Shutdown');
     clearTimeout(forceExitTimeout);
     if (process.env.NODE_ENV !== 'test') {
       process.exit(1);

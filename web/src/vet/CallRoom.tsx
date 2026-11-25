@@ -9,11 +9,12 @@ import { ClinicalChatThread, type ClinicalChatDoc, type ClinicalChatMessage } fr
 import { TriageBadge, VetProvider, useVet } from "./vetkit";
 import { EvolutionEditor, FichaClinica } from "./Consultations";
 import { useAuth } from "../context/AuthContext";
-import api, { getAccessToken, getDeviceId } from "../services/api";
+import { useSocket } from "../context/SocketContext";
+import { LIVEKIT_ROOM_OPTIONS } from "../lib/livekitConfig";
+import api from "../services/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ApiResponse, Consultation as BackendConsultation } from "../types";
 import { mapBackendPetToPatient } from "./mappers";
-import { io, Socket } from "socket.io-client";
 import { LiveKitRoom, VideoConference, useLocalParticipant } from "@livekit/components-react";
 import "@livekit/components-styles";
 import { ReviewModal } from "../components/ui/ReviewModal";
@@ -636,39 +637,53 @@ function CallChatPanel({
   onNewIncomingMessage?: () => void;
   onClosePanel?: () => void;
 }) {
+  const { socket, isConnected, joinConsultation, leaveConsultation, emitEvent } = useSocket();
+  const roomActionsRef = useRef({ joinConsultation, leaveConsultation });
+  roomActionsRef.current = { joinConsultation, leaveConsultation };
   const [messages, setMessages] = useState<CallChatRawMessage[]>([]);
   const [text, setText] = useState("");
-  const [socket, setSocket] = useState<Socket | null>(null);
-  const [connected, setConnected] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const onNewIncomingRef = useRef(onNewIncomingMessage);
   onNewIncomingRef.current = onNewIncomingMessage;
+  const activeConsultationIdRef = useRef(consultationId);
+  const consultationEpochRef = useRef(0);
+  if (activeConsultationIdRef.current !== consultationId) {
+    activeConsultationIdRef.current = consultationId;
+    consultationEpochRef.current += 1;
+  }
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
-    const wsUrl = getWsUrl();
-    const token = getAccessToken();
-    const s = io(wsUrl, {
-      withCredentials: true,
-      transports: ["polling", "websocket"],
-      reconnection: true,
-      auth: {
-        token: token ? `Bearer ${token}` : undefined,
-      },
-    });
-    setSocket(s);
+    if (!consultationId) return;
+    let cancelled = false;
+    roomActionsRef.current.joinConsultation(consultationId);
 
-    s.on("connect", () => {
-      setConnected(true);
-      s.emit("join:consultation", { consultationId });
-    });
+    api
+      .get<ApiResponse<CallChatRawMessage[]>>(`/api/consultations/${consultationId}/messages`)
+      .then((res) => {
+        if (!cancelled && res.data.success && res.data.data) {
+          setMessages(res.data.data);
+        }
+      })
+      .catch(() => {});
 
-    s.on("connect_error", (err) => {
-      console.warn("Socket connect error in CallChatPanel:", err.message);
-    });
+    return () => {
+      cancelled = true;
+      roomActionsRef.current.leaveConsultation(consultationId);
+    };
+  }, [consultationId]);
 
-    s.on("disconnect", () => setConnected(false));
+  useEffect(() => {
+    if (!socket || !consultationId) return;
 
-    s.on("message:new", (msg: CallChatRawMessage) => {
+    const handleMessageNew = (msg: CallChatRawMessage) => {
+      if (msg.consultationId && msg.consultationId !== consultationId) return;
       const fromOther = Boolean(msg.senderId && msg.senderId !== user?.id);
       setMessages((prev) => {
         const existingIdx = prev.findIndex(
@@ -684,25 +699,14 @@ function CallChatPanel({
         }
         return [...prev, { ...msg, status: "sent" }];
       });
-    });
+    };
 
-    api
-      .get<ApiResponse<CallChatRawMessage[]>>(`/api/consultations/${consultationId}/messages`)
-      .then((res) => {
-        if (res.data.success && res.data.data) {
-          setMessages(res.data.data);
-        }
-      })
-      .catch(() => {});
+    socket.on?.("message:new", handleMessageNew);
 
     return () => {
-      s.off("connect");
-      s.off("connect_error");
-      s.off("disconnect");
-      s.off("message:new");
-      s.disconnect();
+      socket.off?.("message:new", handleMessageNew);
     };
-  }, [consultationId, user?.id]);
+  }, [socket, consultationId, user?.id]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -712,11 +716,19 @@ function CallChatPanel({
     newContent: string,
     options?: { attachmentUrl?: string; localDoc?: ClinicalChatDoc }
   ) => {
+    const targetCid = consultationId;
+    const targetEpoch = consultationEpochRef.current;
+    const isStaleTarget = () =>
+      !isMountedRef.current ||
+      activeConsultationIdRef.current !== targetCid ||
+      consultationEpochRef.current !== targetEpoch;
+    if (isStaleTarget()) return;
+
     const clientMsgId = `call-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const optimisticMsg: CallChatRawMessage = {
       id: clientMsgId,
       clientMsgId,
-      consultationId,
+      consultationId: targetCid,
       content: newContent,
       senderId: user?.id,
       sender: user ? { firstName: user.firstName, lastName: user.lastName } : undefined,
@@ -728,16 +740,17 @@ function CallChatPanel({
 
     setMessages((prev) => [...prev, optimisticMsg]);
 
-    if (socket && connected) {
-      socket.emit(
+    if (socket && isConnected) {
+      emitEvent<{ success?: boolean; data?: CallChatRawMessage }>(
         "message:send",
         {
-          consultationId,
+          consultationId: targetCid,
           content: newContent,
           clientMsgId,
           ...(options?.attachmentUrl ? { attachmentUrl: options.attachmentUrl } : {}),
         },
-        (res: { success?: boolean; data?: CallChatRawMessage }) => {
+        (res) => {
+          if (isStaleTarget()) return;
           if (res?.success && res?.data) {
             setMessages((prev) =>
               prev.map((m) =>
@@ -754,13 +767,14 @@ function CallChatPanel({
 
     try {
       const res = await api.post<ApiResponse<CallChatRawMessage>>(
-        `/api/consultations/${consultationId}/messages`,
+        `/api/consultations/${targetCid}/messages`,
         {
           content: newContent,
           clientMsgId,
           ...(options?.attachmentUrl ? { attachmentUrl: options.attachmentUrl } : {}),
         }
       );
+      if (isStaleTarget()) return;
       if (res.data.success && res.data.data) {
         setMessages((prev) =>
           prev.map((m) =>
@@ -771,6 +785,7 @@ function CallChatPanel({
         );
       }
     } catch (err) {
+      if (isStaleTarget()) return;
       console.error("Error sending message via HTTP fallback:", err);
       setMessages((prev) =>
         prev.map((m) =>
@@ -788,6 +803,14 @@ function CallChatPanel({
   };
 
   const handleAttachFile = async (file: File, isImage: boolean) => {
+    const targetCid = consultationId;
+    const targetEpoch = consultationEpochRef.current;
+    const isStaleTarget = () =>
+      !isMountedRef.current ||
+      activeConsultationIdRef.current !== targetCid ||
+      consultationEpochRef.current !== targetEpoch;
+    if (isStaleTarget()) return;
+
     const localPreviewUrl = URL.createObjectURL(file);
     const sizeKB = (file.size / 1024).toFixed(1);
     const localDoc: ClinicalChatDoc = {
@@ -803,11 +826,12 @@ function CallChatPanel({
     try {
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("consultationId", consultationId);
+      formData.append("consultationId", targetCid);
       const uploadRes = await api.post<ApiResponse<{ id?: string; url?: string }>>(
         "/api/media",
         formData
       );
+      if (isStaleTarget()) return;
       const uploadedId = uploadRes.data?.data?.id;
       const uploadedUrl = uploadRes.data?.data?.url;
       if (uploadedUrl) {
@@ -816,8 +840,11 @@ function CallChatPanel({
         uploadedAttachmentUrl = `/api/media/${uploadedId}`;
       }
     } catch (err) {
+      if (isStaleTarget()) return;
       console.warn("Media upload fallback to clinical chat entry:", err);
     }
+
+    if (isStaleTarget()) return;
 
     await dispatchMessage(`📎 Adjunto: ${file.name}`, {
       attachmentUrl: uploadedAttachmentUrl,
@@ -858,11 +885,11 @@ function CallChatPanel({
       contactName={otherName}
       contactInitials={otherInitials}
       statusText={
-        connected
+        isConnected
           ? `En consulta activa · ${otherSubtitle}`
           : `Conectando canal clínico… · ${otherSubtitle}`
       }
-      isOnline={connected}
+      isOnline={isConnected}
       headerActions={
         onClosePanel ? (
           <button
@@ -895,10 +922,13 @@ export type CallRoomPanel = "" | "Chat" | "Ficha" | "Evolución";
 
 function Room({ id }: { id: string }) {
   const { user } = useAuth();
+  const { socket, joinConsultation, leaveConsultation, emitEvent } = useSocket();
+  const roomActionsRef = useRef({ joinConsultation, leaveConsultation });
+  roomActionsRef.current = { joinConsultation, leaveConsultation };
   const queryClient = useQueryClient();
   const { consults, queue, finish } = useVet();
 
-  // Fetch real consultation data from PostgreSQL
+  // Fetch real consultation data from PostgreSQL (reactive invalidation via SocketContext)
   const { data: consultation, refetch: refetchConsultation } = useQuery<BackendConsultation | null>({
     queryKey: ["consultation", id],
     queryFn: async () => {
@@ -908,10 +938,6 @@ function Room({ id }: { id: string }) {
       } catch {
         return null;
       }
-    },
-    refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      return status === "WAITING" ? 3000 : status === "ACTIVE" ? 4000 : false;
     },
   });
 
@@ -955,6 +981,19 @@ function Room({ id }: { id: string }) {
   const endingRef = useRef(false);
   const disconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
   endingRef.current = ending;
+  const isMountedRef = useRef(true);
+  const activeIdRef = useRef(id);
+  activeIdRef.current = id;
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (disconnectTimerRef.current) {
+        clearTimeout(disconnectTimerRef.current);
+        disconnectTimerRef.current = null;
+      }
+    };
+  }, []);
   const [showReviewModal, setShowReviewModal] = useState(false);
   const localVideoRef = useRef<HTMLVideoElement>(null);
 
@@ -1040,12 +1079,34 @@ function Room({ id }: { id: string }) {
   const [callState, setCallState] = useState<"connecting" | "waiting" | "connected" | "reconnecting" | "ended" | "error">(
     isConsultationActive ? "connected" : fromClient ? "waiting" : "connecting"
   );
+  const callEndedRef = useRef(false);
+  const consultationStatusRef = useRef<string | undefined>(consultation?.status);
+  consultationStatusRef.current = consultation?.status;
+  const fromClientRef = useRef(fromClient);
+  fromClientRef.current = fromClient;
+
+  useEffect(() => {
+    if (disconnectTimerRef.current) {
+      clearTimeout(disconnectTimerRef.current);
+      disconnectTimerRef.current = null;
+    }
+    callEndedRef.current = false;
+    assignAttemptedRef.current = false;
+    wasWaitingRef.current = false;
+    setLivekitToken(null);
+    setLivekitWsUrl(undefined);
+    setLivekitFailed(false);
+    setCallState(fromClientRef.current ? "waiting" : "connecting");
+  }, [id]);
 
   useEffect(() => {
     const active = consultation?.status === "ACTIVE" || consultation?.status === "IN_CALL_ACTIVE";
     const ended = consultation?.status === "COMPLETED" || consultation?.status === "CANCELLED";
     if (ended) {
+      callEndedRef.current = true;
       setCallState("ended");
+    } else if (callEndedRef.current) {
+      return;
     } else if (active) {
       setCallState("connected");
     } else if (fromClient) {
@@ -1079,18 +1140,24 @@ function Room({ id }: { id: string }) {
 
   useEffect(() => {
     if (consultation?.status === "ACTIVE" && !livekitToken && !livekitFailed) {
+      let cancelled = false;
       api
         .post<ApiResponse<{ token: string; wsUrl: string }>>(`/api/calls/${id}/token`)
         .then((res) => {
-          if (res.data.success && res.data.data?.token) {
+          if (!cancelled && res.data.success && res.data.data?.token) {
             setLivekitToken(res.data.data.token);
             if (res.data.data.wsUrl) setLivekitWsUrl(res.data.data.wsUrl);
           }
         })
         .catch((err) => {
-          console.warn("LiveKit token notice:", err);
-          setLivekitFailed(true);
+          if (!cancelled) {
+            console.warn("LiveKit token notice:", err);
+            setLivekitFailed(true);
+          }
         });
+      return () => {
+        cancelled = true;
+      };
     }
   }, [consultation?.status, id, livekitToken, livekitFailed]);
 
@@ -1168,51 +1235,74 @@ function Room({ id }: { id: string }) {
     };
   }, [cam, livekitToken]);
 
-  // Listen for socket events (like call:ended) in Room
+  // Join consultation room via shared ref-counted SocketContext
   useEffect(() => {
-    const wsUrl = getWsUrl();
-    const token = getAccessToken();
-    const deviceId = getDeviceId();
-    const roomSocket = io(wsUrl, {
-      withCredentials: true,
-      transports: ["polling", "websocket"],
-      reconnection: true,
-      auth: { token: token ? `Bearer ${token}` : undefined, deviceId },
-    });
+    if (!id) return;
+    roomActionsRef.current.joinConsultation(id);
+    return () => {
+      roomActionsRef.current.leaveConsultation(id);
+    };
+  }, [id]);
 
-    roomSocket.on("connect", () => {
-      roomSocket.emit("join:consultation", { consultationId: id });
-    });
+  // Listen for reactive consultation & call events on shared singleton socket
+  useEffect(() => {
+    if (!socket) return;
+    let wasConnected = Boolean(socket.connected);
 
-    roomSocket.on("session:invalidated", (data: { reason?: string; message?: string }) => {
-      roomSocket.disconnect();
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(
-          new CustomEvent("huellicam:session_terminated", {
-            detail: {
-              reason: data?.reason || "MULTIPLE_DEVICES_DETECTED",
-              message: data?.message || "Tu sesión fue transferida a otro dispositivo.",
-            },
-          })
-        );
+    const handleConnect = () => {
+      const isReconnect = wasConnected;
+      wasConnected = true;
+      const status = consultationStatusRef.current;
+      const shouldInitialSync =
+        !isReconnect &&
+        !callEndedRef.current &&
+        status !== "COMPLETED" &&
+        status !== "CANCELLED";
+      if (isReconnect || shouldInitialSync) {
+        void queryClient.invalidateQueries({ queryKey: ["consultation", id] });
+        void queryClient.invalidateQueries({ queryKey: ["consultations"] });
       }
-    });
+    };
 
-    roomSocket.on("call:ended", () => {
+    const handleCallEnded = (payload?: { consultationId?: string }) => {
+      if (!payload?.consultationId || payload.consultationId !== id) return;
+      callEndedRef.current = true;
       setCallState("ended");
-      queryClient.invalidateQueries({ queryKey: ["consultation", id] });
-      queryClient.invalidateQueries({ queryKey: ["consultations"] });
+      void queryClient.invalidateQueries({ queryKey: ["consultation", id] });
+      void queryClient.invalidateQueries({ queryKey: ["consultations"] });
       if (fromClient) {
         setShowReviewModal(true);
       }
-    });
+    };
+
+    const handleConsultationSync = (payload?: {
+      consultationId?: string;
+      metadata?: { consultationId?: string };
+      data?: { consultationId?: string };
+    }) => {
+      const cid =
+        payload?.consultationId ?? payload?.metadata?.consultationId ?? payload?.data?.consultationId;
+      if (!cid || cid !== id) return;
+      void queryClient.invalidateQueries({ queryKey: ["consultation", id] });
+      void queryClient.invalidateQueries({ queryKey: ["consultations"] });
+    };
+
+    socket.on?.("connect", handleConnect);
+    socket.on?.("call:ended", handleCallEnded);
+    socket.on?.("consultation:assigned", handleConsultationSync);
+    socket.on?.("consultation:cancelled", handleConsultationSync);
+    socket.on?.("consultation:critical_resume", handleConsultationSync);
+    socket.on?.("notification:new", handleConsultationSync);
 
     return () => {
-      roomSocket.off("call:ended");
-      roomSocket.off("session:invalidated");
-      roomSocket.disconnect();
+      socket.off?.("connect", handleConnect);
+      socket.off?.("call:ended", handleCallEnded);
+      socket.off?.("consultation:assigned", handleConsultationSync);
+      socket.off?.("consultation:cancelled", handleConsultationSync);
+      socket.off?.("consultation:critical_resume", handleConsultationSync);
+      socket.off?.("notification:new", handleConsultationSync);
     };
-  }, [id, queryClient, fromClient]);
+  }, [socket, id, queryClient, fromClient]);
 
   // Duration timer
   useEffect(() => {
@@ -1224,38 +1314,32 @@ function Room({ id }: { id: string }) {
 
   // Call completion handler
   const handleFinalize = async () => {
+    const targetId = activeIdRef.current;
+    if (!isMountedRef.current || !targetId) return;
+    callEndedRef.current = true;
     if (disconnectTimerRef.current) {
       clearTimeout(disconnectTimerRef.current);
       disconnectTimerRef.current = null;
     }
     setEnding(false);
     try {
-      await api.patch(`/api/consultations/${id}/complete`, {
+      await api.patch(`/api/consultations/${targetId}/complete`, {
         diagnosisNotes: fromClient ? "Consulta finalizada por el tutor." : "Consulta telemática finalizada con éxito.",
       });
     } catch (err) {
       console.warn("Notice completing consultation:", err);
     }
 
-    queryClient.invalidateQueries({ queryKey: ["consultation", id] });
-    queryClient.invalidateQueries({ queryKey: ["consultations"] });
+    if (!isMountedRef.current || activeIdRef.current !== targetId) return;
 
-    // Inform socket room
-    try {
-      const wsUrl = getWsUrl();
-      const token = getAccessToken();
-      const s = io(wsUrl, {
-        withCredentials: true,
-        transports: ["polling", "websocket"],
-        reconnection: true,
-        auth: { token: token ? `Bearer ${token}` : undefined },
-      });
-      s.emit("call:ended", { consultationId: id });
-      setTimeout(() => s.disconnect(), 1000);
-    } catch {}
+    void queryClient.invalidateQueries({ queryKey: ["consultation", targetId] });
+    void queryClient.invalidateQueries({ queryKey: ["consultations"] });
+
+    // Inform socket room via shared singleton socket
+    emitEvent("call:ended", { consultationId: targetId });
 
     if (!fromClient) {
-      void finish(id);
+      void finish(targetId);
     }
     postMobileBridgeMessage({ type: "call:ended" });
     setCallState("ended");
@@ -1423,6 +1507,7 @@ function Room({ id }: { id: string }) {
               token={livekitToken}
               serverUrl={livekitWsUrl}
               connect={true}
+              options={LIVEKIT_ROOM_OPTIONS}
               data-lk-theme="default"
               style={{ width: "100%", height: "100%", position: "absolute", inset: 0 }}
               onConnected={() => {
@@ -1433,15 +1518,19 @@ function Room({ id }: { id: string }) {
                 setCallState("connected");
               }}
               onDisconnected={(reason) => {
+                if (!isMountedRef.current) return;
                 if (endingRef.current) {
-                  handleFinalize();
+                  void handleFinalize();
                   return;
                 }
                 console.warn("LiveKit transient disconnect notice, waiting 15s for reconnect...", reason);
                 setCallState("reconnecting");
                 if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
+                const scheduledId = id;
                 disconnectTimerRef.current = setTimeout(() => {
-                  handleFinalize();
+                  disconnectTimerRef.current = null;
+                  if (!isMountedRef.current || activeIdRef.current !== scheduledId) return;
+                  void handleFinalize();
                 }, 15000);
               }}
             >
@@ -1656,10 +1745,11 @@ function Room({ id }: { id: string }) {
 }
 
 export default function CallRoom({ id }: { id: string }) {
+  const { user } = useAuth();
   return (
-    <VetProvider forceEmpty={false}>
+    <VetProvider forceEmpty={user?.role !== "VET"}>
       <ClientScopedStyle />
-      <Room id={id} />
+      <Room key={id} id={id} />
     </VetProvider>
   );
 }

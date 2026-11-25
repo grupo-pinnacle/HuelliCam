@@ -2,6 +2,7 @@ import React, { useEffect, Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { SocketProvider } from './context/SocketContext';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import OfflineBanner from './components/common/OfflineBanner';
 import CookieConsentBanner from './components/common/CookieConsentBanner';
@@ -196,53 +197,55 @@ export const App: React.FC = () => {
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
-          <BrowserRouter>
-            <MobileNavigationBridge />
-            <OfflineBanner />
-            <AuthenticatedCallListener />
-            <SessionTerminatedModal />
-            {!isReactNativeWebView() && <CookieConsentBanner />}
-            <Suspense fallback={<div className="route-loading" role="status">Cargando...</div>}>
-              <Routes>
-                {/* 1. Landing & Inicio */}
-                <Route path="/" element={<LandingWrapper />} />
+          <SocketProvider>
+            <BrowserRouter>
+              <MobileNavigationBridge />
+              <OfflineBanner />
+              <AuthenticatedCallListener />
+              <SessionTerminatedModal />
+              {!isReactNativeWebView() && <CookieConsentBanner />}
+              <Suspense fallback={<div className="route-loading" role="status">Cargando...</div>}>
+                <Routes>
+                  {/* 1. Landing & Inicio */}
+                  <Route path="/" element={<LandingWrapper />} />
 
-                {/* 2. Autenticación (Login, Registro Tutores/Vets, Olvidé Contraseña) */}
-                <Route path="/login" element={<AuthWrapper />} />
-                <Route path="/register/*" element={<AuthWrapper />} />
-                <Route path="/register" element={<AuthWrapper />} />
-                <Route path="/forgot-password" element={<AuthWrapper />} />
+                  {/* 2. Autenticación (Login, Registro Tutores/Vets, Olvidé Contraseña) */}
+                  <Route path="/login" element={<AuthWrapper />} />
+                  <Route path="/register/*" element={<AuthWrapper />} />
+                  <Route path="/register" element={<AuthWrapper />} />
+                  <Route path="/forgot-password" element={<AuthWrapper />} />
 
-                {/* 3. Portal de Tutores (Cliente) */}
-                <Route path="/client/*" element={<ClientWrapper />} />
-                <Route path="/client" element={<ClientWrapper />} />
+                  {/* 3. Portal de Tutores (Cliente) */}
+                  <Route path="/client/*" element={<ClientWrapper />} />
+                  <Route path="/client" element={<ClientWrapper />} />
 
-                {/* 4. Portal Profesional (Veterinario) */}
-                <Route path="/vet/*" element={<VetWrapper />} />
-                <Route path="/vet" element={<VetWrapper />} />
+                  {/* 4. Portal Profesional (Veterinario) */}
+                  <Route path="/vet/*" element={<VetWrapper />} />
+                  <Route path="/vet" element={<VetWrapper />} />
 
-                {/* 5. Videoconsultas en vivo */}
-                <Route path="/call/:id" element={<CallWrapper />} />
+                  {/* 5. Videoconsultas en vivo */}
+                  <Route path="/call/:id" element={<CallWrapper />} />
 
-                {/* 6. Panel de Administración (Super Admin CRUD) */}
-                <Route path="/admin/*" element={<AdminWrapper />} />
-                <Route path="/admin" element={<AdminWrapper />} />
+                  {/* 6. Panel de Administración (Super Admin CRUD) */}
+                  <Route path="/admin/*" element={<AdminWrapper />} />
+                  <Route path="/admin" element={<AdminWrapper />} />
 
-                {/* Recetas y verificaciones SENASA */}
-                <Route path="/prescriptions/:id" element={<PrescriptionView />} />
-                <Route path="/verify-rx" element={<PrescriptionView />} />
+                  {/* Recetas y verificaciones SENASA */}
+                  <Route path="/prescriptions/:id" element={<PrescriptionView />} />
+                  <Route path="/verify-rx" element={<PrescriptionView />} />
 
-                {/* Páginas Legales */}
-                <Route path="/privacy" element={<PrivacyPolicy />} />
-                <Route path="/terms" element={<TermsConditions />} />
-                <Route path="/cookies" element={<CookiePolicy />} />
-                <Route path="/refunds" element={<RefundPolicy />} />
+                  {/* Páginas Legales */}
+                  <Route path="/privacy" element={<PrivacyPolicy />} />
+                  <Route path="/terms" element={<TermsConditions />} />
+                  <Route path="/cookies" element={<CookiePolicy />} />
+                  <Route path="/refunds" element={<RefundPolicy />} />
 
-                {/* Fallback 404: Página no encontrada */}
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </Suspense>
-          </BrowserRouter>
+                  {/* Fallback 404: Página no encontrada */}
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </Suspense>
+            </BrowserRouter>
+          </SocketProvider>
         </AuthProvider>
       </QueryClientProvider>
     </ErrorBoundary>

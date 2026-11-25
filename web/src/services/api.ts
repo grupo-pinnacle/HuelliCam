@@ -59,11 +59,36 @@ export const api = axios.create({
   },
 });
 
+const createCorrelationId = (): string => {
+  try {
+    if (typeof globalThis !== 'undefined' && typeof globalThis.crypto?.randomUUID === 'function') {
+      return globalThis.crypto.randomUUID();
+    }
+  } catch {
+    // Fallback below
+  }
+  return `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+};
+
+let sessionCorrelationId: string | null = null;
+const getSessionCorrelationId = (): string => {
+  if (!sessionCorrelationId) {
+    sessionCorrelationId = createCorrelationId();
+  }
+  return sessionCorrelationId;
+};
+
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   if (currentAccessToken && !config.headers.Authorization) {
     config.headers.Authorization = `Bearer ${currentAccessToken}`;
   }
   config.headers['x-device-id'] = getDeviceId();
+  if (!config.headers['X-Request-Id'] && !config.headers['x-request-id']) {
+    config.headers['X-Request-Id'] = createCorrelationId();
+  }
+  if (!config.headers['X-Correlation-Id'] && !config.headers['x-correlation-id']) {
+    config.headers['X-Correlation-Id'] = getSessionCorrelationId();
+  }
   return config;
 });
 
