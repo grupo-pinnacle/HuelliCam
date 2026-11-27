@@ -39,6 +39,10 @@ export const resetPasswordSchema = z.object({
   newPassword: z.string().min(8, 'La nueva contraseña debe tener al menos 8 caracteres'),
 });
 
+export const verifyEmailSchema = z.object({
+  code: z.string().trim().min(6, 'El código debe tener 6 dígitos').max(6, 'El código debe tener 6 dígitos'),
+});
+
 export type RegisterDTO = z.infer<typeof registerSchema>;
 export type LoginDTO = z.infer<typeof loginSchema>;
 export type ForgotPasswordDTO = z.infer<typeof forgotPasswordSchema>;

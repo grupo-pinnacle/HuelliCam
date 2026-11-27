@@ -1,10 +1,12 @@
 import './config/env';
+import { getRedisClient } from './lib/redis';
 import express, { Express, Request, Response } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import prisma from './lib/prisma';
+import { RedisRateLimitStore } from './lib/redisRateLimitStore';
 import { errorHandler } from './middlewares/errorHandler';
 import { requestIdMiddleware } from './middlewares/requestId';
 import { isAllowedOrigin } from './config/cors';
@@ -17,6 +19,9 @@ import mediaRoutes from './modules/media/media.routes';
 import notificationRoutes from './modules/notifications/notifications.routes';
 import adminRoutes from './modules/admin/admin.routes';
 import userRoutes from './modules/users/users.routes';
+import schedulingRoutes from './modules/scheduling/scheduling.routes';
+import templateRoutes from './modules/templates/templates.routes';
+import paymentRoutes from './modules/payments/payments.routes';
 
 const app: Express = express();
 
@@ -79,6 +84,7 @@ app.use(cookieParser());
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 200,
+  store: new RedisRateLimitStore('huellicam:rl:login', 15 * 60 * 1000),
   message: {
     success: false,
     error: {
@@ -93,6 +99,7 @@ const loginLimiter = rateLimit({
 const registerLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100,
+  store: new RedisRateLimitStore('huellicam:rl:register', 15 * 60 * 1000),
   message: {
     success: false,
     error: {
@@ -116,6 +123,9 @@ app.use('/api/media', mediaRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/scheduling', schedulingRoutes);
+app.use('/api/templates', templateRoutes);
+app.use('/api/payments', paymentRoutes);
 app.use('/api', prescriptionRoutes);
 
 // Health Check Endpoint
@@ -132,12 +142,47 @@ app.get('/health', async (req: Request, res: Response) => {
     dbStatus = 'error';
   }
 
-  const isHealthy = dbStatus === 'connected';
+  // Redis backs presence, the Socket.IO adapter and the vet-disconnect deadlines.
+  // It is mandatory in production, so a failing ping there makes the service degraded.
+  let redisStatus: 'connected' | 'disconnected' | 'error' | 'not_configured' = 'not_configured';
+  if (process.env.NODE_ENV !== 'test' && process.env.REDIS_URL) {
+    const redisClient = getRedisClient();
+    if (!redisClient) {
+      redisStatus = 'disconnected';
+    } else {
+      let pingTimer: NodeJS.Timeout | undefined;
+      try {
+        const pong = await Promise.race([
+          redisClient.ping(),
+          new Promise<never>((_, reject) => {
+            pingTimer = setTimeout(() => reject(new Error('redis ping timeout')), 1500);
+          }),
+        ]);
+        redisStatus = pong === 'PONG' ? 'connected' : 'error';
+      } catch {
+        redisStatus = 'error';
+      } finally {
+        if (pingTimer) clearTimeout(pingTimer);
+      }
+    }
+  }
+
+  const redisRequired = process.env.NODE_ENV === 'production';
+  const redisOk = !redisRequired || redisStatus === 'connected';
+  const isHealthy = dbStatus === 'connected' && redisOk;
   res.status(isHealthy ? 200 : 503).json({
     status: isHealthy ? 'ok' : 'degraded',
     timestamp: new Date().toISOString(),
     uptime: process.env.NODE_ENV === 'test' ? 100 : process.uptime(),
     database: dbStatus,
+    redis: redisStatus,
+    telemetry: {
+      sentryConfigured: Boolean(process.env.SENTRY_DSN?.trim()),
+    },
+    jobs: {
+      emailSchedulerEnabled: process.env.ENABLE_EMAIL_SCHEDULER === 'true' || process.env.NODE_ENV === 'production',
+      triageSweeperActive: process.env.NODE_ENV !== 'test',
+    },
   });
 });
 

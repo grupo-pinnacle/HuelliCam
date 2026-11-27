@@ -260,6 +260,10 @@ const envSchema = z
     RESEND_API_KEY: z.string().optional(),
     EMAIL_FROM: z.string().default('Huellicam <onboarding@resend.dev>'),
     ENABLE_EMAIL_SCHEDULER: z.enum(['true', 'false']).optional(),
+    VAPID_PUBLIC_KEY: z.string().optional(),
+    VAPID_PRIVATE_KEY: z.string().optional(),
+    VAPID_SUBJECT: z.string().default('mailto:soporte@huellicam.com.ar'),
+    SENTRY_DSN: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.NODE_ENV === 'production' && !data.REDIS_URL) {
@@ -367,6 +371,10 @@ const resolvedConfig = (() => {
     RESEND_API_KEY: process.env.RESEND_API_KEY,
     EMAIL_FROM: process.env.EMAIL_FROM || 'Huellicam <onboarding@resend.dev>',
     ENABLE_EMAIL_SCHEDULER: process.env.ENABLE_EMAIL_SCHEDULER as 'true' | 'false' | undefined,
+    VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY,
+    VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY,
+    VAPID_SUBJECT: process.env.VAPID_SUBJECT || 'mailto:soporte@huellicam.com.ar',
+    SENTRY_DSN: process.env.SENTRY_DSN,
     AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY || '',
     AWS_REGION: process.env.AWS_REGION || 'us-east-1',
     AWS_BUCKET_NAME:

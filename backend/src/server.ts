@@ -1,10 +1,11 @@
 import app from './app';
 import { initializeSocketServer, whenSocketRedisReady } from './realtime/socket.server';
-import { disconnectQueue } from './realtime/disconnectQueue';
+import { vetDisconnectTracker } from './realtime/vetDisconnectTracker';
 import { closeAllRedisClients } from './lib/redis';
 import prisma from './lib/prisma';
 import { config } from './config/env';
-import { notificationsScheduler } from './jobs/notifications.scheduler';
+import { notificationsScheduler, stopNotificationsScheduler } from './jobs/notifications.scheduler';
+import { startTriageTimeoutSweeper, stopTriageTimeoutSweeper } from './jobs/triageTimeout.sweeper';
 import { logger, serializeError } from './lib/logger';
 
 const PORT = config.PORT || process.env.PORT || 3001;
@@ -13,6 +14,8 @@ const server = app.listen(PORT, () => {
   logger.info({ port: PORT }, `Huellicam Backend Server running on port ${PORT}`);
   if (process.env.NODE_ENV !== 'test') {
     notificationsScheduler.start();
+    startTriageTimeoutSweeper();
+    vetDisconnectTracker.start();
   }
 });
 
@@ -44,13 +47,10 @@ export const gracefulShutdown = async (signal: string, exitCode = 0) => {
   }, 10000);
 
   try {
-    // 1. Flush pre-shutdown debounced disconnects BEFORE closing io / httpServer
-    //    (httpServer.once('close') invokes disconnectQueue.clear(), which would wipe pending entries)
-    await disconnectQueue.flushAll();
-
-    // 2. Close Socket.io first so connected WebSockets don't block httpServer.close().
-    //    currentIo.close() sets isClosing = true synchronously (suppressing teardown enqueues)
-    //    and closes httpServer internally.
+    // 1. Stop background schedulers/sweepers and close Socket.io first so connected WebSockets don't block httpServer.close().
+    stopNotificationsScheduler();
+    stopTriageTimeoutSweeper();
+    vetDisconnectTracker.clear();
     if (io) {
       await new Promise<void>((resolve) => {
         try {
@@ -87,7 +87,7 @@ export const gracefulShutdown = async (signal: string, exitCode = 0) => {
     }
 
     // 4. Discard any teardown-induced disconnect timers from io.close()
-    disconnectQueue.clear();
+    vetDisconnectTracker.clear();
 
     // 5. Close all Redis clients cleanly after io.close() / adapter.close()
     await closeAllRedisClients();

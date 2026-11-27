@@ -5,6 +5,7 @@ import prisma from '../lib/prisma';
 import { SocketData, SocketUser } from './socket.types';
 import { config } from '../config/env';
 import { resolveOrCreateCorrelationId } from '../lib/logger';
+import { extractDeviceId } from '../contracts/consultation.contract';
 
 const JWT_SECRET = config.JWT_SECRET;
 
@@ -70,8 +71,9 @@ export const socketAuthMiddleware = async (
       socket.handshake.auth?.deviceId ??
       socket.handshake.query?.deviceId ??
       socket.handshake.headers?.['x-device-id'];
-    if (typeof rawDeviceId === 'string' && rawDeviceId.trim().length > 0) {
-      socket.data.deviceId = rawDeviceId.trim();
+    const validDeviceId = extractDeviceId(rawDeviceId);
+    if (validDeviceId) {
+      socket.data.deviceId = validDeviceId;
     }
 
     const rawCorrelationId =

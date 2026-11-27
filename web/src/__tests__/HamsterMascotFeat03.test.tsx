@@ -1,10 +1,8 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import HamsterMascot from '../components/ui/HamsterMascot';
-import ConsultationRoom from '../pages/ConsultationRoom';
 import ClientApp from '../pages/ClientApp';
 
 vi.mock('../services/api', () => ({
@@ -70,24 +68,6 @@ describe('FEAT-03: Animated Hamster Mascot (HamsterMascot.tsx)', () => {
 
     rerender(<HamsterMascot isCoveringEyes={true} />);
     expect(screen.getByText('¡No miro!').parentElement?.parentElement?.className).toContain('opacity-100');
-  });
-
-  it('renders HamsterMascot in ConsultationRoom during the WAITING phase', async () => {
-    render(
-      <MemoryRouter initialEntries={['/call/cons-123']}>
-        <Routes>
-          <Route path="/call/:id" element={<ConsultationRoom />} />
-        </Routes>
-      </MemoryRouter>
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText('Sala de Espera Virtual')).toBeDefined();
-    });
-
-    const waitingHamster = screen.getByTestId('waiting-room-hamster');
-    expect(waitingHamster).toBeDefined();
-    expect(waitingHamster.querySelector('[data-testid="hamster-mascot"]')).toBeDefined();
   });
 
   it('renders HamsterMascot in the ClientApp attention banner', async () => {

@@ -59,6 +59,42 @@ export const authenticate = async (
   }
 };
 
+export const optionalAuthenticate = async (
+  req: AuthenticatedRequest,
+  _res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    let token: string | undefined;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.substring(7);
+    } else if (req.cookies && req.cookies.accessToken) {
+      token = req.cookies.accessToken;
+    }
+
+    if (!token) {
+      next();
+      return;
+    }
+
+    const payload = jwt.verify(token, JWT_SECRET, {
+      algorithms: ['HS256'],
+    }) as TokenPayload;
+
+    const user = await prisma.user.findUnique({
+      where: { id: payload.userId },
+    });
+
+    if (user && !user.deletedAt && user.tokenVersion === payload.tokenVersion) {
+      req.user = user;
+    }
+  } catch {
+    // Public fallback on optional auth
+  }
+  next();
+};
+
 export const requireRole = (...roles: string[]) => {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
     if (!req.user || !roles.includes(req.user.role)) {

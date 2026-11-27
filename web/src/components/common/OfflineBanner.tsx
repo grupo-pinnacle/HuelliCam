@@ -1,12 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { WifiOff, Wifi } from 'lucide-react';
+import { flushOfflineQueue, subscribeOfflineQueue } from '../../lib/offlineQueue';
 
 export const OfflineBanner: React.FC = () => {
   const [isOffline, setIsOffline] = useState<boolean>(() => {
     return typeof navigator !== 'undefined' ? !navigator.onLine : false;
   });
   const [reconnected, setReconnected] = useState<boolean>(false);
+  const [pendingCount, setPendingCount] = useState<number>(0);
   const timerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = subscribeOfflineQueue((items) => {
+      setPendingCount(items.length);
+    });
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -28,6 +37,7 @@ export const OfflineBanner: React.FC = () => {
       clearTimer();
       setIsOffline(false);
       setReconnected(true);
+      void flushOfflineQueue();
       timerRef.current = window.setTimeout(() => {
         setReconnected(false);
         timerRef.current = null;
@@ -44,7 +54,7 @@ export const OfflineBanner: React.FC = () => {
     };
   }, []);
 
-  if (!isOffline && !reconnected) {
+  if (!isOffline && !reconnected && pendingCount === 0) {
     return null;
   }
 
@@ -62,6 +72,25 @@ export const OfflineBanner: React.FC = () => {
     );
   }
 
+  if (!isOffline && pendingCount > 0) {
+    return (
+      <aside
+        role="status"
+        aria-live="polite"
+        className="w-full bg-[#fffbeb] text-[#183c3a] px-4 py-2 text-xs font-bold flex items-center justify-center gap-3 shadow-sm z-50 sticky top-0 border-b border-[#f59e0b]/40 font-['Manrope',sans-serif]"
+      >
+        <span>Hay {pendingCount} cambio(s) pendiente(s) por sincronizar.</span>
+        <button
+          type="button"
+          onClick={() => void flushOfflineQueue()}
+          className="rounded-lg bg-[#183c3a] px-2.5 py-1 text-[11px] font-extrabold text-white"
+        >
+          Reintentar ahora
+        </button>
+      </aside>
+    );
+  }
+
   return (
     <aside
       role="alert"
@@ -70,7 +99,10 @@ export const OfflineBanner: React.FC = () => {
       className="w-full bg-[#fbeee9] text-[#183c3a] px-4 py-2.5 text-xs font-bold flex items-center justify-center gap-2 shadow-sm animate-fadeIn z-50 sticky top-0 border-b border-[#e98b70]/45 font-['Manrope',sans-serif]"
     >
       <WifiOff className="w-4 h-4 text-[#ae4d45] shrink-0" aria-hidden="true" />
-      <span>Sin conexión a internet — Reconectando automáticamente al restablecerse el enlace...</span>
+      <span>
+        Sin conexión a internet — Reconectando automáticamente al restablecerse el enlace
+        {pendingCount > 0 ? ` (${pendingCount} acción/es en cola)...` : '...'}
+      </span>
     </aside>
   );
 };

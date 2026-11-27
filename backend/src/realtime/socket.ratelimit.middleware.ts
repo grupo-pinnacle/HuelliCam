@@ -1,4 +1,5 @@
 import { Socket } from 'socket.io';
+import { getRedisClient } from '../lib/redis';
 
 interface RateBucket {
   count: number;
@@ -67,7 +68,59 @@ export const applySocketRateLimiting = (socket: Socket): void => {
       }
     }
 
-    // Check IP bucket
+    // Check IP bucket (Redis-backed when ready, local map fallback)
+    const client = getRedisClient();
+    if (client && client.status === 'ready') {
+      const redisKey = `huellicam:srl:ip:${ip}`;
+      void (async () => {
+        try {
+          const count = await client.incr(redisKey);
+          const pttl = count === 1 ? -1 : await client.pttl(redisKey);
+          if (pttl < 0) {
+            await client.pexpire(redisKey, WINDOW_MS);
+          }
+          if (count > MAX_PER_IP) {
+            const lastArg = args[args.length - 1];
+            if (typeof lastArg === 'function') {
+              lastArg({
+                success: false,
+                error: {
+                  code: 'RATE_LIMIT_EXCEEDED',
+                  message: 'Límite de eventos de señalización excedido por IP',
+                },
+              });
+            }
+            return next(new Error('RATE_LIMIT_EXCEEDED: IP signaling rate limit exceeded'));
+          }
+          return next();
+        } catch {
+          // Fallback to local bucket on Redis error
+          let ipBucket = ipBuckets.get(ip);
+          if (!ipBucket || now > ipBucket.resetAt) {
+            ipBucket = { count: 1, resetAt: now + WINDOW_MS };
+            ipBuckets.set(ip, ipBucket);
+          } else {
+            ipBucket.count++;
+            if (ipBucket.count > MAX_PER_IP) {
+              const lastArg = args[args.length - 1];
+              if (typeof lastArg === 'function') {
+                lastArg({
+                  success: false,
+                  error: {
+                    code: 'RATE_LIMIT_EXCEEDED',
+                    message: 'Límite de eventos de señalización excedido por IP',
+                  },
+                });
+              }
+              return next(new Error('RATE_LIMIT_EXCEEDED: IP signaling rate limit exceeded'));
+            }
+          }
+          return next();
+        }
+      })();
+      return;
+    }
+
     let ipBucket = ipBuckets.get(ip);
     if (!ipBucket || now > ipBucket.resetAt) {
       ipBucket = { count: 1, resetAt: now + WINDOW_MS };

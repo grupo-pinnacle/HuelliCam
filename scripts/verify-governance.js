@@ -5,6 +5,7 @@
  * 2. Sincronización entre los modelos de backend/prisma/schema.prisma y docs/TECH_REFERENCE.md.
  * 3. Integridad de enlaces locales Markdown en README.md y docs/**.
  * 4. Ausencia de referencias obsoletas de marca o tooling interno en documentación.
+ * 5. Ausencia de los 6 literales deprecados de ConsultationStatus en backend/src y web/src.
  */
 
 const fs = require('fs');
@@ -37,6 +38,35 @@ function collectMarkdownFiles(dir) {
   }
   return results;
 }
+
+function collectSourceFiles(dir) {
+  if (!fs.existsSync(dir)) return [];
+  const results = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === 'node_modules' || entry.name === 'dist') continue;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...collectSourceFiles(full));
+    } else if (entry.isFile() && /\.(ts|tsx)$/.test(entry.name)) {
+      results.push(full);
+    }
+  }
+  return results;
+}
+
+const DEPRECATED_CONSULTATION_STATUSES = [
+  'TRIAGE_CRITICAL_QUEUED',
+  'CLAIM_PENDING_SYNC',
+  'LIVEKIT_CONNECTING',
+  'IN_CALL_ACTIVE',
+  'AWAITING_EMERGENCY_CALLBACK',
+  'HANDOFF_IN_PROGRESS',
+];
+
+const DEPRECATED_STATUS_REGEX = new RegExp(
+  `\\b(${DEPRECATED_CONSULTATION_STATUSES.join('|')})\\b`,
+  'g'
+);
 
 function extractSchemaModels(schemaContent) {
   const matches = [...schemaContent.matchAll(/^model\s+([A-Za-z0-9_]+)\s+\{/gm)];
@@ -129,6 +159,36 @@ function runGovernanceCheck() {
     errors++;
   } else {
     console.log('  [OK] 4. Identidad Huellicam consistente en README.md y docs/.');
+  }
+
+  // 5. Verificar ausencia de los 6 literales deprecados de ConsultationStatus en backend/src y web/src
+  const exemptContractPath = 'backend/src/contracts/consultation.contract.ts';
+  const sourceFiles = [
+    ...collectSourceFiles(path.join(repoRoot, 'backend', 'src')),
+    ...collectSourceFiles(path.join(repoRoot, 'web', 'src')),
+  ];
+  const deprecatedUsages = [];
+
+  for (const srcFile of sourceFiles) {
+    const rel = path.relative(repoRoot, srcFile).replace(/\\/g, '/');
+    if (rel === exemptContractPath) continue;
+    const content = fs.readFileSync(srcFile, 'utf8');
+    const matches = [...content.matchAll(DEPRECATED_STATUS_REGEX)];
+    if (matches.length > 0) {
+      const literals = [...new Set(matches.map((m) => m[1]))].join(', ');
+      deprecatedUsages.push(`${rel} (${literals})`);
+    }
+  }
+
+  if (deprecatedUsages.length > 0) {
+    console.error(
+      `  [ERROR] Literales deprecados de ConsultationStatus detectados fuera de ${exemptContractPath}:\n    - ${deprecatedUsages.join('\n    - ')}`
+    );
+    errors++;
+  } else {
+    console.log(
+      `  [OK] 5. Cero literales deprecados de ConsultationStatus en runtime y tests (${sourceFiles.length} archivos verificados).`
+    );
   }
 
   if (errors > 0) {

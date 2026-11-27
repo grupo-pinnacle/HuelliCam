@@ -11,7 +11,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Icon, Logo } from "../components/common/Brand";
 import { useAuth } from "../context/AuthContext";
 import api from "../services/api";
-import { getRegisterDraft, saveRegisterDraft, clearRegisterDraft } from "./Register";
+import { getRegisterDraft, saveRegisterDraft, clearRegisterDraft } from "../lib/registerDraft";
 import ScopedStyle from "../components/common/ScopedStyle";
 import LandingScopedStyle from "../styles/LandingScopedStyle";
 import authCss from "../styles/auth.css?inline";
@@ -559,7 +559,6 @@ function validatePersonal(data: PersonalData) {
     next.lastName = "El apellido debe tener al menos 2 caracteres.";
   }
   if (!isValidEmail(data.email)) next.email = "Ingresá un email válido.";
-  if (data.email.trim().toLowerCase() === "hola@huellicam.com") next.email = "Ya existe una cuenta asociada a este email.";
   if (data.password.length < 8 || passwordScore(data.password) < 2) {
     next.password = "Usá al menos 8 caracteres, mayúsculas y números.";
   }

@@ -103,6 +103,9 @@ export const registerChatGateway = (
   socket.on('call:ended', async (data: { consultationId: string }) => {
     try {
       if (!data?.consultationId) return;
+      if (user?.role !== 'VET' && user?.role !== 'ADMIN') {
+        return;
+      }
       const isAuth = await isAuthorizedParticipant(data.consultationId);
       if (!isAuth) return;
       io.to(`consultation:${data.consultationId}`).emit('call:ended', {

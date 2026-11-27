@@ -87,7 +87,6 @@ vi.mock('../vet/Consultations', () => ({
 
 import { LIVEKIT_ROOM_OPTIONS } from '../lib/livekitConfig';
 import VetCallRoom from '../vet/CallRoom';
-import { CallRoom as ComponentsCallRoom } from '../components/call/CallRoom';
 
 describe('LiveKit adaptive simulcast & RoomOptions wiring', () => {
   beforeEach(() => {
@@ -127,17 +126,6 @@ describe('LiveKit adaptive simulcast & RoomOptions wiring', () => {
       expect(screen.getByTestId('mock-livekit-room')).toBeTruthy();
     });
 
-    expect(capturedLiveKitProps.length).toBeGreaterThanOrEqual(1);
-    const lastProps = capturedLiveKitProps[capturedLiveKitProps.length - 1];
-    expect(lastProps.options as RoomOptions).toEqual(LIVEKIT_ROOM_OPTIONS);
-  });
-
-  it('passes LIVEKIT_ROOM_OPTIONS to <LiveKitRoom> in web/src/components/call/CallRoom.tsx', () => {
-    render(<ComponentsCallRoom token="lk-tok-2" serverUrl="wss://lk.test" />);
-
-    fireEvent.click(screen.getByText('Ingresar a la Consulta'));
-
-    expect(screen.getByTestId('mock-livekit-room')).toBeTruthy();
     expect(capturedLiveKitProps.length).toBeGreaterThanOrEqual(1);
     const lastProps = capturedLiveKitProps[capturedLiveKitProps.length - 1];
     expect(lastProps.options as RoomOptions).toEqual(LIVEKIT_ROOM_OPTIONS);

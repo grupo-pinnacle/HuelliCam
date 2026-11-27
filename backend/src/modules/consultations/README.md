@@ -1,0 +1,33 @@
+# Consultations
+
+## Overview
+Core veterinary consultation lifecycle (canonical 4-state contract: `WAITING`, `ACTIVE`, `COMPLETED`, `CANCELLED`), deterministic clinical triage engine, real-time consultation chat, post-visit reviews, single-active-per-tutor transactional guard, multi-device handoff with CAS, and key lifecycle auditing.
+
+## Interface
+- `[consultations.routes.ts:default]` — Express `Router` behind `authenticate` exposing `POST /` (`consultationRateLimiter`), `GET /mine`, `GET /:id`, `PATCH /:id/assign`, `PATCH /:id/complete`, `PATCH /:id/cancel`, `POST /:id/review`, `GET /:id/messages`, and `POST /:id/messages`
+- `[consultations.controller.ts:ConsultationsController]` — HTTP controller (`create`, `getMine`, `getById`, `assign`, `complete`, `cancel`, `review`, `getMessages`, `sendMessage`)
+- `[consultations.service.ts:ConsultationsService]`, `[consultations.service.ts:consultationsService]` — Consultation lifecycle, messaging, timeout enforcement, device handoff, and review service (`createConsultation`, `checkTriageTimeout`, `checkVetDisconnectTimeout`, `assignConsultation`, `handoffTutorDevice`, `completeConsultation`, `cancelConsultation`, `getConsultationById`, `getMine`, `createReview`, `getMessages`, `createMessage`) and singleton instance
+- `[../../contracts/consultation.contract.ts]` — Shared 4-state contract (`CLINICAL_CONSULTATION_STATUSES`, `ConsultationAuditEventType`, `SessionTerminationReason`, `extractDeviceId`, grace/timeout constants)
+- `[clinicalTriage.engine.ts:evaluateClinicalTriage]`, `[clinicalTriage.engine.ts:TriagePriority]`, `[clinicalTriage.engine.ts:SymptomDuration]`, `[clinicalTriage.engine.ts:TriageInput]`, `[clinicalTriage.engine.ts:TriageEvaluation]` — Deterministic clinical triage classifier
+- `[consultations.schemas.ts:createConsultationSchema]`, `[consultations.schemas.ts:assignConsultationSchema]`, `[consultations.schemas.ts:completeConsultationSchema]`, `[consultations.schemas.ts:cancelConsultationSchema]`, `[consultations.schemas.ts:reviewConsultationSchema]`, `[consultations.schemas.ts:createMessageSchema]` — Zod validation schemas
+- `[consultations.schemas.ts:CreateConsultationDTO]`, `[consultations.schemas.ts:CompleteConsultationDTO]`, `[consultations.schemas.ts:CancelConsultationDTO]`, `[consultations.schemas.ts:ReviewConsultationDTO]`, `[consultations.schemas.ts:CreateMessageDTO]` — Inferred DTO types
+
+## Invariants
+- `[consultations.service.ts:ConsultationsService.createConsultation]` — Acquires `pg_advisory_xact_lock(hashtext(clientId))` inside `prisma.$transaction`, verifies pet ownership (`ownerId: clientId, deletedAt: null`), runs `checkTriageTimeout` before rejecting duplicate `WAITING`/`ACTIVE` consultations (`409` `CONSULTATION_ALREADY_ACTIVE`), validates optional `x-device-id` via `extractDeviceId`, records `CONSULTATION_CREATED` in `ConsultationAuditLog`, and queues live consultations as `WAITING`.
+- `[consultations.service.ts:ConsultationsService.checkTriageTimeout]`, `[consultations.service.ts:ConsultationsService.checkVetDisconnectTimeout]` — `WAITING` consultations older than 15 minutes are cancelled as `[CANCELLED_TIMEOUT_NO_VET_AVAILABLE]`; `ACTIVE` consultations whose vet disconnected over 3 minutes ago are cancelled as `[VET_DISCONNECTED_TIMEOUT]` unless the latest `Call` ended with `status === 'ENDED' && durationSeconds >= 10` within the 30-minute post-call grace window.
+- `[consultations.service.ts:ConsultationsService.assignConsultation]` — Requires `Role.VET` (`403` `VET_REQUIRED`) and `VetStatus.APPROVED` in `production` (`403` `VET_NOT_APPROVED`), uses an atomic `updateMany` CAS (`status: WAITING, vetId: null, deletedAt: null, stateVersion`), records `CONSULTATION_ASSIGNED` in `ConsultationAuditLog`, and cancels any pending `vetDisconnectTracker` deadline.
+- `[consultations.service.ts:ConsultationsService.handoffTutorDevice]` — Atomically updates `activeDeviceId` and increments `stateVersion` inside `prisma.$transaction` on `WAITING`/`ACTIVE` consultations belonging to `tutorId`, records `DEVICE_HANDOFF` in `ConsultationAuditLog`, and triggers post-commit eviction (`evictUserRealtimeAndCall`) for `previousDeviceId` without re-creating rows.
+- `[consultations.service.ts:ConsultationsService.completeConsultation]`, `[consultations.service.ts:ConsultationsService.cancelConsultation]` — `completeConsultation` uses CAS (`status: ACTIVE`) allowing only the assigned vet or `Role.ADMIN`; `cancelConsultation` uses CAS on `WAITING`/`ACTIVE` allowing `clientId`, `vetId`, or `Role.ADMIN`; both write `ConsultationAuditLog` rows and cancel `vetDisconnectTracker` deadlines.
+- `[consultations.service.ts:ConsultationsService.createReview]` — Restricts ratings (`1..5` integer) to `clientId` on `COMPLETED` consultations with an assigned vet and no prior review, and updates `user.ratingAvg` and `user.ratingCount` inside `prisma.$transaction`.
+- `[consultations.schemas.ts:createMessageSchema]`, `[consultations.service.ts:ConsultationsService.createMessage]` — Rejects `javascript:`, `data:`, `vbscript:`, `<`, `>`, allowing only `http(s)://`, `/api/media/:id`, or `[a-zA-Z0-9_-]{1,128}` attachments; blocks `CANCELLED` consultations and handles duplicate `clientMsgId` (`P2002`) idempotently.
+- `[consultations.service.ts:ConsultationsService.createConsultation]`, `[consultations.service.ts:ConsultationsService.getMine]` — Redacts `client.email` and `client.phone` on `WAITING` consultations exposed to vets, and evaluates pending vet disconnect timeouts across `ACTIVE` consultations returned to callers.
+- `[clinicalTriage.engine.ts:evaluateClinicalTriage]` — Preserves existing `[Prioridad: ROJO|AMARILLO|VERDE]` headers; otherwise classifies critical signs/regex or brachycephalic respiratory distress as `ROJO` (`9/10`), moderate signs/regex as `AMARILLO` (`7/10` for `DAYS_1_TO_2`/`MORE_THAN_2_DAYS`, else `5/10`), and defaults to `VERDE` (`2/10`).
+
+## Side Effects
+- `[consultations.service.ts:ConsultationsService]` — Reads/writes PostgreSQL tables (`consultation`, `pet`, `user`, `call`, `review`, `message`, `consultationAuditLog`).
+- `[consultations.service.ts:ConsultationsService]` — Tears down LiveKit rooms (`callsService.deleteLiveKitRoom`) and delegates old-device SFU/socket eviction (`evictUserRealtimeAndCall`).
+- `[consultations.service.ts:ConsultationsService]` — Emits Socket.IO events (`consultation:new`, `consultation:assigned`, `consultation:cancelled`, `call:ended`, `message:new`) and `consultation:critical_resume` on handoff.
+- `[consultations.service.ts:ConsultationsService.assignConsultation]` — Dispatches `CONSULTATION_ASSIGNED` notifications via `notificationsService.createAndDispatch`.
+
+## Verification
+- Run: `npm test -w backend`

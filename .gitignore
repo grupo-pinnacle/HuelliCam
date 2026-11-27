@@ -44,10 +44,19 @@ auditoria_codigo.txt
 coverage/
 *.lcov
 .nyc_output/
+.pytest_cache/
+**/__pycache__/
+*.py[cod]
+playwright-report/
+test-results/
 storybook-static/
 **/storybook-static/
 
 # Uploads & Media (Local ephemeral storage)
+uploads/*
+!uploads/.gitkeep
+uploads/tmp/*
+!uploads/tmp/.gitkeep
 backend/uploads/*
 !backend/uploads/.gitkeep
 backend/uploads/tmp/*
@@ -67,13 +76,22 @@ Thumbs.db
 *.sln
 *.sw?
 
-# Local dev workflow config
+# Local dev workflow & AI tool state
 AGENTS.md
 .ai/
 .agents/
+.claude/
+.codex/
+.gemini/
+.qwen/
+.worktrees/
+tmp/
+*.tmp
+*.bak
 
 # Video production, captures & media
 /opencode/
+brag-output/
 videos/
 video-*/
 video/

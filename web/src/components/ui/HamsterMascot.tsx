@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { EyeOff } from 'lucide-react';
+import { prefersReducedMotion } from '../../lib/motion';
 
 export interface HamsterMascotProps {
   isCoveringEyes?: boolean;
@@ -49,7 +50,7 @@ export const HamsterMascot: React.FC<HamsterMascotProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!isDesktop || isCoveringEyes) {
+    if (!isDesktop || isCoveringEyes || prefersReducedMotion()) {
       if (isLookingAtInput) {
         setPupilOffset({ x: 0, y: 3.5 });
       } else {
@@ -88,13 +89,13 @@ export const HamsterMascot: React.FC<HamsterMascotProps> = ({
     >
       {/* Cartel flotante tipo cómic: SOLO cuando se tapa los ojos con "Ver contraseña" */}
       <div
-        className={`absolute -top-7 transition-all duration-300 ease-out z-20 pointer-events-none ${
+        className={`absolute -top-7 transition-[transform,opacity] duration-200 ease-out z-20 pointer-events-none ${
           isCoveringEyes
             ? 'opacity-100 translate-y-0 scale-100'
-            : 'opacity-0 translate-y-2 scale-75'
+            : 'opacity-0 translate-y-2 scale-90'
         }`}
       >
-        <div className="relative bg-[#FFFBEB] text-[#78350F] border-2 border-[#F59E0B] text-[11px] font-black tracking-wide px-3 py-1 rounded-2xl shadow-md flex items-center gap-1.5 whitespace-nowrap animate-bounce">
+        <div className="relative bg-[#FFFBEB] text-[#78350F] border-2 border-[#F59E0B] text-[11px] font-black tracking-wide px-3 py-1 rounded-2xl shadow-md flex items-center gap-1.5 whitespace-nowrap">
           <EyeOff className="w-3.5 h-3.5 text-[#D97706]" />
           <span>¡No miro!</span>
           {/* Triángulo tipo bocadillo */}
@@ -105,7 +106,7 @@ export const HamsterMascot: React.FC<HamsterMascotProps> = ({
       {/* Ilustración Vectorial Bold & Minimalista Estilo Duolingo */}
       <svg
         viewBox="0 0 140 130"
-        className={`${sizeClasses} drop-shadow-[0_8px_20px_rgba(245,158,11,0.22)] transition-all duration-300 hover:scale-105 cursor-pointer`}
+        className={`${sizeClasses} drop-shadow-[0_8px_20px_rgba(245,158,11,0.22)] transition-transform duration-200 hover:scale-105 cursor-pointer`}
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
         data-testid="hamster-mascot-svg"

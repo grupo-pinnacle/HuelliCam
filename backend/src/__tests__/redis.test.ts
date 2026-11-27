@@ -458,7 +458,7 @@ describe('Redis Client, Retry Strategy, TLS & Production Fail-Fast (M3)', () => 
       }
     });
 
-    it('invokes closeAllRedisClients AFTER disconnectQueue.flushAll() and io.close() during gracefulShutdown', async () => {
+    it('invokes closeAllRedisClients AFTER vetDisconnectTracker.clear() and io.close() during gracefulShutdown', async () => {
       const savedEnv = { ...process.env };
       try {
         jest.resetModules();
@@ -481,11 +481,11 @@ describe('Redis Client, Retry Strategy, TLS & Production Fail-Fast (M3)', () => 
           },
         }));
 
-        const { disconnectQueue } = require('../realtime/disconnectQueue');
-        const flushSpy = jest
-          .spyOn(disconnectQueue, 'flushAll')
-          .mockImplementation(async () => {
-            callOrder.push('disconnectQueue.flushAll');
+        const { vetDisconnectTracker } = require('../realtime/vetDisconnectTracker');
+        const clearSpy = jest
+          .spyOn(vetDisconnectTracker, 'clear')
+          .mockImplementation(() => {
+            callOrder.push('vetDisconnectTracker.clear');
           });
         const redisMod = require('../lib/redis');
         const closeRedisSpy = jest
@@ -502,13 +502,17 @@ describe('Redis Client, Retry Strategy, TLS & Production Fail-Fast (M3)', () => 
 
         await serverModule.gracefulShutdown('SIGTERM');
 
-        expect(callOrder).toEqual([
-          'disconnectQueue.flushAll',
-          'closeAllRedisClients',
-          'prisma.disconnect',
-        ]);
+        expect(callOrder).toContain('vetDisconnectTracker.clear');
+        expect(callOrder).toContain('closeAllRedisClients');
+        expect(callOrder).toContain('prisma.disconnect');
+        expect(callOrder.indexOf('vetDisconnectTracker.clear')).toBeLessThan(
+          callOrder.indexOf('closeAllRedisClients')
+        );
+        expect(callOrder.indexOf('closeAllRedisClients')).toBeLessThan(
+          callOrder.indexOf('prisma.disconnect')
+        );
 
-        flushSpy.mockRestore();
+        clearSpy.mockRestore();
         closeRedisSpy.mockRestore();
       } finally {
         process.env = savedEnv;

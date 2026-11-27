@@ -41,11 +41,11 @@ stateDiagram-v2
     CANCELLED --> [*]
 ```
 
-Además de los 4 estados principales (`WAITING`, `ACTIVE`, `COMPLETED`, `CANCELLED`), el enum `ConsultationStatus` contempla estados extendidos (`TRIAGE_CRITICAL_QUEUED`, `CLAIM_PENDING_SYNC`, `LIVEKIT_CONNECTING`, `IN_CALL_ACTIVE`, `AWAITING_EMERGENCY_CALLBACK`, `HANDOFF_IN_PROGRESS`) y la tabla `ConsultationAuditLog` junto con `stateVersion`, `activeDeviceId` y `transportStatus` para soportar reclamos con bloqueo de fila (`FOR UPDATE`) y recuperación de sesión entre dispositivos en `consultationConcurrency.service.ts`.
+El contrato operativo en runtime (`backend/` y `web/`) se estandariza estrictamente sobre los 4 estados clínicos (`WAITING`, `ACTIVE`, `COMPLETED`, `CANCELLED`). El enum `ConsultationStatus` en PostgreSQL conserva los 6 literales extendidos legados únicamente para rollback seguro previo a su limpieza futura, con verificación estática en `scripts/verify-governance.js` y backfill idempotente en `backend/prisma/scripts/backfill-consultation-4-states.sql`. La creación de consultas garantiza a lo sumo una consulta abierta por tutor (`pg_advisory_xact_lock(hashtext(clientId))`), el handoff multi-dispositivo con `activeDeviceId` y `stateVersion` expulsa sesiones obsoletas en Socket.IO y LiveKit SFU (`evictUserRealtimeAndCall`), `ConsultationAuditLog` registra eventos clave de ciclo de vida y handoff, y la conectividad efímera se notifica vía Redis `PresenceService` (`consultation:tutor_reconnecting` / `consultation:tutor_reconnected`) sin persistir cortes en DB.
 
 **Reglas de timeout implementadas:**
 - **Espera máxima en cola (`checkTriageTimeout`):** Si una consulta permanece en `WAITING` más de **15 minutos**, transiciona automáticamente a `CANCELLED` añadiendo `[CANCELLED_TIMEOUT_NO_VET_AVAILABLE]` y cerrando la sala LiveKit si existiera.
-- **Desconexión en consulta activa (`checkVetDisconnectTimeout`):** Ventana de gracia de **3 minutos** ante desconexión prolongada (`[VET_DISCONNECTED_TIMEOUT]`).
+- **Desconexión en consulta activa (`checkVetDisconnectTimeout` + `VetDisconnectTracker`):** Sweeper distribuido en Redis ZSET (`huellicam:vet_disconnect_deadlines`) con ventana de gracia de **3 minutos** ante desconexión prolongada (`[VET_DISCONNECTED_TIMEOUT]`), protegido durante 30 minutos tras una llamada `Call.status === 'ENDED'` con duración ≥ 10 s para no cancelar consultas pendientes solo de evolución clínica.
 
 ### 3.2 Motor Determinista de Triaje Clínico (`clinicalTriage.engine.ts`)
 

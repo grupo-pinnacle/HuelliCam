@@ -1,11 +1,59 @@
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import prisma from '../../lib/prisma';
+import { getRedisClient } from '../../lib/redis';
 import { AppError } from '../../middlewares/errorHandler';
 import { emailService } from '../../services/email.service';
+import { evictUserRealtimeAndCall } from '../../realtime/sessionEviction.helper';
+
+const OTP_ATTEMPT_WINDOW_SEC = 10 * 60;
+const otpAttemptsKey = (tokenId: string) => `huellicam:pwdreset:attempts:${tokenId}`;
+
+interface LocalAttemptEntry {
+  count: number;
+  expiresAt: number;
+}
 
 export class PasswordResetService {
-  private failedAttemptsMap = new Map<string, number>();
+  private failedAttemptsMap = new Map<string, LocalAttemptEntry>();
+
+  private async incrementFailedAttempts(tokenId: string): Promise<number> {
+    const client = getRedisClient();
+    if (client && client.status === 'ready') {
+      try {
+        const key = otpAttemptsKey(tokenId);
+        const count = await client.incr(key);
+        if (count === 1) {
+          await client.expire(key, OTP_ATTEMPT_WINDOW_SEC);
+        }
+        return count;
+      } catch {
+        // Fallback to local map on Redis transient failure
+      }
+    }
+
+    const now = Date.now();
+    const existing = this.failedAttemptsMap.get(tokenId);
+    const activeCount = existing && existing.expiresAt > now ? existing.count : 0;
+    const nextCount = activeCount + 1;
+    this.failedAttemptsMap.set(tokenId, {
+      count: nextCount,
+      expiresAt: now + OTP_ATTEMPT_WINDOW_SEC * 1000,
+    });
+    return nextCount;
+  }
+
+  private async clearFailedAttempts(tokenId: string): Promise<void> {
+    this.failedAttemptsMap.delete(tokenId);
+    const client = getRedisClient();
+    if (client && client.status === 'ready') {
+      try {
+        await client.del(otpAttemptsKey(tokenId));
+      } catch {
+        // Non-blocking Redis cleanup
+      }
+    }
+  }
 
   /**
    * Genera un código de 6 dígitos seguro, lo guarda hasheado y envía el correo con Resend.
@@ -64,6 +112,11 @@ export class PasswordResetService {
    * Invalida el token al 3er intento fallido.
    */
   public async verifyCode(emailInput: string, codeInput: string): Promise<boolean> {
+    await this.verifyActiveToken(emailInput, codeInput);
+    return true;
+  }
+
+  private async verifyActiveToken(emailInput: string, codeInput: string): Promise<{ id: string }> {
     const email = String(emailInput).toLowerCase().trim();
     const code = String(codeInput).trim();
 
@@ -82,11 +135,10 @@ export class PasswordResetService {
 
     const isMatch = await bcrypt.compare(code, activeToken.codeHash);
     if (!isMatch) {
-      const currentAttempts = (this.failedAttemptsMap.get(activeToken.id) || 0) + 1;
-      this.failedAttemptsMap.set(activeToken.id, currentAttempts);
+      const currentAttempts = await this.incrementFailedAttempts(activeToken.id);
 
       if (currentAttempts >= 3) {
-        this.failedAttemptsMap.delete(activeToken.id);
+        await this.clearFailedAttempts(activeToken.id);
         await prisma.passwordResetToken.updateMany({
           where: { id: activeToken.id, usedAt: null },
           data: { usedAt: new Date() },
@@ -101,8 +153,8 @@ export class PasswordResetService {
       throw new AppError('El código ingresado es incorrecto', 400, 'INVALID_RESET_CODE');
     }
 
-    this.failedAttemptsMap.delete(activeToken.id);
-    return true;
+    await this.clearFailedAttempts(activeToken.id);
+    return { id: activeToken.id };
   }
 
   /**
@@ -112,7 +164,7 @@ export class PasswordResetService {
     const email = String(emailInput).toLowerCase().trim();
     const code = String(codeInput).trim();
 
-    await this.verifyCode(email, code);
+    const verifiedToken = await this.verifyActiveToken(email, code);
 
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user || user.deletedAt) {
@@ -121,7 +173,15 @@ export class PasswordResetService {
 
     const hashedPassword = await bcrypt.hash(newPasswordInput, 12);
 
-    // Marcar token como utilizado
+    // Atomic single-use CAS consumption so concurrent reset requests with the same OTP cannot both succeed
+    const consumed = await prisma.passwordResetToken.updateMany({
+      where: { id: verifiedToken.id, usedAt: null, expiresAt: { gt: new Date() } },
+      data: { usedAt: new Date() },
+    });
+    if (consumed.count === 0) {
+      throw new AppError('El código es inválido o ya fue utilizado', 400, 'INVALID_RESET_CODE');
+    }
+
     await prisma.passwordResetToken.updateMany({
       where: { email, usedAt: null },
       data: { usedAt: new Date() },
@@ -135,6 +195,13 @@ export class PasswordResetService {
         tokenVersion: { increment: 1 },
       },
     });
+
+    await evictUserRealtimeAndCall({
+      userId: user.id,
+      role: user.role,
+      reason: 'SESSION_REVOKED',
+      message: 'Tu contraseña ha sido restablecida. Iniciá sesión nuevamente.',
+    }).catch(() => {});
 
     return true;
   }

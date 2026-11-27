@@ -21,6 +21,12 @@ export const cancelConsultationSchema = z.object({
   reason: z.string().optional(),
 });
 
+export const rescheduleConsultationSchema = z.object({
+  scheduledAt: z.string().datetime({ message: 'scheduledAt debe ser una fecha ISO válida' }),
+  reason: z.string().max(500).optional(),
+  vetId: z.string().min(1).optional(),
+});
+
 export const reviewConsultationSchema = z.object({
   rating: z
     .number()
@@ -85,6 +91,7 @@ export const createMessageSchema = z.object({
 export type CreateConsultationDTO = z.infer<typeof createConsultationSchema>;
 export type CompleteConsultationDTO = z.infer<typeof completeConsultationSchema>;
 export type CancelConsultationDTO = z.infer<typeof cancelConsultationSchema>;
+export type RescheduleConsultationDTO = z.infer<typeof rescheduleConsultationSchema>;
 export type ReviewConsultationDTO = z.infer<typeof reviewConsultationSchema>;
 export type CreateMessageDTO = z.infer<typeof createMessageSchema>;
 

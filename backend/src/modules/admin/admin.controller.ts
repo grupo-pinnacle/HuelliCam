@@ -221,6 +221,7 @@ export class AdminController {
 
   public getFeatureFlags = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
+      await featureFlagsService.syncFromRedis(true);
       const flags = featureFlagsService.getAllFlags();
       res.status(200).json({ success: true, data: flags });
     } catch (error) {
@@ -260,7 +261,7 @@ export class AdminController {
 
   public getPricingSettings = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const settings = adminService.getPricingSettings();
+      const settings = await adminService.syncPricingFromRedis(true);
       res.status(200).json({ success: true, data: settings });
     } catch (error) {
       next(error);

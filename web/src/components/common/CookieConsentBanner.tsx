@@ -90,7 +90,7 @@ export const CookieConsentBanner: React.FC = () => {
             type="button"
             data-testid="cookie-accept-all"
             onClick={() => savePreferences(true)}
-            className="flex-1 md:flex-none px-6 py-2.5 bg-[#609f9c] hover:bg-[#4d8d89] active:bg-[#315f5d] text-white rounded-full text-xs font-bold transition-colors shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#fffbef] cursor-pointer"
+            className="flex-1 md:flex-none px-6 py-2.5 bg-[#315f5d] hover:bg-[#183c3a] active:bg-[#183c3a] text-white rounded-full text-xs font-bold transition-colors shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#fffbef] cursor-pointer"
           >
             Aceptar Todas
           </button>

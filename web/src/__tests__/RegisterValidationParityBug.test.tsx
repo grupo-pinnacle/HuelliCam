@@ -2,11 +2,9 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 
-describe('Bugfix: Paridad de validación cliente-servidor en Registro (AuthExperience.tsx & Register.tsx)', () => {
+describe('Bugfix: Paridad de validación cliente-servidor en Registro (AuthExperience.tsx)', () => {
   const authExpPath = path.resolve(__dirname, '../pages/AuthExperience.tsx');
-  const registerPath = path.resolve(__dirname, '../pages/Register.tsx');
   const authExpCode = fs.readFileSync(authExpPath, 'utf-8');
-  const registerCode = fs.readFileSync(registerPath, 'utf-8');
 
   it('AuthExperience.tsx debe exigir estrictamente password.length >= 8 en validatePersonal/passwordScore aun con alta entropía', () => {
     const validatePersonalMatch = authExpCode.match(/function\s+validatePersonal\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
@@ -26,11 +24,5 @@ describe('Bugfix: Paridad de validación cliente-servidor en Registro (AuthExper
 
     expect(validatePersonalBody).toMatch(/firstName\.trim\(\)\.length\s*<\s*2/);
     expect(validatePersonalBody).toMatch(/lastName\.trim\(\)\.length\s*<\s*2/);
-  });
-
-  it('Register.tsx debe validar longitud mínima de 2 caracteres en nombre/apellido y 8 en contraseña antes de enviar', () => {
-    expect(registerCode).toMatch(/password\.length\s*<\s*8/);
-    expect(registerCode).toMatch(/firstName\.trim\(\)\.length\s*<\s*2/);
-    expect(registerCode).toMatch(/lastName\.trim\(\)\.length\s*<\s*2/);
   });
 });

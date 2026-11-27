@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { ChatMessageProps } from '../../types';
+import { formatTimeAR } from '../../lib/formatters';
 
 export const ChatMessage: React.FC<ChatMessageProps> = ({
   message,
@@ -8,10 +9,13 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   className = '',
   'data-testid': testId,
 }) => {
-  const formattedTime = new Date(message.createdAt).toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  const [imgFailed, setImgFailed] = useState(false);
+
+  useEffect(() => {
+    setImgFailed(false);
+  }, [message.attachmentUrl]);
+
+  const formattedTime = formatTimeAR(message.createdAt, { hour: '2-digit', minute: '2-digit' }, '');
 
   return (
     <div
@@ -38,12 +42,19 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
 
         {message.attachmentUrl && (
           <div className="mt-2 rounded-lg overflow-hidden border border-white/10">
-            <img
-              src={message.attachmentUrl}
-              alt="Adjunto clínico"
-              onClick={() => onImageClick && onImageClick(message.attachmentUrl!)}
-              className="max-h-48 w-auto rounded object-cover cursor-pointer hover:opacity-90 transition-opacity"
-            />
+            {imgFailed ? (
+              <div className="px-3 py-2 text-xs bg-black/15 text-current/80 rounded">
+                Adjunto no disponible
+              </div>
+            ) : (
+              <img
+                src={message.attachmentUrl}
+                alt="Adjunto clínico"
+                onError={() => setImgFailed(true)}
+                onClick={() => onImageClick && onImageClick(message.attachmentUrl!)}
+                className="max-h-48 w-auto rounded object-cover cursor-pointer hover:opacity-90 transition-opacity"
+              />
+            )}
           </div>
         )}
       </div>

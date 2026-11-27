@@ -1,11 +1,17 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { Drawer } from "vaul";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Icon, Modal, Status, Toast, go } from "../shared";
+import { useFocusTrap } from "../components/common/DialogOverlay";
+import { useIsMobileViewport } from "../lib/useIsMobileViewport";
+import { getInitials } from "../lib/formatters";
 import api from "../services/api";
 import { ClinicalChatThread, type ClinicalChatDoc, type ClinicalChatMessage } from "../components/chat/ClinicalChatThread";
 import { useAuth } from "../context/AuthContext";
 import { useSocket } from "../context/SocketContext";
-import type { ApiResponse, Consultation as BackendConsultation, Prescription as BackendPrescription, User } from "../types";
+import { normalizeMediaUrl, useAuthenticatedMediaUrl } from "../lib/authenticatedMedia";
+import type { ApiResponse, Consultation as BackendConsultation, FollowUpDTO, Prescription as BackendPrescription, User } from "../types";
 import { parseConsultationNotes } from "../lib/consultationNotes";
 import {
   getPatient, initialConsults, initialEvents, initialFollowUps, initialQueue, initialRx, initialThreads, quickReplies, triageMeta,
@@ -19,9 +25,11 @@ export type Avail = "Disponible" | "No disponible" | "En consulta";
 type Ctx = {
   avail: Avail; requestAvail: (next: Avail) => void; notify: (msg: string) => void;
   queue: QueueItem[]; accept: (id: string) => void;
-  consults: Consult[]; finish: (id: string, notes?: string) => Promise<void> | void; threads: Thread[]; send: (petId: string, msg: Omit<Msg, "id" | "mine" | "time">) => void; markRead: (petId: string) => void; unread: number;
+  consults: Consult[]; consultsLoading: boolean; finish: (id: string, notes?: string) => Promise<void> | void;
+  consultsError: boolean; refetchConsults: () => void;
+  threads: Thread[]; send: (petId: string, msg: Omit<Msg, "id" | "mine" | "time">) => void; markRead: (petId: string) => void; unread: number;
   events: AgendaEvent[]; setEvents: React.Dispatch<React.SetStateAction<AgendaEvent[]>>;
-  rx: Rx[]; setRx: React.Dispatch<React.SetStateAction<Rx[]>>;
+  rx: Rx[]; rxLoading: boolean; rxError: boolean; refetchRx: () => void; setRx: React.Dispatch<React.SetStateAction<Rx[]>>;
   followUps: FollowUp[]; setFollowUps: React.Dispatch<React.SetStateAction<FollowUp[]>>;
   patientsList: Patient[];
   forceEmpty: boolean;
@@ -127,6 +135,88 @@ export function VetProvider({ children, forceEmpty }: { children: ReactNode; for
   });
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
 
+  const vetFollowUpsQuery = useQuery({
+    queryKey: ['follow-ups', 'vet', user?.id],
+    enabled: !forceEmpty && user?.role === "VET",
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<FollowUpDTO[]>>('/api/scheduling/follow-ups');
+      return res.data.success && res.data.data ? res.data.data : [];
+    },
+  });
+
+  useEffect(() => {
+    if (forceEmpty || !vetFollowUpsQuery.data) return;
+    const nowMs = Date.now();
+    const mapped: FollowUp[] = vetFollowUpsQuery.data.map((item) => {
+      const due = new Date(item.scheduledAt);
+      const dueStr = Number.isFinite(due.getTime())
+        ? `${due.toLocaleDateString("es-AR", { day: "2-digit", month: "short" })} · ${due.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}`
+        : "Por definir";
+      const uiStatus: FollowUp["status"] =
+        item.status === "COMPLETED"
+          ? "Realizado"
+          : due.getTime() < nowMs && item.status === "PENDING"
+          ? "Atrasado"
+          : "Pendiente";
+      return {
+        id: item.id,
+        petId: item.petId,
+        title: item.title,
+        when: dueStr,
+        status: uiStatus,
+        note: item.notes || "Control clínico programado.",
+      };
+    });
+    setFollowUps(mapped);
+  }, [vetFollowUpsQuery.data, forceEmpty]);
+
+  useEffect(() => {
+    if (forceEmpty) return;
+    const consultEvents: AgendaEvent[] = (vetConsultsQuery.data || []).map((c) => {
+      const targetIso = c.scheduledAt || c.startedAt || c.createdAt;
+      const dt = new Date(targetIso);
+      const dayIdx = Number.isFinite(dt.getTime()) ? (dt.getDay() + 6) % 7 : 0;
+      const timeStr = Number.isFinite(dt.getTime())
+        ? dt.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false })
+        : "18:00";
+      const status: AgendaEvent["status"] =
+        c.status === "COMPLETED"
+          ? "Completada"
+          : c.status === "CANCELLED"
+          ? "Cancelada"
+          : c.status === "ACTIVE"
+          ? "Confirmada"
+          : "Pendiente";
+      return {
+        id: `ev-c-${c.id}`,
+        day: dayIdx,
+        time: timeStr,
+        petId: c.petId,
+        type: "Videoconsulta",
+        status,
+        consultId: c.id,
+      };
+    });
+    const followUpEvents: AgendaEvent[] = (vetFollowUpsQuery.data || [])
+      .filter((f) => f.status !== "CANCELLED")
+      .map((f) => {
+        const dt = new Date(f.scheduledAt);
+        const dayIdx = Number.isFinite(dt.getTime()) ? (dt.getDay() + 6) % 7 : 0;
+        const timeStr = Number.isFinite(dt.getTime())
+          ? dt.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false })
+          : "18:00";
+        return {
+          id: `fu-${f.id}`,
+          day: dayIdx,
+          time: timeStr,
+          petId: f.petId,
+          type: "Seguimiento",
+          status: f.status === "COMPLETED" ? "Completada" : "Pendiente",
+        };
+      });
+    setEvents([...consultEvents, ...followUpEvents]);
+  }, [vetConsultsQuery.data, vetFollowUpsQuery.data, forceEmpty]);
+
   const vetPrescriptionsQuery = useQuery({
     queryKey: ['prescriptions', 'vet', user?.id],
     enabled: !forceEmpty && user?.role === "VET",
@@ -165,7 +255,7 @@ export function VetProvider({ children, forceEmpty }: { children: ReactNode; for
           ? new Date(item.createdAt).toLocaleDateString("es-AR", { day: "numeric", month: "short", year: "numeric" })
           : "Hoy",
         qrCodeDataUrl: item.qrCodeDataUrl,
-        verifyUrl: item.verifyUrl,
+        verifyUrl: item.signedVerifyUrl || item.verifyUrl,
       };
     });
 
@@ -195,7 +285,7 @@ export function VetProvider({ children, forceEmpty }: { children: ReactNode; for
               last: existing?.last || c.reason || "Consulta médica",
               lastTime: existing?.lastTime || c.time || "Hoy",
               unread: existing?.unread || 0,
-              online: true,
+              online: c.status === "Activa",
               msgs: existing?.msgs || [],
             };
           });
@@ -236,12 +326,20 @@ export function VetProvider({ children, forceEmpty }: { children: ReactNode; for
   }, [queue, notify, queryClient]);
 
   const finish = useCallback(async (id: string, notes?: string) => {
+    const payload = { diagnosisNotes: notes || "Consulta telemática finalizada con éxito." };
     try {
-      await api.patch(`/api/consultations/${id}/complete`, { diagnosisNotes: notes || "Consulta telemática finalizada con éxito." });
+      await api.patch(`/api/consultations/${id}/complete`, payload);
       void queryClient.invalidateQueries({ queryKey: ['consultations'] });
       setAvail("Disponible");
       notify("Consulta finalizada con éxito");
-    } catch {
+    } catch (err: unknown) {
+      const hasResponse = Boolean((err as { response?: unknown })?.response);
+      if (!hasResponse) {
+        const { enqueueOfflineMutation } = await import("../lib/offlineQueue");
+        enqueueOfflineMutation({ method: "PATCH", url: `/api/consultations/${id}/complete`, data: payload });
+        notify("Sin conexión: el cierre de la consulta quedó en cola para sincronizar.");
+        return;
+      }
       notify("No se pudo completar la consulta.");
     }
   }, [notify, queryClient]);
@@ -250,17 +348,38 @@ export function VetProvider({ children, forceEmpty }: { children: ReactNode; for
     const full: Msg = { ...msg, id: `m${Date.now()}`, mine: true, time: "Ahora" };
     setThreads((list) => list.some((t) => t.petId === petId)
       ? list.map((t) => t.petId === petId ? { ...t, msgs: [...t.msgs, full], last: msg.text ?? "Archivo", lastTime: "Ahora" } : t)
-      : [{ id: `t-${petId}`, petId, last: msg.text ?? "Archivo", lastTime: "Ahora", unread: 0, online: true, msgs: [full] }, ...list]);
+      : [{ id: `t-${petId}`, petId, last: msg.text ?? "Archivo", lastTime: "Ahora", unread: 0, online: false, msgs: [full] }, ...list]);
   }, []);
   const markRead = useCallback((petId: string) => setThreads((list) => list.some((t) => t.petId === petId && t.unread) ? list.map((t) => t.petId === petId ? { ...t, unread: 0 } : t) : list), []);
   const unread = threads.reduce((n, t) => n + t.unread, 0);
 
   const patientsList = useMemo(() => {
-    return getAllPatients();
-  }, [vetConsultsQuery.data]);
+    const activePetIds = new Set<string>([
+      ...queue.map((q) => q.petId),
+      ...consults
+        .filter((c) => c.status === "Activa" || c.status === "Próxima")
+        .map((c) => c.petId),
+    ]);
+    const followUpPetIds = new Set<string>(
+      followUps.filter((f) => f.status !== "Realizado").map((f) => f.petId)
+    );
+    return getAllPatients().map((patient) => ({
+      ...patient,
+      state: (activePetIds.has(patient.id)
+        ? "Activo"
+        : followUpPetIds.has(patient.id)
+        ? "En seguimiento"
+        : "Sin consultas recientes") as Patient["state"],
+    }));
+  }, [vetConsultsQuery.data, queue, consults, followUps]);
 
-  const value = useMemo(() => ({ avail, requestAvail, notify, queue, accept, consults, finish, threads, send, markRead, unread, events, setEvents, rx, setRx, followUps, setFollowUps, patientsList, forceEmpty }),
-    [avail, requestAvail, notify, queue, accept, consults, finish, threads, send, markRead, unread, events, rx, followUps, patientsList, forceEmpty]);
+  const refetchConsults = useCallback(() => {
+    void vetConsultsQuery.refetch();
+  }, [vetConsultsQuery]);
+  const consultsError = !forceEmpty && vetConsultsQuery.isError;
+
+  const value = useMemo(() => ({ avail, requestAvail, notify, queue, accept, consults, consultsLoading: vetConsultsQuery.isLoading, finish, consultsError, refetchConsults, threads, send, markRead, unread, events, setEvents, rx, rxLoading: vetPrescriptionsQuery.isLoading, rxError: vetPrescriptionsQuery.isError, refetchRx: () => { void vetPrescriptionsQuery.refetch(); }, setRx, followUps, setFollowUps, patientsList, forceEmpty }),
+    [avail, requestAvail, notify, queue, accept, consults, vetConsultsQuery.isLoading, finish, consultsError, refetchConsults, threads, send, markRead, unread, events, rx, vetPrescriptionsQuery.isLoading, vetPrescriptionsQuery.isError, vetPrescriptionsQuery.refetch, followUps, patientsList, forceEmpty]);
 
   return <VetContext.Provider value={value}>
     {children}
@@ -281,16 +400,66 @@ export function TriageBadge({ level, compact = false }: { level: Triage; compact
   </span>;
 }
 
-export function WaitTimer({ base }: { base: number }) {
-  const [s, setS] = useState(base);
-  useEffect(() => { const t = window.setInterval(() => setS((v) => v + 1), 1000); return () => window.clearInterval(t); }, []);
+export function WaitTimer({ base, createdAt }: { base: number; createdAt?: string }) {
+  const fallbackStartMsRef = useRef<number>(Date.now() - Math.max(0, base) * 1000);
+  const computeElapsed = useCallback(() => {
+    const parsed = createdAt ? new Date(createdAt).getTime() : NaN;
+    const startMs = Number.isFinite(parsed) ? parsed : fallbackStartMsRef.current;
+    return Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+  }, [createdAt]);
+
+  const [s, setS] = useState<number>(() => computeElapsed());
+  useEffect(() => {
+    setS(computeElapsed());
+    const t = window.setInterval(() => setS(computeElapsed()), 1000);
+    return () => window.clearInterval(t);
+  }, [computeElapsed]);
+
   const mm = String(Math.floor(s / 60)).padStart(2, "0");
   const ss = String(s % 60).padStart(2, "0");
   return <time className="v-timer" aria-label={`${Math.floor(s / 60)} minutos de espera`}>{mm}:{ss}</time>;
 }
 
 export function PetPhoto({ pet, size = 44 }: { pet: Patient; size?: number }) {
-  return <img className="v-pet-photo" src={pet.photo} alt="" width={size} height={size} loading="lazy" style={{ width: size, height: size }}/>;
+  const [failed, setFailed] = useState(false);
+  const resolvedSrc = useAuthenticatedMediaUrl(pet.photo);
+  useEffect(() => {
+    setFailed(false);
+  }, [pet.photo, resolvedSrc]);
+  if (!pet.photo || !resolvedSrc || failed) {
+    return (
+      <span
+        className="v-pet-photo v-pet-photo--fallback"
+        aria-hidden="true"
+        style={{
+          width: size,
+          height: size,
+          display: "inline-grid",
+          placeItems: "center",
+          borderRadius: "50%",
+          background: "#d9e8e4",
+          color: "#183c3a",
+          fontWeight: 800,
+          fontSize: Math.max(11, Math.round(size * 0.34)),
+          flexShrink: 0,
+        }}
+      >
+        {getInitials(pet.name, "M")}
+      </span>
+    );
+  }
+  return (
+    <img
+      className="v-pet-photo"
+      src={resolvedSrc}
+      alt=""
+      width={size}
+      height={size}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      style={{ width: size, height: size }}
+    />
+  );
 }
 
 const statusTone: Record<string, "teal" | "amber" | "gray" | "red"> = {
@@ -302,59 +471,90 @@ export function ConsultStatus({ status }: { status: string }) {
   return <Status tone={statusTone[status] ?? "gray"}>{status}</Status>;
 }
 
-export type LightboxItem = { src: string; caption: string; pos?: string };
+export type LightboxItem = { src: string; caption: string; pos?: string; date?: string };
+
+function LightboxThumb({ item, active, onSelect }: { item: LightboxItem; active: boolean; onSelect: () => void }) {
+  const thumbSrc = useAuthenticatedMediaUrl(item.src);
+  return (
+    <button
+      className={active ? "is-selected" : ""}
+      onClick={onSelect}
+      aria-label={`Ver ${item.caption}`}
+      aria-current={active}
+    >
+      {thumbSrc ? <img src={thumbSrc} alt="" style={{ objectPosition: item.pos }} /> : <span className="v-mini-empty">...</span>}
+    </button>
+  );
+}
 
 export function Lightbox({ items, index, onIndex, onClose, pet, consult }: { items: LightboxItem[]; index: number; onIndex: (i: number) => void; onClose: () => void; pet: string; consult: string }) {
   const [zoom, setZoom] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
   const move = useCallback((d: number) => { setZoom(false); onIndex((index + d + items.length) % items.length); }, [index, items.length, onIndex]);
+  useFocusTrap(true, frameRef, { onEscape: onClose, initialFocusRef: closeRef });
   useEffect(() => {
-    closeRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); if (e.key === "ArrowLeft") move(-1); if (e.key === "ArrowRight") move(1); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "ArrowLeft") move(-1); if (e.key === "ArrowRight") move(1); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, move]);
+  }, [move]);
   const item = items[index];
-  return <div className="modal-layer v-lightbox" role="dialog" aria-modal="true" aria-label={`Fotografía clínica ${index + 1} de ${items.length}`}>
+  const resolvedSrc = useAuthenticatedMediaUrl(item?.src);
+  const lightboxNode = <div className="modal-layer v-lightbox" role="dialog" aria-modal="true" aria-label={`Fotografía clínica ${index + 1} de ${items.length}`}>
     <button className="modal-scrim" onClick={onClose} aria-label="Cerrar visor"/>
-    <div className="v-lightbox__frame">
+    <div ref={frameRef} className="v-lightbox__frame">
       <header>
         <div><b>{pet}</b><span>{item.caption}</span></div>
-        <div className="v-lightbox__ctx"><span>15 Jul 2025</span><span>{consult}</span><span>{index + 1} / {items.length}</span></div>
+        <div className="v-lightbox__ctx">{item.date && <span>{item.date}</span>}<span>{consult}</span><span>{index + 1} / {items.length}</span></div>
         <Button variant="icon" icon="expand" ariaLabel={zoom ? "Reducir imagen" : "Ampliar imagen"} onClick={() => setZoom(!zoom)}/>
         <button ref={closeRef} className="button button--icon" onClick={onClose} aria-label="Cerrar visor"><Icon name="close" size={18}/></button>
       </header>
       <div className="v-lightbox__stage">
         {items.length > 1 && <button className="v-lightbox__nav v-lightbox__nav--prev" onClick={() => move(-1)} aria-label="Fotografía anterior"><Icon name="left" size={22}/></button>}
-        <img src={item.src} alt={`${item.caption} de ${pet}`} className={zoom ? "is-zoomed" : ""} style={{ objectPosition: item.pos }} onClick={() => setZoom(!zoom)}/>
+        {resolvedSrc ? (
+          <img src={resolvedSrc} alt={`${item.caption} de ${pet}`} className={zoom ? "is-zoomed" : ""} style={{ objectPosition: item.pos }} onClick={() => setZoom(!zoom)}/>
+        ) : (
+          <div style={{ color: "#FAF8F5", fontSize: 13 }}>Cargando imagen clínica...</div>
+        )}
         {items.length > 1 && <button className="v-lightbox__nav v-lightbox__nav--next" onClick={() => move(1)} aria-label="Fotografía siguiente"><Icon name="chevron" size={22}/></button>}
       </div>
-      {items.length > 1 && <div className="v-lightbox__thumbs">{items.map((it, i) => <button key={i} className={i === index ? "is-selected" : ""} onClick={() => { setZoom(false); onIndex(i); }} aria-label={`Ver ${it.caption}`} aria-current={i === index}><img src={it.src} alt="" style={{ objectPosition: it.pos }}/></button>)}</div>}
+      {items.length > 1 && <div className="v-lightbox__thumbs">{items.map((it, i) => <LightboxThumb key={i} item={it} active={i === index} onSelect={() => { setZoom(false); onIndex(i); }} />)}</div>}
     </div>
   </div>;
+  return typeof document !== "undefined" ? createPortal(lightboxNode, document.body) : lightboxNode;
 }
 
 export function Sheet({ eyebrow, title, onClose, children, footer }: { eyebrow?: string; title: string; onClose: () => void; children: ReactNode; footer?: ReactNode }) {
+  const isMobile = useIsMobileViewport();
   const ref = useRef<HTMLButtonElement>(null);
   const dialog = useRef<HTMLElement>(null);
-  const previous = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    previous.current = document.activeElement as HTMLElement;
-    ref.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-      if (e.key !== "Tab" || !dialog.current) return;
-      const focusable = [...dialog.current.querySelectorAll<HTMLElement>("button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")];
-      if (!focusable.length) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => { window.removeEventListener("keydown", onKey); previous.current?.focus(); };
-  }, [onClose]);
-  return <div className="v-sheet-layer" role="presentation">
+  useFocusTrap(!isMobile, dialog, { onEscape: onClose, initialFocusRef: ref });
+
+  if (isMobile) {
+    return (
+      <Drawer.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
+        <Drawer.Portal>
+          <Drawer.Overlay className="modal-scrim" style={{ position: "fixed", inset: 0, zIndex: 99 }} />
+          <Drawer.Content
+            className="v-sheet"
+            style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 100 }}
+            aria-describedby={undefined}
+          >
+            <Drawer.Title className="sr-only">{title}</Drawer.Title>
+            <span className="v-sheet__grip" aria-hidden="true" />
+            <header>
+              <div>{eyebrow && <span className="eyebrow">{eyebrow}</span>}<h2>{title}</h2></div>
+              <button className="button button--icon" onClick={onClose} aria-label="Cerrar"><Icon name="close" size={18} /></button>
+            </header>
+            <div className="v-sheet__body">{children}</div>
+            {footer && <footer className="v-sheet__footer">{footer}</footer>}
+          </Drawer.Content>
+        </Drawer.Portal>
+      </Drawer.Root>
+    );
+  }
+
+  const sheetNode = <div className="v-sheet-layer" role="presentation">
     <button className="modal-scrim" onClick={onClose} aria-label="Cerrar panel"/>
     <aside ref={dialog} className="v-sheet" role="dialog" aria-modal="true" aria-label={title}>
       <span className="v-sheet__grip" aria-hidden="true"/>
@@ -363,6 +563,7 @@ export function Sheet({ eyebrow, title, onClose, children, footer }: { eyebrow?:
       {footer && <footer className="v-sheet__footer">{footer}</footer>}
     </aside>
   </div>;
+  return typeof document !== "undefined" ? createPortal(sheetNode, document.body) : sheetNode;
 }
 
 interface VetChatRawMessage {
@@ -370,6 +571,7 @@ interface VetChatRawMessage {
   clientMsgId?: string;
   consultationId?: string;
   content?: string;
+  attachmentUrl?: string | null;
   senderId?: string;
   sender?: { firstName?: string; lastName?: string };
   createdAt?: string | null;
@@ -382,6 +584,25 @@ interface VetChatRawMessage {
   localDoc?: ClinicalChatDoc;
 }
 
+const VET_CHAT_IMAGE_RE = /\.(png|jpe?g|webp|gif|bmp|avif)(\?|$)/i;
+
+function buildVetDocFromMessage(m: VetChatRawMessage): ClinicalChatDoc | undefined {
+  if (m.localDoc) return m.localDoc;
+  const resolved = normalizeMediaUrl(m.attachmentUrl);
+  if (!resolved) return undefined;
+  const contentText = (m.content || "").trim();
+  const title = contentText.replace(/^📎\s*Adjunto:\s*/i, "") || "Archivo clínico adjunto";
+  const isImage = VET_CHAT_IMAGE_RE.test(resolved) || VET_CHAT_IMAGE_RE.test(title);
+  return {
+    title,
+    sub: isImage ? "Imagen clínica adjunta" : "Documento clínico adjunto",
+    bannerTag: isImage ? "FOTO / ARCHIVO CLÍNICO" : "DOCUMENTO ADJUNTO",
+    bannerTitle: "HuelliCam · Expediente Clínico",
+    fileUrl: resolved,
+    isImage,
+  };
+}
+
 export function ChatPanel({
   petId,
   consultationId,
@@ -389,6 +610,7 @@ export function ChatPanel({
   actions,
   onBack,
   consultLabel = "Conversación",
+  useInitialsAvatar = false,
 }: {
   petId: string;
   consultationId?: string;
@@ -396,9 +618,21 @@ export function ChatPanel({
   actions?: ReactNode;
   onBack?: () => void;
   consultLabel?: string;
+  useInitialsAvatar?: boolean;
 }) {
   const { user } = useAuth();
   const { socket, isConnected, joinConsultation, leaveConsultation, emitEvent } = useSocket();
+  const blobUrlsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    return () => {
+      blobUrlsRef.current.forEach((url) => {
+        try {
+          URL.revokeObjectURL?.(url);
+        } catch {}
+      });
+      blobUrlsRef.current.clear();
+    };
+  }, [consultationId, petId]);
   const roomActionsRef = useRef({ joinConsultation, leaveConsultation });
   roomActionsRef.current = { joinConsultation, leaveConsultation };
   const { threads, send, markRead, notify, consults } = useVet();
@@ -489,10 +723,17 @@ export function ChatPanel({
       });
     };
 
+    const handleChatDeleted = (payload?: { consultationId?: string }) => {
+      if (payload?.consultationId && payload.consultationId !== activeConsultationId) return;
+      setMessages([]);
+    };
+
     socket.on?.("message:new", handleMessageNew);
+    socket.on?.("chat:deleted", handleChatDeleted);
 
     return () => {
       socket.off?.("message:new", handleMessageNew);
+      socket.off?.("chat:deleted", handleChatDeleted);
     };
   }, [socket, activeConsultationId]);
 
@@ -579,8 +820,9 @@ export function ChatPanel({
       !isMountedRef.current ||
       activeConsultationIdRef.current !== targetCid ||
       consultationEpochRef.current !== targetEpoch;
-    const localUrl = URL.createObjectURL(file);
     if (!targetCid) {
+      const localUrl = URL.createObjectURL(file);
+      blobUrlsRef.current.add(localUrl);
       send(petId, { text: isImage ? `📷 ${file.name}` : `📄 ${file.name}` });
       setMessages((prev) => [
         ...prev,
@@ -612,10 +854,16 @@ export function ChatPanel({
       else if (up.data?.data?.id) attachmentUrl = `/api/media/${up.data.data.id}`;
     } catch {
       if (isStaleTarget()) return;
-      // Fallback to local clinical attachment entry
+      notify("No se pudo subir el archivo adjunto. Intentá nuevamente.");
+      return;
     }
 
-    if (isStaleTarget()) return;
+    if (!attachmentUrl || isStaleTarget()) {
+      if (!isStaleTarget()) {
+        notify("No se pudo adjuntar el archivo.");
+      }
+      return;
+    }
 
     const clientMsgId = `vet-file-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const content = `📎 Adjunto: ${file.name}`;
@@ -623,7 +871,7 @@ export function ChatPanel({
       const res = await api.post<ApiResponse<VetChatRawMessage>>(`/api/consultations/${targetCid}/messages`, {
         content,
         clientMsgId,
-        ...(attachmentUrl ? { attachmentUrl } : {}),
+        attachmentUrl,
       });
       if (isStaleTarget()) return;
       if (res.data.success && res.data.data) {
@@ -632,7 +880,7 @@ export function ChatPanel({
           title: file.name,
           sub: `${isImage ? "Imagen" : "Documento"} clínico · ${(file.size / 1024).toFixed(1)} KB`,
           bannerTag: isImage ? "FOTO / ARCHIVO CLÍNICO" : "DOCUMENTO ADJUNTO",
-          fileUrl: localUrl,
+          fileUrl: attachmentUrl,
           isImage,
         };
         setMessages((prev) => {
@@ -677,15 +925,22 @@ export function ChatPanel({
       };
     }
 
+    const doc = buildVetDocFromMessage(m);
+    const displayText =
+      doc && m.content?.startsWith("📎 Adjunto:") ? undefined : m.content;
+
     return {
       id: String(m.id || m.clientMsgId || `${time}-${Math.random()}`),
       mine,
       senderName: mine ? undefined : m.sender?.firstName || pet.tutor,
-      text: m.localDoc ? undefined : m.content,
+      text: displayText,
       time,
-      doc: m.localDoc,
+      doc,
     };
   });
+
+  const activeConsult = consults.find((c) => c.id === activeConsultationId);
+  const isActiveConsult = activeConsult?.status === "Activa";
 
   return (
     <>
@@ -694,9 +949,16 @@ export function ChatPanel({
         ariaLabel={`Conversación con ${pet.tutor}`}
         showHeader={header}
         contactName={`${pet.tutor} · ${pet.name}`}
-        avatarNode={<PetPhoto pet={pet} size={40} />}
-        statusText={`${isConnected || activeConsultationId ? "En línea" : "Conectado"} · ${pet.kind}, ${pet.breed}`}
-        isOnline={Boolean(isConnected || activeConsultationId)}
+        contactInitials={getInitials(pet.tutor || pet.name, "TU")}
+        avatarNode={useInitialsAvatar ? undefined : <PetPhoto pet={pet} size={40} />}
+        statusText={
+          isActiveConsult
+            ? `En consulta activa · ${pet.kind}, ${pet.breed}`
+            : activeConsult
+            ? `Estado: ${activeConsult.status} · ${pet.kind}, ${pet.breed}`
+            : `${pet.kind}, ${pet.breed}`
+        }
+        isOnline={isActiveConsult}
         onBack={onBack}
         headerActions={actions}
         messages={mappedMessages}

@@ -9,8 +9,9 @@ const getParamId = (param: string | string[]): string => (Array.isArray(param) ?
 export class MediaController {
   public upload = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const consultationId = req.body.consultationId;
-      const mediaFile = await mediaService.uploadMediaFile(req.user!, req.file!, consultationId);
+      const consultationId = typeof req.body?.consultationId === 'string' ? req.body.consultationId : undefined;
+      const petId = typeof req.body?.petId === 'string' ? req.body.petId : undefined;
+      const mediaFile = await mediaService.uploadMediaFile(req.user!, req.file!, consultationId, petId);
       res.status(201).json({
         success: true,
         data: mediaFile,

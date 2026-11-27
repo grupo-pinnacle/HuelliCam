@@ -84,6 +84,73 @@ end
 return { transitionedOnline, isUnavailable, effectiveIsOnline }
 `.trim();
 
+const REFRESH_SOCKET_PRESENCE_LUA = `
+local now = tonumber(ARGV[1])
+local expiresAt = tonumber(ARGV[2])
+local socketId = ARGV[3]
+local presenceTtlMs = tonumber(ARGV[4])
+local approvedVet = ARGV[5] == '1'
+local stateOnline = ARGV[6]
+local userId = ARGV[7]
+
+local existingScore = redis.call('ZSCORE', KEYS[1], socketId)
+if not existingScore or tonumber(existingScore) <= now then
+  return { 0, 0 }
+end
+
+local effectiveIsOnline = 1
+if approvedVet then
+  local unavail = redis.call('GET', KEYS[3])
+  if unavail == '1' then
+    effectiveIsOnline = 0
+  end
+end
+
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
+redis.call('ZADD', KEYS[1], expiresAt, socketId)
+redis.call('PEXPIRE', KEYS[1], presenceTtlMs)
+
+if approvedVet and effectiveIsOnline == 1 then
+  redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', now)
+  redis.call('ZADD', KEYS[2], expiresAt, userId)
+end
+
+if effectiveIsOnline == 1 then
+  redis.call('SET', KEYS[4], stateOnline, 'PX', presenceTtlMs)
+end
+
+return { 1, effectiveIsOnline }
+`.trim();
+
+const UNREGISTER_SOCKET_DISCONNECT_LUA = `
+local now = tonumber(ARGV[1])
+local socketId = ARGV[2]
+local lastSeenTtlSec = tonumber(ARGV[3])
+local approvedVet = ARGV[4] == '1'
+local stateOffline = ARGV[5]
+local userId = ARGV[6]
+
+redis.call('ZREM', KEYS[1], socketId)
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
+
+local remaining = tonumber(redis.call('ZCARD', KEYS[1]))
+if remaining > 0 then
+  return { 0, 0 }
+end
+
+local wasOnlineVet = 0
+if approvedVet then
+  local prevScore = redis.call('ZSCORE', KEYS[2], userId)
+  if prevScore and tonumber(prevScore) > now then
+    wasOnlineVet = 1
+  end
+  redis.call('ZREM', KEYS[2], userId)
+end
+
+redis.call('SET', KEYS[3], stateOffline, 'EX', lastSeenTtlSec)
+return { 1, wasOnlineVet }
+`.trim();
+
 export class PresenceService {
   // In-memory fallback (STRICTLY limited to non-production when Redis is absent; lazy-pruned, 0 timers)
   private memUserSockets = new Map<string, Map<string, number>>();
@@ -316,6 +383,41 @@ export class PresenceService {
       const redis = this.getActiveRedis(true);
 
       if (redis) {
+        if (typeof (redis as unknown as { eval?: unknown }).eval === 'function') {
+          const stateOnline = JSON.stringify({
+            isOnline: true,
+            lastSeen,
+            role: String(params.role),
+            vetStatus: params.vetStatus ?? null,
+          });
+          const rawResult = (await (
+            redis as unknown as {
+              eval: (script: string, numKeys: number, ...args: string[]) => Promise<unknown>;
+            }
+          ).eval(
+            REFRESH_SOCKET_PRESENCE_LUA,
+            4,
+            userSocketsKey(params.userId),
+            VETS_ONLINE_KEY,
+            vetUnavailableKey(params.userId),
+            userStateKey(params.userId),
+            String(now),
+            String(expiresAt),
+            params.socketId,
+            String(PRESENCE_TTL_MS),
+            approvedVet ? '1' : '0',
+            stateOnline,
+            params.userId
+          )) as [number, number];
+
+          const socketActive = Number(rawResult?.[0] ?? 0) === 1;
+          if (!socketActive) {
+            return { isOnline: false, lastSeen, expiresAt };
+          }
+          const effectiveIsOnline = Number(rawResult?.[1] ?? 1) === 1;
+          return { isOnline: effectiveIsOnline, lastSeen, expiresAt };
+        }
+
         const [existingSocketScore, unavailableFlag] = await Promise.all([
           redis.zscore(userSocketsKey(params.userId), params.socketId),
           approvedVet ? redis.get(vetUnavailableKey(params.userId)) : Promise.resolve(null),
@@ -398,6 +500,38 @@ export class PresenceService {
       const redis = this.getActiveRedis(false);
 
       if (redis) {
+        if (typeof (redis as unknown as { eval?: unknown }).eval === 'function') {
+          const stateOffline = JSON.stringify({
+            isOnline: false,
+            lastSeen,
+            role: String(params.role),
+            vetStatus: params.vetStatus ?? null,
+          });
+          const rawResult = (await (
+            redis as unknown as {
+              eval: (script: string, numKeys: number, ...args: string[]) => Promise<unknown>;
+            }
+          ).eval(
+            UNREGISTER_SOCKET_DISCONNECT_LUA,
+            3,
+            userSocketsKey(params.userId),
+            VETS_ONLINE_KEY,
+            userStateKey(params.userId),
+            String(now),
+            params.socketId,
+            String(LAST_SEEN_TTL_SEC),
+            approvedVet ? '1' : '0',
+            stateOffline,
+            params.userId
+          )) as [number, number];
+
+          return {
+            wentOffline: Number(rawResult?.[0] ?? 0) === 1,
+            wasOnlineVet: Number(rawResult?.[1] ?? 0) === 1,
+            lastSeen,
+          };
+        }
+
         const pipe = redis.pipeline();
         pipe.zrem(userSocketsKey(params.userId), params.socketId);
         pipe.zremrangebyscore(userSocketsKey(params.userId), '-inf', now);

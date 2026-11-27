@@ -9,5 +9,7 @@ router.use(authenticate);
 
 router.patch('/profile', controller.updateProfile);
 router.patch('/password', controller.changePassword);
+router.get('/telemedicine-consent', controller.getTelemedicineConsent);
+router.post('/telemedicine-consent', controller.acceptTelemedicineConsent);
 
 export default router;

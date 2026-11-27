@@ -53,6 +53,7 @@ export const getDeviceId = (): string => {
 
 export const api = axios.create({
   baseURL: API_URL,
+  timeout: 15000,
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
@@ -112,7 +113,24 @@ const processQueue = (error: AxiosError | null) => {
 api.interceptors.response.use(
   (response) => response,
   async (error: AxiosError<ApiResponse>) => {
-    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
+    const originalRequest = error.config as InternalAxiosRequestConfig & {
+      _retry?: boolean;
+      _getRetryCount?: number;
+    };
+
+    const isIdempotentGet = (originalRequest?.method || 'get').toUpperCase() === 'GET';
+    const status = error.response?.status;
+    const isTransientFailure =
+      (!error.response && error.code !== 'ECONNABORTED') ||
+      status === 502 ||
+      status === 503 ||
+      status === 504;
+    const isAborted = Boolean(originalRequest?.signal && (originalRequest.signal as AbortSignal).aborted);
+    if (isIdempotentGet && isTransientFailure && !isAborted && (originalRequest._getRetryCount ?? 0) < 1) {
+      originalRequest._getRetryCount = (originalRequest._getRetryCount ?? 0) + 1;
+      await new Promise((r) => setTimeout(r, 200));
+      return api(originalRequest);
+    }
 
     if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
       if (

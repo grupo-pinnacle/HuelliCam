@@ -7,10 +7,14 @@ import {
   forgotPasswordSchema,
   verifyResetCodeSchema,
   resetPasswordSchema,
+  verifyEmailSchema,
 } from './auth.schemas';
 import { passwordResetService } from './passwordReset.service';
 import { AuthenticatedRequest } from './auth.middleware';
-import { io } from '../../realtime/socket.server';
+import { extractDeviceId } from '../../contracts/consultation.contract';
+import { consultationsService } from '../consultations/consultations.service';
+import { evictUserRealtimeAndCall } from '../../realtime/sessionEviction.helper';
+import prisma from '../../lib/prisma';
 
 const authService = new AuthService();
 
@@ -61,27 +65,37 @@ export class AuthController {
       const validated = loginSchema.parse(req.body);
       const { user, tokens } = await authService.login(validated);
 
-      // Notify and terminate any active sessions on OTHER devices in real-time
-      if (io) {
-        const rawDeviceId =
-          (req.headers['x-device-id'] as string) ||
-          (req.headers['x-device-id'] as string) ||
-          undefined;
+      const rawDeviceId = extractDeviceId(req.headers['x-device-id']);
+      let handoffResult: Awaited<ReturnType<typeof consultationsService.handoffTutorDevice>> | null =
+        null;
 
-        if (rawDeviceId) {
-          io.to(`user:${user.id}`)
-            .except(`device:${rawDeviceId}`)
-            .emit('auth:session_terminated', {
-              reason: 'CONCURRENT_LOGIN',
-              message: 'Se ha iniciado sesión desde otro dispositivo. Tu sesión ha sido finalizada por seguridad.',
-            });
-        } else {
-          io.to(`user:${user.id}`).emit('auth:session_terminated', {
-            reason: 'CONCURRENT_LOGIN',
-            message: 'Se ha iniciado sesión desde otro dispositivo. Tu sesión ha sido finalizada por seguridad.',
-          });
-        }
+      if (
+        user.role === 'CLIENT' &&
+        rawDeviceId &&
+        typeof prisma.consultation?.findFirst === 'function'
+      ) {
+        handoffResult = await consultationsService
+          .handoffTutorDevice(user.id, rawDeviceId)
+          .catch(() => null);
       }
+
+      const isHandoffSwap = Boolean(
+        handoffResult?.hasActiveConsultation &&
+          handoffResult?.didSwapDevice &&
+          handoffResult?.revokedDeviceId
+      );
+
+      await evictUserRealtimeAndCall({
+        userId: user.id,
+        role: user.role,
+        reason: isHandoffSwap ? 'SESSION_MIGRATED_NEW_DEVICE' : 'CONCURRENT_LOGIN',
+        message: isHandoffSwap
+          ? 'Tu consulta activa fue transferida a otro dispositivo.'
+          : 'Se ha iniciado sesión desde otro dispositivo. Tu sesión ha sido finalizada por seguridad.',
+        consultationId: handoffResult?.consultationId ?? null,
+        revokedDeviceId: isHandoffSwap ? handoffResult?.revokedDeviceId ?? null : null,
+        excludeDeviceId: rawDeviceId,
+      });
 
       setRefreshCookie(res, tokens.refreshToken);
 
@@ -152,11 +166,38 @@ export class AuthController {
 
   public me = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
+      const emailVerified = req.user ? await authService.isEmailVerified(req.user.id) : false;
       res.status(200).json({
         success: true,
         data: {
-          user: req.user ? AuthService.sanitizeUser(req.user) : null,
+          user: req.user ? { ...AuthService.sanitizeUser(req.user), emailVerified } : null,
         },
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public verifyEmail = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const validated = verifyEmailSchema.parse(req.body);
+      const result = await authService.verifyEmailCode(req.user!, validated.code);
+      res.status(200).json({
+        success: true,
+        data: result,
+        message: 'Correo electrónico verificado correctamente.',
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public resendVerification = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      await authService.issueEmailVerification(req.user!);
+      res.status(200).json({
+        success: true,
+        message: 'Te reenviamos un código de verificación a tu correo.',
       });
     } catch (error) {
       next(error);

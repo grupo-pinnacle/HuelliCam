@@ -4,6 +4,7 @@ import { PrescriptionDocProps } from '../../types';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
 import { requestMobilePrintOrFallback } from '../../lib/mobileBridge';
+import { formatDateAR } from '../../lib/formatters';
 
 export const PrescriptionDoc: React.FC<PrescriptionDocProps> = ({
   prescription,
@@ -38,14 +39,14 @@ export const PrescriptionDoc: React.FC<PrescriptionDocProps> = ({
   const licenseNumber = prescription.vet?.licenseNumber || fallbackLicense || user?.licenseNumber || 'MP-Oficial';
 
   const formattedDate = prescription.createdAt
-    ? new Date(prescription.createdAt).toLocaleDateString('es-AR', {
+    ? formatDateAR(prescription.createdAt, {
         year: 'numeric',
         month: 'long',
         day: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
       })
-    : new Date().toLocaleDateString('es-AR');
+    : formatDateAR(new Date(), { day: '2-digit', month: '2-digit', year: 'numeric' });
 
   return (
     <div className="w-full flex flex-col items-center">
@@ -108,11 +109,11 @@ export const PrescriptionDoc: React.FC<PrescriptionDocProps> = ({
           data-testid="prescription-info-grid"
           className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-[#fffbef] border border-[#e4dfd2] p-4 rounded-2xl mb-5 text-xs"
         >
-          <div>
+          <div className="min-w-0">
             <span className="text-[#607674] uppercase font-bold text-[10px] block tracking-wider">
               Médico Veterinario Prescriptor
             </span>
-            <p data-testid="prescription-vet-name" className="font-bold text-[#183c3a] mt-0.5">
+            <p data-testid="prescription-vet-name" className="font-bold text-[#183c3a] mt-0.5 break-words">
               {vetName}
             </p>
             <p className="text-[#454e4e] font-medium">
@@ -120,14 +121,14 @@ export const PrescriptionDoc: React.FC<PrescriptionDocProps> = ({
             </p>
           </div>
 
-          <div>
+          <div className="min-w-0">
             <span className="text-[#607674] uppercase font-bold text-[10px] block tracking-wider">
               Identificación de Receta
             </span>
-            <p data-testid="prescription-id" className="font-mono text-[#183c3a] font-bold mt-0.5">
+            <p data-testid="prescription-id" className="font-mono text-[#183c3a] font-bold mt-0.5 break-all">
               ID: {prescription.id}
             </p>
-            <p className="text-[#607674] text-[11px]">
+            <p className="text-[#607674] text-[11px] break-all">
               Consulta: {prescription.consultationId || 'Cons-Directa'}
             </p>
           </div>
@@ -143,27 +144,27 @@ export const PrescriptionDoc: React.FC<PrescriptionDocProps> = ({
               Datos Clínicos del Paciente
             </h2>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-              <div>
+              <div className="min-w-0">
                 <span className="text-[#607674] block text-[10px] uppercase font-semibold">Mascota</span>
-                <span data-testid="prescription-pet-name" className="font-bold text-[#183c3a] text-sm">
+                <span data-testid="prescription-pet-name" className="font-bold text-[#183c3a] text-sm break-words">
                   {pet.name}
                 </span>
               </div>
-              <div>
+              <div className="min-w-0">
                 <span className="text-[#607674] block text-[10px] uppercase font-semibold">Especie / Raza</span>
-                <span className="text-[#183c3a] font-medium">
+                <span className="text-[#183c3a] font-medium break-words">
                   {pet.species} • {pet.breed}
                 </span>
               </div>
-              <div>
+              <div className="min-w-0">
                 <span className="text-[#607674] block text-[10px] uppercase font-semibold">Peso Registrado</span>
                 <span className="text-[#183c3a] font-medium">
                   {pet.weightKg !== undefined && pet.weightKg !== null ? `${pet.weightKg} kg` : 'N/R'}
                 </span>
               </div>
-              <div>
+              <div className="min-w-0">
                 <span className="text-[#607674] block text-[10px] uppercase font-semibold">Microchip ISO</span>
-                <span className="font-mono text-[11px] text-[#183c3a] font-medium">
+                <span className="font-mono text-[11px] text-[#183c3a] font-medium break-all">
                   {pet.microchip || 'No informado'}
                 </span>
               </div>
@@ -187,21 +188,21 @@ export const PrescriptionDoc: React.FC<PrescriptionDocProps> = ({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-              <div className="sm:col-span-1">
+              <div className="sm:col-span-1 min-w-0">
                 <span className="text-[#607674] block text-[11px]">Medicamento / Principio Activo:</span>
                 <span
                   data-testid="rx-medication"
-                  className="font-bold text-[#183c3a] text-sm block mt-0.5"
+                  className="font-bold text-[#183c3a] text-sm block mt-0.5 break-words"
                 >
                   {prescription.medication}
                 </span>
               </div>
 
-              <div>
+              <div className="min-w-0">
                 <span className="text-[#607674] block text-[11px]">Dosis & Frecuencia:</span>
                 <span
                   data-testid="rx-dosage-frequency"
-                  className="font-bold text-[#183c3a] block mt-0.5"
+                  className="font-bold text-[#183c3a] block mt-0.5 break-words"
                 >
                   {prescription.dosage} ({prescription.frequency})
                 </span>

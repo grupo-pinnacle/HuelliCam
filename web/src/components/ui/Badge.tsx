@@ -33,7 +33,7 @@ export const Badge: React.FC<BadgeProps> = ({
   return (
     <span
       data-testid={testId}
-      className={`inline-flex items-center gap-1.5 rounded-full font-semibold ${variantStyles[variant]} ${sizeStyles[size]} ${className}`}
+      className={`inline-flex shrink-0 whitespace-nowrap items-center gap-1.5 rounded-full font-semibold ${variantStyles[variant]} ${sizeStyles[size]} ${className}`}
     >
       {icon && <span className="inline-block shrink-0">{icon}</span>}
       {children}

@@ -1,12 +1,18 @@
-import { AdminExecutiveMetrics, UpdatePricingPayload } from '../components/admin/AdminExecutiveMetrics';
+import {
+  AdminExecutiveMetrics,
+  type ExecutiveMetricsData,
+  type UpdatePricingPayload,
+} from '../components/admin/AdminExecutiveMetrics';
+import { downloadAuthenticatedMedia, normalizeMediaUrl } from '../lib/authenticatedMedia';
 import { AdminFeatureFlagsModal } from '../components/admin/AdminFeatureFlagsModal';
 import ClientScopedStyle from '../styles/ClientScopedStyle';
 import ScopedStyle from '../components/common/ScopedStyle';
 import adminCss from '../styles/admin.css?inline';
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useFocusTrap } from '../components/common/DialogOverlay';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import type { ApiResponse, User } from '../types';
+import type { ApiResponse, ConsultationStatus, User } from '../types';
 import {
   Users,
   PawPrint,
@@ -35,6 +41,7 @@ import {
   Paperclip,
 } from 'lucide-react';
 import { getWeightAssessment } from '../data/petBreeds';
+import { formatBadgeCount, formatDateAR, getInitials } from '../lib/formatters';
 
 interface AdminStats {
   pendingVets: number;
@@ -77,7 +84,7 @@ interface AdminPet {
 
 interface AdminConsultation {
   id: string;
-  status: 'WAITING' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
+  status: ConsultationStatus;
   notes: string | null;
   diagnosisNotes: string | null;
   createdAt: string;
@@ -140,6 +147,97 @@ interface AuditLogItem {
   };
 }
 
+const ADMIN_PAGE_SIZE = 25;
+
+function AdminTableSkeletonRows({ cols }: { cols: number }) {
+  return (
+    <>
+      {[0, 1, 2, 3, 4].map((row) => (
+        <tr key={`skel-${row}`} aria-busy="true">
+          {Array.from({ length: cols }).map((_, col) => (
+            <td key={`skel-${row}-${col}`}>
+              <div className="h-4 rounded bg-[#e8e3d6] animate-pulse" style={{ width: col === 0 ? '75%' : '60%' }} />
+            </td>
+          ))}
+        </tr>
+      ))}
+    </>
+  );
+}
+
+function AdminTablePagination({
+  page,
+  total,
+  onPageChange,
+}: {
+  page: number;
+  total: number;
+  onPageChange: (next: number) => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / ADMIN_PAGE_SIZE));
+  if (totalPages <= 1) return null;
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-[#ede8dc] text-xs text-[#4a6866] font-semibold tabular-nums">
+      <span>
+        Página {page} de {totalPages} · {total} registros
+      </span>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          disabled={page <= 1}
+          onClick={() => onPageChange(Math.max(1, page - 1))}
+          className="px-3 py-1.5 rounded-full border border-[#d5cec0] bg-[#fffbef] text-[#183c3a] hover:bg-[#f2eddd] disabled:opacity-45 transition-colors cursor-pointer"
+        >
+          Anterior
+        </button>
+        <button
+          type="button"
+          disabled={page >= totalPages}
+          onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+          className="px-3 py-1.5 rounded-full border border-[#d5cec0] bg-[#fffbef] text-[#183c3a] hover:bg-[#f2eddd] disabled:opacity-45 transition-colors cursor-pointer"
+        >
+          Siguiente
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AdminModal({
+  open = true,
+  onClose,
+  wide = false,
+  className = '',
+  children,
+}: {
+  open?: boolean;
+  onClose: () => void;
+  wide?: boolean;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(open, cardRef, { onEscape: onClose });
+  if (!open) return null;
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="adm-modal-overlay"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        ref={cardRef}
+        className={`adm-modal-card ${wide ? 'adm-modal-card--wide' : ''} ${className}`.trim()}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export function AdminApp() {
   const { user, logout } = useAuth();
 
@@ -180,7 +278,14 @@ export function AdminApp() {
   const [pets, setPets] = useState<AdminPet[]>([]);
   const [consultations, setConsultations] = useState<AdminConsultation[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
+  const [executiveMetrics, setExecutiveMetrics] = useState<ExecutiveMetricsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [usersPage, setUsersPage] = useState(1);
+  const [petsPage, setPetsPage] = useState(1);
+  const [consultsPage, setConsultsPage] = useState(1);
+  const [vetsPage, setVetsPage] = useState(1);
+  const [auditPage, setAuditPage] = useState(1);
 
   // Filters
   const [userSearch, setUserSearch] = useState('');
@@ -247,13 +352,15 @@ export function AdminApp() {
   // Fetch initial data
   const fetchAllData = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
-      const [resStats, resUsers, resPets, resCons, resLogs] = await Promise.all([
+      const [resStats, resUsers, resPets, resCons, resLogs, resMetrics] = await Promise.all([
         api.get<ApiResponse<AdminStats>>('/api/admin/stats'),
         api.get<ApiResponse<User[]>>('/api/admin/users?includeDeleted=true'),
         api.get<ApiResponse<AdminPet[]>>('/api/admin/pets?includeDeleted=true'),
         api.get<ApiResponse<AdminConsultation[]>>('/api/admin/consultations'),
         api.get<ApiResponse<AuditLogItem[]>>('/api/admin/audit-logs'),
+        api.get<ApiResponse<ExecutiveMetricsData>>('/api/admin/executive-metrics').catch(() => null),
       ]);
 
       if (resStats.data.success && resStats.data.data) setStats(resStats.data.data);
@@ -261,9 +368,10 @@ export function AdminApp() {
       if (resPets.data.success && resPets.data.data) setPets(resPets.data.data);
       if (resCons.data.success && resCons.data.data) setConsultations(resCons.data.data);
       if (resLogs.data.success && resLogs.data.data) setAuditLogs(resLogs.data.data);
+      if (resMetrics?.data?.success && resMetrics.data.data) setExecutiveMetrics(resMetrics.data.data);
     } catch (err: unknown) {
       console.warn('Error loading admin data:', err);
-      notify('No se pudieron cargar todos los datos administrativos.');
+      setLoadError('No se pudieron cargar todos los datos administrativos.');
     } finally {
       setLoading(false);
     }
@@ -272,6 +380,18 @@ export function AdminApp() {
   useEffect(() => {
     fetchAllData();
   }, []);
+
+  useEffect(() => {
+    setUsersPage(1);
+  }, [userSearch, userRoleFilter, userIncludeDeleted]);
+
+  useEffect(() => {
+    setPetsPage(1);
+  }, [petSearch, petFilter]);
+
+  useEffect(() => {
+    setConsultsPage(1);
+  }, [consultSearch, consStatusFilter]);
 
   // Filtered lists
   const filteredUsers = useMemo(() => {
@@ -331,7 +451,7 @@ export function AdminApp() {
     try {
       await api.patch('/api/admin/pricing-settings', payload);
       notify('Tarifas Marca Blanca actualizadas correctamente.');
-      fetchAllData();
+      await fetchAllData();
     } catch (err: unknown) {
       const errorMsg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message;
       notify(errorMsg || 'Error al actualizar las tarifas', 'error');
@@ -424,10 +544,6 @@ export function AdminApp() {
     if (!targetBanUser) return;
     setIsBanning(true);
     try {
-      await api.post(`/api/admin/users/${targetBanUser.id}/revoke-sessions`, {
-        reason: banReason.trim() || 'Infracción grave de términos del servicio.',
-        suspendAccount: true,
-      }).catch(() => {});
       const res = await api.patch<ApiResponse<User>>(`/api/admin/users/${targetBanUser.id}/ban`, {
         reason: banReason.trim() || 'Infracción grave de términos del servicio.',
       });
@@ -632,7 +748,7 @@ export function AdminApp() {
         <div
           role="status"
           aria-live="polite"
-          className="fixed top-6 right-6 z-[9999] flex items-center gap-3 py-3 px-5 rounded-full shadow-2xl font-bold text-sm animate-in slide-in-from-top-4 duration-200"
+          className="fixed top-6 right-6 z-[9999] flex items-center gap-3 py-3 px-5 rounded-full shadow-2xl font-bold text-sm hc-reveal"
           style={{
             backgroundColor: toast.kind === 'error' ? '#fcece9' : '#183c3a',
             color: toast.kind === 'error' ? '#ae4d45' : '#fffbef',
@@ -683,7 +799,7 @@ export function AdminApp() {
 
         <div className="adm-sidebar__profile">
           <div className="adm-sidebar__avatar">
-            {`${user?.firstName?.[0] || 'S'}${user?.lastName?.[0] || 'A'}`.toUpperCase()}
+            {getInitials(user ? `${user.firstName || ''} ${user.lastName || ''}` : 'Super Admin', 'SA')}
           </div>
           <div className="adm-sidebar__profile-info">
             <span className="adm-sidebar__profile-name">
@@ -710,7 +826,7 @@ export function AdminApp() {
           >
             <Users className="w-4 h-4" />
             <span>Usuarios & Baneos</span>
-            {users.length > 0 && <small>{users.length}</small>}
+            {users.length > 0 && <small>{formatBadgeCount(users.length)}</small>}
           </button>
 
           <button
@@ -719,7 +835,7 @@ export function AdminApp() {
           >
             <PawPrint className="w-4 h-4" />
             <span>Mascotas (CRUD)</span>
-            {pets.length > 0 && <small>{pets.length}</small>}
+            {pets.length > 0 && <small>{formatBadgeCount(pets.length)}</small>}
           </button>
 
           <button
@@ -728,7 +844,7 @@ export function AdminApp() {
           >
             <Video className="w-4 h-4" />
             <span>Consultas & Chats</span>
-            {consultations.length > 0 && <small>{consultations.length}</small>}
+            {consultations.length > 0 && <small>{formatBadgeCount(consultations.length)}</small>}
           </button>
 
           <button
@@ -738,7 +854,7 @@ export function AdminApp() {
             <ShieldCheck className="w-4 h-4" />
             <span>Auditoría SENASA</span>
             {stats && stats.pendingVets > 0 && (
-              <small>{stats.pendingVets}</small>
+              <small>{formatBadgeCount(stats.pendingVets)}</small>
             )}
           </button>
 
@@ -794,8 +910,9 @@ export function AdminApp() {
             </div>
             <button
               onClick={fetchAllData}
-              className="p-2 rounded-full bg-[#f2eddd] text-[#183c3a] hover:bg-[#e4dfd2] transition-colors"
+              className="min-w-[44px] min-h-[44px] inline-flex items-center justify-center rounded-full bg-[#f2eddd] text-[#183c3a] hover:bg-[#e4dfd2] transition-colors"
               title="Recargar datos"
+              aria-label="Recargar datos"
             >
               <RotateCcw className="w-4 h-4" />
             </button>
@@ -804,6 +921,28 @@ export function AdminApp() {
 
         {/* Content Body */}
         <main className="adm-content">
+          {loadError && (
+            <div
+              role="alert"
+              className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#f3c8be] bg-[#fcece9] px-4 py-3 text-sm text-[#ae4d45]"
+            >
+              <div className="flex items-center gap-2 font-semibold">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{loadError}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  void fetchAllData();
+                }}
+                className="rounded-full bg-[#ae4d45] px-4 py-1.5 text-xs font-bold text-white hover:bg-[#933d36] transition-colors cursor-pointer"
+              >
+                Reintentar
+              </button>
+            </div>
+          )}
+
+          <div key={tab} className="hc-page-stage">
           {/* TAB 1: DASHBOARD & METRICS */}
           {tab === 'dashboard' && (
             <div>
@@ -817,21 +956,21 @@ export function AdminApp() {
                   <button
                     type="button"
                     onClick={() => setFeatureFlagsModalOpen(true)}
-                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full font-bold text-xs bg-[#ae4d45] text-[#ffffff] hover:bg-[#933d36] transition-all shadow-sm"
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full font-bold text-xs bg-[#ae4d45] text-[#ffffff] hover:bg-[#933d36] transition-colors shadow-sm"
                   >
                     <ShieldAlert className="w-4 h-4" />
                     <span>Kill Switches / Resiliencia</span>
                   </button>
                   <button
                     onClick={handleOpenCreateUser}
-                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full font-bold text-xs bg-[#609f9c] text-[#ffffff] hover:bg-[#4d8d89] transition-all shadow-sm"
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full font-bold text-xs bg-[#315f5d] text-[#ffffff] hover:bg-[#183c3a] transition-colors shadow-sm"
                   >
                     <Plus className="w-4 h-4" />
                     <span>Nuevo Usuario</span>
                   </button>
                   <button
                     onClick={handleOpenCreatePet}
-                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full font-bold text-xs bg-[#fffbef] text-[#183c3a] border border-[#315f5d] hover:bg-[#f2eddd] transition-all shadow-sm"
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full font-bold text-xs bg-[#fffbef] text-[#183c3a] border border-[#315f5d] hover:bg-[#f2eddd] transition-colors shadow-sm"
                   >
                     <PawPrint className="w-4 h-4" />
                     <span>Nueva Mascota</span>
@@ -841,6 +980,8 @@ export function AdminApp() {
 
               {/* Executive Metrics (CEO) */}
               <AdminExecutiveMetrics
+                metrics={executiveMetrics}
+                loading={loading}
                 onUpdatePricing={handleUpdatePricing}
                 onRefresh={() => {
                   void fetchAllData();
@@ -946,20 +1087,20 @@ export function AdminApp() {
                               <div className="font-extrabold text-sm text-[#183c3a]">
                                 Dr. {v.firstName} {v.lastName}
                               </div>
-                              <div className="text-xs text-[#607674]">
+                              <div className="text-xs text-[#4a6866]">
                                 Matrícula: <strong className="text-[#183c3a]">{v.licenseNumber || 'S/N'}</strong> • {v.email}
                               </div>
                             </div>
                             <div className="flex gap-2">
                               <button
                                 onClick={() => handleApproveVet(v.id)}
-                                className="px-3.5 py-1.5 rounded-full text-xs font-bold bg-[#609f9c] text-white hover:bg-[#4d8d89]"
+                                className="px-3.5 py-2 min-h-[44px] md:min-h-0 md:py-1.5 rounded-full text-xs font-bold bg-[#315f5d] text-white hover:bg-[#183c3a] transition-colors cursor-pointer"
                               >
                                 Aprobar
                               </button>
                               <button
                                 onClick={() => handleRejectVet(v.id)}
-                                className="px-3.5 py-1.5 rounded-full text-xs font-bold bg-[#fcece9] text-[#ae4d45] hover:bg-[#f6d5ce]"
+                                className="px-3.5 py-2 min-h-[44px] md:min-h-0 md:py-1.5 rounded-full text-xs font-bold bg-[#fcece9] text-[#ae4d45] hover:bg-[#f6d5ce]"
                               >
                                 Rechazar
                               </button>
@@ -1018,8 +1159,9 @@ export function AdminApp() {
                             </span>
                             <button
                               onClick={() => handleOpenChatInspector(c)}
-                              className="p-2 rounded-full bg-[#fffbef] border border-[#315f5d] text-[#183c3a] hover:bg-[#edf6f4]"
+                              className="min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 p-2 rounded-full bg-[#fffbef] border border-[#315f5d] text-[#183c3a] hover:bg-[#edf6f4] inline-flex items-center justify-center"
                               title="Ver Chat"
+                              aria-label="Ver Chat"
                             >
                               <MessageSquare className="w-3.5 h-3.5" />
                             </button>
@@ -1045,7 +1187,7 @@ export function AdminApp() {
                 <div className="adm-header__actions">
                   <button
                     onClick={handleOpenCreateUser}
-                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full font-bold text-xs bg-[#609f9c] text-[#ffffff] hover:bg-[#4d8d89] transition-all shadow-sm cursor-pointer"
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full font-bold text-xs bg-[#315f5d] text-[#ffffff] hover:bg-[#183c3a] transition-colors shadow-sm cursor-pointer"
                   >
                     <Plus className="w-4 h-4" />
                     <span>Crear Usuario</span>
@@ -1110,22 +1252,26 @@ export function AdminApp() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredUsers.length === 0 ? (
+                      {loading && users.length === 0 ? (
+                        <AdminTableSkeletonRows cols={7} />
+                      ) : filteredUsers.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="text-center py-12 text-sm text-[#536b69]">
+                          <td colSpan={7} className="text-center py-12 text-sm text-[#4a6866]">
                             No se encontraron usuarios que coincidan con los filtros.
                           </td>
                         </tr>
                       ) : (
-                        filteredUsers.map((u) => {
+                        filteredUsers
+                          .slice((usersPage - 1) * ADMIN_PAGE_SIZE, usersPage * ADMIN_PAGE_SIZE)
+                          .map((u) => {
                           const isBanned = Boolean(u.deletedAt);
                           return (
                             <tr key={u.id} className={isBanned ? 'is-banned' : ''}>
-                              <td>
-                                <div className="font-extrabold text-sm text-[#183c3a]">
+                              <td className="min-w-0">
+                                <div className="font-extrabold text-sm text-[#183c3a] break-words">
                                   {u.firstName} {u.lastName}
                                 </div>
-                                <div className="text-xs text-[#536b69]">{u.email}</div>
+                                <div className="text-xs text-[#4a6866] break-all">{u.email}</div>
                               </td>
                               <td>
                                 <span
@@ -1168,15 +1314,16 @@ export function AdminApp() {
                                   {u.licenseNumber ? `MP: ${u.licenseNumber}` : u.bio || '—'}
                                 </div>
                               </td>
-                              <td className="text-xs text-[#536b69] whitespace-nowrap">
-                                {new Date(u.createdAt).toLocaleDateString('es-AR')}
+                              <td className="text-xs text-[#4a6866] whitespace-nowrap">
+                                {formatDateAR(u.createdAt)}
                               </td>
                               <td>
                                 <div className="flex items-center justify-end gap-1.5">
                                   <button
                                     onClick={() => handleOpenEditUser(u)}
-                                    className="p-2 rounded-full bg-[#f2eddd] border border-[#e4dfd2] text-[#183c3a] hover:bg-[#edf6f4] transition-colors"
+                                    className="min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 p-2 inline-flex items-center justify-center rounded-full bg-[#f2eddd] border border-[#e4dfd2] text-[#183c3a] hover:bg-[#edf6f4] transition-colors"
                                     title="Editar Usuario"
+                                    aria-label="Editar Usuario"
                                   >
                                     <Edit2 className="w-3.5 h-3.5" />
                                   </button>
@@ -1184,16 +1331,18 @@ export function AdminApp() {
                                   {isBanned ? (
                                     <button
                                       onClick={() => handleRestoreUser(u)}
-                                      className="p-2 rounded-full bg-[#edf6f4] border border-[#cde2df] text-[#315f5d] hover:bg-[#d9e8e4] transition-colors"
+                                      className="min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 p-2 inline-flex items-center justify-center rounded-full bg-[#edf6f4] border border-[#cde2df] text-[#315f5d] hover:bg-[#d9e8e4] transition-colors"
                                       title="Restaurar Cuenta"
+                                      aria-label="Restaurar Cuenta"
                                     >
                                       <RotateCcw className="w-3.5 h-3.5" />
                                     </button>
                                   ) : (
                                     <button
                                       onClick={() => handleOpenBanModal(u)}
-                                      className="p-2 rounded-full bg-[#fcece9] border border-[#f3c8be] text-[#ae4d45] hover:bg-[#ae4d45] hover:text-white transition-colors"
+                                      className="min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 p-2 inline-flex items-center justify-center rounded-full bg-[#fcece9] border border-[#f3c8be] text-[#ae4d45] hover:bg-[#ae4d45] hover:text-white transition-colors"
                                       title="Banear / Suspender Permanentemente"
+                                      aria-label="Banear / Suspender Permanentemente"
                                     >
                                       <Ban className="w-3.5 h-3.5" />
                                     </button>
@@ -1207,6 +1356,7 @@ export function AdminApp() {
                     </tbody>
                   </table>
                 </div>
+                <AdminTablePagination page={usersPage} total={filteredUsers.length} onPageChange={setUsersPage} />
               </div>
             </div>
           )}
@@ -1223,7 +1373,7 @@ export function AdminApp() {
                 <div className="adm-header__actions">
                   <button
                     onClick={handleOpenCreatePet}
-                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full font-bold text-xs bg-[#609f9c] text-[#ffffff] hover:bg-[#4d8d89] transition-all shadow-sm cursor-pointer"
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full font-bold text-xs bg-[#315f5d] text-[#ffffff] hover:bg-[#183c3a] transition-colors shadow-sm cursor-pointer"
                   >
                     <Plus className="w-4 h-4" />
                     <span>Nueva Mascota</span>
@@ -1277,30 +1427,34 @@ export function AdminApp() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredPets.length === 0 ? (
+                      {loading && pets.length === 0 ? (
+                        <AdminTableSkeletonRows cols={7} />
+                      ) : filteredPets.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="text-center py-12 text-sm text-[#536b69]">
+                          <td colSpan={7} className="text-center py-12 text-sm text-[#4a6866]">
                             No hay mascotas que coincidan con la búsqueda.
                           </td>
                         </tr>
                       ) : (
-                        filteredPets.map((p) => {
+                        filteredPets
+                          .slice((petsPage - 1) * ADMIN_PAGE_SIZE, petsPage * ADMIN_PAGE_SIZE)
+                          .map((p) => {
                           const isDeleted = Boolean(p.deletedAt);
                           return (
                             <tr key={p.id} className={isDeleted ? 'is-banned' : ''}>
-                              <td>
-                                <div className="font-extrabold text-sm text-[#183c3a]">{p.name}</div>
-                                <div className="text-xs text-[#536b69]">{p.species} • {p.sex || 'N/A'}</div>
+                              <td className="min-w-0">
+                                <div className="font-extrabold text-sm text-[#183c3a] break-words">{p.name}</div>
+                                <div className="text-xs text-[#4a6866]">{p.species} • {p.sex || 'N/A'}</div>
                               </td>
                               <td>
                                 <div className="text-xs font-bold text-[#183c3a]">{p.breed}</div>
-                                <div className="text-xs text-[#536b69]">{p.weightKg ? `${p.weightKg} kg` : 'Sin peso'}</div>
+                                <div className="text-xs text-[#4a6866]">{p.weightKg ? `${p.weightKg} kg` : 'Sin peso'}</div>
                               </td>
-                              <td>
-                                <div className="text-xs font-bold text-[#183c3a]">
+                              <td className="min-w-0">
+                                <div className="text-xs font-bold text-[#183c3a] break-words">
                                   {p.owner ? `${p.owner.firstName} ${p.owner.lastName}` : 'Desconocido'}
                                 </div>
-                                <div className="text-xs text-[#536b69]">{p.owner?.email || '—'}</div>
+                                <div className="text-xs text-[#4a6866] break-all">{p.owner?.email || '—'}</div>
                               </td>
                               <td className="text-xs font-mono text-[#536b69]">{p.microchip || '—'}</td>
                               <td>
@@ -1325,24 +1479,27 @@ export function AdminApp() {
                                 <div className="flex items-center justify-end gap-1.5">
                                   <button
                                     onClick={() => handleOpenEditPet(p)}
-                                    className="p-2 rounded-full bg-[#f2eddd] border border-[#e4dfd2] text-[#183c3a] hover:bg-[#edf6f4] transition-colors"
+                                    className="min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 p-2 inline-flex items-center justify-center rounded-full bg-[#f2eddd] border border-[#e4dfd2] text-[#183c3a] hover:bg-[#edf6f4] transition-colors"
                                     title="Editar Mascota"
+                                    aria-label="Editar Mascota"
                                   >
                                     <Edit2 className="w-3.5 h-3.5" />
                                   </button>
                                   {isDeleted ? (
                                     <button
                                       onClick={() => handleRestorePet(p)}
-                                      className="p-2 rounded-full bg-[#edf6f4] border border-[#cde2df] text-[#315f5d] hover:bg-[#d9e8e4] transition-colors"
+                                      className="min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 p-2 inline-flex items-center justify-center rounded-full bg-[#edf6f4] border border-[#cde2df] text-[#315f5d] hover:bg-[#d9e8e4] transition-colors"
                                       title="Restaurar Mascota"
+                                      aria-label="Restaurar Mascota"
                                     >
                                       <RotateCcw className="w-3.5 h-3.5" />
                                     </button>
                                   ) : (
                                     <button
                                       onClick={() => handleDeletePet(p)}
-                                      className="p-2 rounded-full bg-[#fcece9] border border-[#f3c8be] text-[#ae4d45] hover:bg-[#f6d5ce] transition-colors"
+                                      className="min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 p-2 inline-flex items-center justify-center rounded-full bg-[#fcece9] border border-[#f3c8be] text-[#ae4d45] hover:bg-[#f6d5ce] transition-colors"
                                       title="Ocultar Mascota"
+                                      aria-label="Ocultar Mascota"
                                     >
                                       <Trash2 className="w-3.5 h-3.5" />
                                     </button>
@@ -1356,6 +1513,7 @@ export function AdminApp() {
                     </tbody>
                   </table>
                 </div>
+                <AdminTablePagination page={petsPage} total={filteredPets.length} onPageChange={setPetsPage} />
               </div>
             </div>
           )}
@@ -1419,48 +1577,47 @@ export function AdminApp() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredConsultations.length === 0 ? (
+                      {loading && consultations.length === 0 ? (
+                        <AdminTableSkeletonRows cols={7} />
+                      ) : filteredConsultations.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="text-center py-12 text-sm text-[#536b69]">
+                          <td colSpan={7} className="text-center py-12 text-sm text-[#4a6866]">
                             No hay consultas registradas que coincidan con los filtros.
                           </td>
                         </tr>
                       ) : (
-                        filteredConsultations.map((c) => {
+                        filteredConsultations
+                          .slice((consultsPage - 1) * ADMIN_PAGE_SIZE, consultsPage * ADMIN_PAGE_SIZE)
+                          .map((c) => {
                           const msgCount = c._count?.messages ?? 0;
                           return (
                             <tr key={c.id}>
                               <td>
                                 <div className="font-extrabold text-xs text-[#183c3a]">
-                                  {new Date(c.createdAt).toLocaleDateString('es-AR', {
-                                    day: '2-digit',
-                                    month: 'short',
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                  })}
+                                  {formatDateAR(c.createdAt, true)}
                                 </div>
-                                <div className="text-[10px] font-mono text-[#536b69]">{c.id.substring(0, 8)}...</div>
+                                <div className="text-[10px] font-mono text-[#4a6866]">{c.id.substring(0, 8)}...</div>
                               </td>
-                              <td>
-                                <div className="font-extrabold text-sm text-[#183c3a]">{c.pet.name}</div>
-                                <div className="text-xs text-[#536b69]">{c.pet.species} • {c.pet.breed}</div>
+                              <td className="min-w-0">
+                                <div className="font-extrabold text-sm text-[#183c3a] break-words">{c.pet.name}</div>
+                                <div className="text-xs text-[#4a6866]">{c.pet.species} • {c.pet.breed}</div>
                               </td>
-                              <td>
-                                <div className="font-bold text-xs text-[#183c3a]">
+                              <td className="min-w-0">
+                                <div className="font-bold text-xs text-[#183c3a] break-words">
                                   {c.client.firstName} {c.client.lastName}
                                 </div>
-                                <div className="text-xs text-[#536b69]">{c.client.email}</div>
+                                <div className="text-xs text-[#4a6866] break-all">{c.client.email}</div>
                               </td>
-                              <td>
+                              <td className="min-w-0">
                                 {c.vet ? (
                                   <>
-                                    <div className="font-bold text-xs text-[#183c3a]">
+                                    <div className="font-bold text-xs text-[#183c3a] break-words">
                                       Dr. {c.vet.firstName} {c.vet.lastName}
                                     </div>
-                                    <div className="text-xs text-[#536b69]">{c.vet.email}</div>
+                                    <div className="text-xs text-[#4a6866] break-all">{c.vet.email}</div>
                                   </>
                                 ) : (
-                                  <span className="text-xs font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded">
+                                  <span className="text-xs font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded">
                                     Sin asignar
                                   </span>
                                 )}
@@ -1479,31 +1636,31 @@ export function AdminApp() {
                                 </span>
                               </td>
                               <td>
-                                {c.review ? (
+                                {c.review && Number.isFinite(c.review.rating) ? (
                                   <div className="flex items-center gap-1 text-xs font-bold text-[#183c3a]">
-                                    <span className="text-amber-500">★</span>
+                                    <span className="text-amber-600">★</span>
                                     <span>{c.review.rating}</span>
                                     {c.review.comment && (
-                                      <span className="text-[11px] font-normal text-[#536b69] max-w-[120px] truncate ml-1">
+                                      <span className="text-[11px] font-normal text-[#4a6866] max-w-[120px] truncate ml-1">
                                         "{c.review.comment}"
                                       </span>
                                     )}
                                   </div>
                                 ) : (
-                                  <span className="text-xs text-[#536b69]">—</span>
+                                  <span className="text-xs text-[#4a6866]">—</span>
                                 )}
                               </td>
                               <td>
                                 <div className="flex items-center justify-end">
                                   <button
                                     onClick={() => handleOpenChatInspector(c)}
-                                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold bg-[#609f9c] text-[#ffffff] hover:bg-[#4d8d89] transition-all shadow-sm cursor-pointer"
+                                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold bg-[#315f5d] text-[#ffffff] hover:bg-[#183c3a] transition-colors shadow-sm cursor-pointer"
                                   >
                                     <MessageSquare className="w-3.5 h-3.5 text-[#fffbef]" />
                                     <span>Ver Chat</span>
                                     {msgCount > 0 && (
-                                      <span className="bg-[#183c3a] text-[#fffbef] px-1.5 py-0.2 rounded-full text-[10px] font-black">
-                                        {msgCount}
+                                      <span className="bg-[#183c3a] text-[#fffbef] px-1.5 py-0.2 rounded-full text-[10px] font-black tabular-nums">
+                                        {formatBadgeCount(msgCount)}
                                       </span>
                                     )}
                                   </button>
@@ -1516,6 +1673,7 @@ export function AdminApp() {
                     </tbody>
                   </table>
                 </div>
+                <AdminTablePagination page={consultsPage} total={filteredConsultations.length} onPageChange={setConsultsPage} />
               </div>
             </div>
           )}
@@ -1545,22 +1703,25 @@ export function AdminApp() {
                       </tr>
                     </thead>
                     <tbody>
-                      {users.filter((u) => u.role === 'VET').length === 0 ? (
+                      {loading && users.length === 0 ? (
+                        <AdminTableSkeletonRows cols={6} />
+                      ) : users.filter((u) => u.role === 'VET').length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="text-center py-12 text-sm text-[#536b69]">
+                          <td colSpan={6} className="text-center py-12 text-sm text-[#4a6866]">
                             No hay profesionales veterinarios registrados en el sistema.
                           </td>
                         </tr>
                       ) : (
                         users
                           .filter((u) => u.role === 'VET')
+                          .slice((vetsPage - 1) * ADMIN_PAGE_SIZE, vetsPage * ADMIN_PAGE_SIZE)
                           .map((v) => (
                             <tr key={v.id}>
-                              <td>
-                                <div className="font-extrabold text-sm text-[#183c3a]">
+                              <td className="min-w-0">
+                                <div className="font-extrabold text-sm text-[#183c3a] break-words">
                                   Dr. {v.firstName} {v.lastName}
                                 </div>
-                                <div className="text-xs text-[#536b69]">{v.email}</div>
+                                <div className="text-xs text-[#4a6866] break-all">{v.email}</div>
                               </td>
                               <td>
                                 <span className="font-mono text-xs font-extrabold text-[#183c3a] bg-[#f8f6f0] px-2 py-1 rounded border border-[#e2ded4]">
@@ -1581,17 +1742,17 @@ export function AdminApp() {
                                 </span>
                               </td>
                               <td>
-                                <div className="text-xs text-[#536b69] max-w-[260px] truncate">{v.bio || '—'}</div>
+                                <div className="text-xs text-[#4a6866] max-w-[260px] truncate">{v.bio || '—'}</div>
                               </td>
-                              <td className="text-xs text-[#536b69]">
-                                {new Date(v.createdAt).toLocaleDateString('es-AR')}
+                              <td className="text-xs text-[#4a6866] whitespace-nowrap">
+                                {formatDateAR(v.createdAt)}
                               </td>
                               <td>
                                 <div className="flex items-center justify-end gap-2">
                                   {v.vetStatus !== 'APPROVED' && (
                                     <button
                                       onClick={() => handleApproveVet(v.id)}
-                                      className="px-3.5 py-1.5 rounded-full text-xs font-bold bg-[#609f9c] text-white hover:bg-[#4d8d89] transition-all"
+                                      className="px-3.5 py-1.5 rounded-full text-xs font-bold bg-[#315f5d] text-white hover:bg-[#183c3a] transition-colors cursor-pointer"
                                     >
                                       Aprobar
                                     </button>
@@ -1599,7 +1760,7 @@ export function AdminApp() {
                                   {v.vetStatus !== 'REJECTED' && (
                                     <button
                                       onClick={() => handleRejectVet(v.id)}
-                                      className="px-3.5 py-1.5 rounded-full text-xs font-bold bg-[#fcece9] text-[#ae4d45] hover:bg-[#f6d5ce] transition-all"
+                                      className="px-3.5 py-1.5 rounded-full text-xs font-bold bg-[#fcece9] text-[#ae4d45] hover:bg-[#f6d5ce] transition-colors cursor-pointer"
                                     >
                                       Rechazar
                                     </button>
@@ -1612,6 +1773,11 @@ export function AdminApp() {
                     </tbody>
                   </table>
                 </div>
+                <AdminTablePagination
+                  page={vetsPage}
+                  total={users.filter((u) => u.role === 'VET').length}
+                  onPageChange={setVetsPage}
+                />
               </div>
             </div>
           )}
@@ -1640,31 +1806,35 @@ export function AdminApp() {
                       </tr>
                     </thead>
                     <tbody>
-                      {auditLogs.length === 0 ? (
+                      {loading && auditLogs.length === 0 ? (
+                        <AdminTableSkeletonRows cols={5} />
+                      ) : auditLogs.length === 0 ? (
                         <tr>
-                          <td colSpan={5} className="text-center py-12 text-sm text-[#536b69]">
+                          <td colSpan={5} className="text-center py-12 text-sm text-[#4a6866]">
                             No hay eventos registrados en la bitácora de auditoría.
                           </td>
                         </tr>
                       ) : (
-                        auditLogs.map((log) => (
+                        auditLogs
+                          .slice((auditPage - 1) * ADMIN_PAGE_SIZE, auditPage * ADMIN_PAGE_SIZE)
+                          .map((log) => (
                           <tr key={log.id}>
-                            <td className="text-xs font-mono text-[#536b69] whitespace-nowrap">
-                              {new Date(log.createdAt).toLocaleString('es-AR')}
+                            <td className="text-xs font-mono text-[#4a6866] whitespace-nowrap">
+                              {formatDateAR(log.createdAt, true)}
                             </td>
-                            <td>
-                              <div className="font-bold text-xs text-[#183c3a]">
+                            <td className="min-w-0">
+                              <div className="font-bold text-xs text-[#183c3a] break-words">
                                 {log.admin ? `${log.admin.firstName} ${log.admin.lastName}` : 'Sistema'}
                               </div>
-                              <div className="text-[11px] text-[#536b69]">{log.admin?.email}</div>
+                              <div className="text-[11px] text-[#4a6866] break-all">{log.admin?.email}</div>
                             </td>
                             <td>
                               <span className="font-mono text-xs font-bold text-[#183c3a] bg-[#e7f2f0] px-2 py-0.5 rounded border border-[#bddbd6]">
                                 {log.action}
                               </span>
                             </td>
-                            <td className="text-xs font-mono text-[#536b69]">{log.targetId || '—'}</td>
-                            <td className="text-xs text-[#536b69]">
+                            <td className="text-xs font-mono text-[#4a6866]">{log.targetId || '—'}</td>
+                            <td className="text-xs text-[#4a6866]">
                               <code className="text-[11px] bg-[#f8f6f0] px-2 py-1 rounded border border-[#e2ded4] block max-w-sm truncate">
                                 {JSON.stringify(log.details)}
                               </code>
@@ -1675,9 +1845,11 @@ export function AdminApp() {
                     </tbody>
                   </table>
                 </div>
+                <AdminTablePagination page={auditPage} total={auditLogs.length} onPageChange={setAuditPage} />
               </div>
             </div>
           )}
+          </div>
         </main>
       </div>
 
@@ -1685,12 +1857,16 @@ export function AdminApp() {
       {/* MODAL 1: PERMANENT BAN CONFIRMATION WITH ANIMATION   */}
       {/* ==================================================== */}
       {banModalOpen && targetBanUser && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="adm-modal-overlay"
+        <AdminModal
+          open={banModalOpen}
+          onClose={() => {
+            if (!isBanning) {
+              setBanModalOpen(false);
+              setTargetBanUser(null);
+            }
+          }}
+          className="text-center space-y-5 hc-dialog-panel"
         >
-          <div className="adm-modal-card text-center space-y-5 animate-in zoom-in-95 duration-200">
             <div className="mx-auto w-16 h-16 rounded-full bg-[#fcece9] border-2 border-[#ae4d45] flex items-center justify-center text-[#ae4d45]">
               <Ban className="w-8 h-8" />
             </div>
@@ -1702,7 +1878,7 @@ export function AdminApp() {
               <h2 className="text-2xl font-black text-[#183c3a] tracking-tight">
                 Banear Cuenta Permanentemente
               </h2>
-              <p className="text-sm text-[#607674] font-medium leading-relaxed">
+              <p className="text-sm text-[#4a6866] font-medium leading-relaxed">
                 ¿Estás seguro de que deseás suspender y banear de forma permanente a{' '}
                 <strong className="text-[#183c3a]">
                   {targetBanUser.firstName} {targetBanUser.lastName} ({targetBanUser.email})
@@ -1749,7 +1925,7 @@ export function AdminApp() {
                 type="button"
                 disabled={isBanning}
                 onClick={handleConfirmBan}
-                className="flex-1 py-3 px-4 rounded-full font-bold text-xs bg-[#ae4d45] text-white hover:bg-[#933d36] transition-all shadow-md cursor-pointer flex items-center justify-center gap-2"
+                className="flex-1 py-3 px-4 rounded-full font-bold text-xs bg-[#ae4d45] text-white hover:bg-[#933d36] transition-colors shadow-md cursor-pointer flex items-center justify-center gap-2"
               >
                 {isBanning ? (
                   <span>Procesando...</span>
@@ -1761,20 +1937,14 @@ export function AdminApp() {
                 )}
               </button>
             </div>
-          </div>
-        </div>
+        </AdminModal>
       )}
 
       {/* ==================================================== */}
       {/* MODAL 2: CHAT CONVERSATION INSPECTOR                 */}
       {/* ==================================================== */}
       {chatModalOpen && selectedConsultation && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="adm-modal-overlay"
-        >
-          <div className="adm-modal-card adm-modal-card--wide space-y-4">
+        <AdminModal open={chatModalOpen} onClose={() => setChatModalOpen(false)} wide className="space-y-4">
             <div className="flex items-start justify-between pb-3 border-b border-[#e2ded4]">
               <div>
                 <div className="flex items-center gap-2">
@@ -1808,7 +1978,8 @@ export function AdminApp() {
               </div>
               <button
                 onClick={() => setChatModalOpen(false)}
-                className="p-2 rounded-full text-[#607674] hover:text-[#183c3a] hover:bg-[#f2eddd]"
+                className="min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 p-2 inline-flex items-center justify-center rounded-full text-[#607674] hover:text-[#183c3a] hover:bg-[#f2eddd]"
+                aria-label="Cerrar modal"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1846,15 +2017,19 @@ export function AdminApp() {
                       </div>
                       <div className="whitespace-pre-wrap">{msg.content}</div>
                       {msg.attachmentUrl && (
-                        <a
-                          href={msg.attachmentUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-2 inline-flex items-center gap-1.5 text-xs text-[#245e5b] underline font-bold"
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const url = normalizeMediaUrl(msg.attachmentUrl) || msg.attachmentUrl!;
+                            void downloadAuthenticatedMedia(url, 'adjunto-clinico').catch(() => {
+                              notify('No se pudo descargar el archivo adjunto.', 'error');
+                            });
+                          }}
+                          className="mt-2 inline-flex items-center gap-1.5 text-xs text-[#245e5b] underline font-bold bg-transparent border-0 p-0 cursor-pointer"
                         >
                           <Paperclip className="w-3.5 h-3.5" />
                           <span>Ver archivo adjunto</span>
-                        </a>
+                        </button>
                       )}
                       <div className="adm-chat-msg__time">
                         {new Date(msg.createdAt).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
@@ -1868,21 +2043,19 @@ export function AdminApp() {
             <div className="flex justify-end pt-2">
               <button
                 onClick={() => setChatModalOpen(false)}
-                className="py-2.5 px-6 rounded-full font-bold text-xs bg-[#609f9c] text-white hover:bg-[#4d8d89] transition-colors cursor-pointer"
+                className="py-2.5 px-6 rounded-full font-bold text-xs bg-[#315f5d] text-white hover:bg-[#183c3a] transition-colors cursor-pointer"
               >
                 Cerrar Visor de Conversación
               </button>
             </div>
-          </div>
-        </div>
+        </AdminModal>
       )}
 
       {/* ==================================================== */}
       {/* MODAL 3: USER CREATE / EDIT                          */}
       {/* ==================================================== */}
       {userModalOpen && (
-        <div role="dialog" aria-modal="true" className="adm-modal-overlay">
-          <div className="adm-modal-card">
+        <AdminModal open={userModalOpen} onClose={() => setUserModalOpen(false)}>
             <div className="flex items-center justify-between pb-3 border-b border-[#e2ded4] mb-4">
               <h2 className="text-xl font-black text-[#183c3a]">
                 {editingUser ? 'Editar Usuario' : 'Crear Nuevo Usuario'}
@@ -1988,22 +2161,20 @@ export function AdminApp() {
                 </button>
                 <button
                   type="submit"
-                  className="py-2.5 px-5 rounded-full text-xs font-bold bg-[#609f9c] text-white hover:bg-[#4d8d89]"
+                  className="py-2.5 px-5 rounded-full text-xs font-bold bg-[#315f5d] text-white hover:bg-[#183c3a] transition-colors"
                 >
                   Guardar Usuario
                 </button>
               </div>
             </form>
-          </div>
-        </div>
+        </AdminModal>
       )}
 
       {/* ==================================================== */}
       {/* MODAL 4: PET CREATE / EDIT                           */}
       {/* ==================================================== */}
       {petModalOpen && (
-        <div role="dialog" aria-modal="true" className="adm-modal-overlay">
-          <div className="adm-modal-card">
+        <AdminModal open={petModalOpen} onClose={() => setPetModalOpen(false)}>
             <div className="flex items-center justify-between pb-3 border-b border-[#e2ded4] mb-4">
               <h2 className="text-xl font-black text-[#183c3a]">
                 {editingPet ? 'Editar Mascota' : 'Registrar Mascota'}
@@ -2126,29 +2297,31 @@ export function AdminApp() {
                 </button>
                 <button
                   type="submit"
-                  className="py-2.5 px-5 rounded-full text-xs font-bold bg-[#609f9c] text-white hover:bg-[#4d8d89]"
+                  className="py-2.5 px-5 rounded-full text-xs font-bold bg-[#315f5d] text-white hover:bg-[#183c3a] transition-colors"
                 >
                   Guardar Mascota
                 </button>
               </div>
             </form>
-          </div>
-        </div>
+        </AdminModal>
       )}
 
       {/* ==================================================== */}
       {/* MODAL 5: CONFIRM HIDE PET                            */}
       {/* ==================================================== */}
       {confirmHidePet && (
-        <div role="dialog" aria-modal="true" className="adm-modal-overlay">
-          <div className="adm-modal-card space-y-4">
+        <AdminModal
+          open={Boolean(confirmHidePet)}
+          onClose={() => { if (!isHidingPet) setConfirmHidePet(null); }}
+          className="space-y-4"
+        >
             <div className="flex items-start gap-3">
               <div className="w-11 h-11 rounded-full bg-[#fcece9] border border-[#f3c8be] text-[#ae4d45] flex items-center justify-center shrink-0">
                 <Trash2 className="w-5 h-5" />
               </div>
               <div>
                 <h2 className="text-lg font-black text-[#183c3a]">Ocultar paciente</h2>
-                <p className="text-sm text-[#607674] mt-1">
+                <p className="text-sm text-[#4a6866] mt-1">
                   ¿Seguro que deseás ocultar a <strong className="text-[#183c3a]">{confirmHidePet.name}</strong>? Podrás restaurarla más adelante desde esta vista.
                 </p>
               </div>
@@ -2171,16 +2344,23 @@ export function AdminApp() {
                 {isHidingPet ? 'Ocultando...' : 'Ocultar Mascota'}
               </button>
             </div>
-          </div>
-        </div>
+        </AdminModal>
       )}
 
       {/* ==================================================== */}
       {/* MODAL 6: REJECT SENASA VET REASON                    */}
       {/* ==================================================== */}
       {rejectingVetId && (
-        <div role="dialog" aria-modal="true" className="adm-modal-overlay">
-          <div className="adm-modal-card space-y-4">
+        <AdminModal
+          open={Boolean(rejectingVetId)}
+          onClose={() => {
+            if (!isRejectingVet) {
+              setRejectingVetId(null);
+              setRejectReason('');
+            }
+          }}
+          className="space-y-4"
+        >
             <div className="flex items-center justify-between pb-3 border-b border-[#e4dfd2]">
               <h2 className="text-lg font-black text-[#183c3a]">Rechazar matrícula profesional</h2>
               <button
@@ -2189,7 +2369,8 @@ export function AdminApp() {
                   setRejectingVetId(null);
                   setRejectReason('');
                 }}
-                className="p-2 rounded-full text-[#607674] hover:text-[#183c3a] hover:bg-[#f2eddd]"
+                className="min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 p-2 inline-flex items-center justify-center rounded-full text-[#4a6866] hover:text-[#183c3a] hover:bg-[#f2eddd]"
+                aria-label="Cerrar modal"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -2229,8 +2410,7 @@ export function AdminApp() {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
+        </AdminModal>
       )}
 
       {/* Modal de Kill Switches / Resiliencia */}

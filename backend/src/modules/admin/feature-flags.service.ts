@@ -1,6 +1,10 @@
 import { AppError } from '../../middlewares/errorHandler';
 import prisma from '../../lib/prisma';
+import { getRedisClient } from '../../lib/redis';
 import { FeatureFlagKey, UpdateFeatureFlagDTO, FEATURE_FLAG_KEYS } from './admin.schemas';
+
+export const REDIS_FEATURE_FLAGS_KEY = 'huellicam:feature_flags';
+const FEATURE_FLAGS_SYNC_TTL_MS = 2_000;
 
 export interface FeatureFlagItem {
   key: FeatureFlagKey;
@@ -19,6 +23,7 @@ const DEFAULT_FLAG_DESCRIPTIONS: Record<FeatureFlagKey, string> = {
 
 export class FeatureFlagsService {
   private flags = new Map<FeatureFlagKey, FeatureFlagItem>();
+  private lastSyncedAt = 0;
 
   constructor() {
     this.resetForTests();
@@ -26,6 +31,7 @@ export class FeatureFlagsService {
 
   public resetForTests(): void {
     this.flags.clear();
+    this.lastSyncedAt = 0;
     const now = new Date().toISOString();
     for (const key of FEATURE_FLAG_KEYS) {
       this.flags.set(key, {
@@ -35,6 +41,58 @@ export class FeatureFlagsService {
         updatedAt: now,
         updatedBy: null,
       });
+    }
+  }
+
+  public async syncFromRedis(force = false): Promise<void> {
+    const now = Date.now();
+    if (!force && now - this.lastSyncedAt < FEATURE_FLAGS_SYNC_TTL_MS) {
+      return;
+    }
+
+    const client = getRedisClient();
+    if (!client || client.status !== 'ready') {
+      return;
+    }
+
+    try {
+      const raw = await client.get(REDIS_FEATURE_FLAGS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<Record<FeatureFlagKey, FeatureFlagItem>>;
+        for (const key of FEATURE_FLAG_KEYS) {
+          const item = parsed[key];
+          if (item && typeof item.enabled === 'boolean') {
+            this.flags.set(key, {
+              key,
+              enabled: item.enabled,
+              description: item.description || DEFAULT_FLAG_DESCRIPTIONS[key],
+              updatedAt: item.updatedAt || new Date().toISOString(),
+              updatedBy: item.updatedBy ?? null,
+            });
+          }
+        }
+      }
+      this.lastSyncedAt = now;
+    } catch {
+      // Fallback safely to local flag cache when Redis read/parse fails
+    }
+  }
+
+  private async persistToRedis(): Promise<void> {
+    const client = getRedisClient();
+    if (!client || client.status !== 'ready') {
+      return;
+    }
+
+    try {
+      const payload: Partial<Record<FeatureFlagKey, FeatureFlagItem>> = {};
+      for (const [key, item] of this.flags.entries()) {
+        payload[key] = item;
+      }
+      await client.set(REDIS_FEATURE_FLAGS_KEY, JSON.stringify(payload));
+      this.lastSyncedAt = Date.now();
+    } catch {
+      // Non-blocking Redis write-through
     }
   }
 
@@ -68,6 +126,26 @@ export class FeatureFlagsService {
     };
 
     this.flags.set(dto.key, updated);
+    await this.persistToRedis();
+
+    if (prisma.platformFeatureFlag?.upsert) {
+      await prisma.platformFeatureFlag
+        .upsert({
+          where: { key: dto.key },
+          create: {
+            key: dto.key,
+            enabled: dto.enabled,
+            description: updated.description,
+            updatedBy: adminId,
+          },
+          update: {
+            enabled: dto.enabled,
+            description: updated.description,
+            updatedBy: adminId,
+          },
+        })
+        .catch(() => {});
+    }
 
     try {
       await prisma.auditLog.create({

@@ -6,24 +6,29 @@ Documentación técnica de bajo nivel sincronizada con `backend/prisma/schema.pr
 
 ## 1. Modelo de Datos (Prisma ORM 6 — PostgreSQL 16)
 
-El esquema actual en [schema.prisma](../backend/prisma/schema.prisma) define **4 enums** y **15 modelos**:
+El esquema actual en [schema.prisma](../backend/prisma/schema.prisma) define **9 enums** y **32 modelos**:
 
 ### 1.1 Enums
 - **`Role`:** `CLIENT` | `VET` | `ADMIN`
 - **`VetStatus`:** `PENDING` | `APPROVED` | `REJECTED`
 - **`CallStatus`:** `INITIATED` | `ACTIVE` | `ENDED` | `FAILED`
+- **`VaccineStatus`:** `UP_TO_DATE` | `UPCOMING` | `OVERDUE`
+- **`PetDocumentCategory`:** `LAB_RESULT` | `IMAGING` | `CERTIFICATE` | `PRESCRIPTION` | `OTHER`
+- **`FollowUpStatus`:** `PENDING` | `COMPLETED` | `CANCELLED`
+- **`ClinicalTemplateKind`:** `EVOLUTION` | `PRESCRIPTION`
+- **`LedgerEntryStatus`:** `SIMULATED` | `PENDING_SETTLEMENT` | `SETTLED`
 - **`ConsultationStatus`:**
-  - Flujo principal: `WAITING`, `ACTIVE`, `COMPLETED`, `CANCELLED`
-  - Estados de concurrencia y recuperación de sesión: `TRIAGE_CRITICAL_QUEUED`, `CLAIM_PENDING_SYNC`, `LIVEKIT_CONNECTING`, `IN_CALL_ACTIVE`, `AWAITING_EMERGENCY_CALLBACK`, `HANDOFF_IN_PROGRESS`
+  - Contrato canónico en runtime y en PostgreSQL (`backend/` y `web/`): `WAITING`, `ACTIVE`, `COMPLETED`, `CANCELLED`.
+  - Los 6 literales legados (`TRIAGE_CRITICAL_QUEUED`, `CLAIM_PENDING_SYNC`, `LIVEKIT_CONNECTING`, `IN_CALL_ACTIVE`, `AWAITING_EMERGENCY_CALLBACK`, `HANDOFF_IN_PROGRESS`) fueron eliminados del enum. La migración `20261126000000_sync_consultation_lifecycle_schema` normaliza filas legadas (`vet_id` nulo → `WAITING`, si no → `ACTIVE`) y recrea el enum solo cuando aún existen esos literales. `scripts/verify-governance.js` los prohíbe en `backend/src` y `web/src`.
 
-### 1.2 Los 15 Modelos Canónicos
+### 1.2 Los 32 Modelos Canónicos
 
 | Modelo | Tabla SQL | Responsabilidad Principal |
 |---|---|---|
 | `User` | `users` | Cuentas (`CLIENT`, `VET`, `ADMIN`), estado de matrícula (`vetStatus`, `licenseNumber`), presencia (`isOnline`, `lastSeen`), `tokenVersion`, reputación denormalizada (`ratingAvg`, `ratingCount`) y soft-delete (`deletedAt`). |
 | `Pet` | `pets` | Ficha declarativa de mascota (`name`, `species`, `breed`, `weightKg`, `sex`, `birthDate`, `microchip`, `allergies`, `chronicConditions`) con soft-delete. |
-| `Consultation` | `consultations` | Ciclo clínico de atención, notas de triaje, `diagnosisNotes`, timestamps, y campos de concurrencia (`activeDeviceId`, `transportStatus`, `stateVersion`, `claimedAt`, `livekitRoomSid`). |
-| `ConsultationAuditLog` | `consultation_audit_log` | Trazabilidad granular de transiciones, reclamos, desconexiones y handoff por dispositivo sobre una consulta. |
+| `Consultation` | `consultations` | Ciclo clínico de 4 estados, notas de triaje, `diagnosisNotes`, timestamps, `activeDeviceId` (handoff multi-dispositivo), `stateVersion` (CAS optimista), `claimedAt`, `livekitRoomSid` y columna legada `transportStatus` (sin escrituras en runtime). |
+| `ConsultationAuditLog` | `consultation_audit_log` | Auditoría atómica de eventos clave de ciclo de vida (`CONSULTATION_CREATED`, `CONSULTATION_ASSIGNED`, `DEVICE_HANDOFF`, `CONSULTATION_COMPLETED`, `CONSULTATION_CANCELLED`, `VET_DISCONNECTED_TIMEOUT`, `LEGACY_STATUS_BACKFILL`). |
 | `Message` | `messages` | Mensajes del chat clínico con clave única de idempotencia (`clientMsgId`) y adjunto opcional (`attachmentUrl`). |
 | `Call` | `calls` | Registro de salas de videollamada (`roomName`, `livekitRoomSid`, `status`, `startedAt`, `endedAt`, `durationSeconds`, `participantCount`, `errorCode`, `errorMessage`, `disconnectReason`, `lastEvent`, `metadata`). |
 | `Prescription` | `prescriptions` | Recetas médicas digitales emitidas por el veterinario (`medication`, `dosage`, `frequency`, `durationDays`, `indications`). |
@@ -34,7 +39,24 @@ El esquema actual en [schema.prisma](../backend/prisma/schema.prisma) define **4
 | `PushToken` | `push_tokens` | Tokens de dispositivos registrados para Expo Push Notifications (`token`, `platform`: `ios \| android \| web`). |
 | `Notification` | `notifications` | Bandeja de notificaciones in-app (`title`, `body`, `type`, `data`, `isRead`, `readAt`). |
 | `PasswordResetToken` | `password_reset_tokens` | Códigos OTP de 6 dígitos hasheados (`codeHash`) con expiración (`expiresAt`) y control de un solo uso (`usedAt`). |
-| `EmailDispatchLog` | `email_dispatch_logs` | Deduplicación persistente (`dedupeKey` único) de correos automáticos (`APPOINTMENT`, `CHECKUP`, `BIRTHDAY`). |
+| `EmailDispatchLog` | `email_dispatch_logs` | Deduplicación persistente (`dedupeKey` único) de correos automáticos (`APPOINTMENT`, `CHECKUP`, `BIRTHDAY`, `VACCINE`, `FOLLOW_UP`). |
+| `EmailVerificationToken` | `email_verification_tokens` | Verificación de correo OTP al registrarse sin alterar el contrato base de `User`. |
+| `PetProfileMedia` | `pet_profile_media` | Foto clínica real de la mascota ligada a `MediaFile`. |
+| `MediaPetLink` | `media_pet_links` | Asociación directa `MediaFile <-> Pet` para control de acceso compartido entre veterinarios. |
+| `ConsultationMetadata` | `consultation_metadata` | Metadatos de programación (`scheduledAt`, `rescheduledFromId`), incidentes de llamada y snapshots tarifarios. |
+| `PetVaccine` | `pet_vaccines` | Libreta sanitaria real de vacunas por mascota (`appliedAt`, `nextDueAt`, `status`, `notes`). |
+| `PetDocument` | `pet_documents` | Documentos y estudios clínicos persistidos ligados a `Pet`, `MediaFile` y consulta opcional. |
+| `ClinicalEvolution` | `clinical_evolutions` | Evoluciones clínicas veterinarias (SOAP) persistidas por mascota y consulta. |
+| `PetCoOwner` | `pet_co_owners` | Co-tutores familiares habilitados sobre la misma ficha de mascota. |
+| `VetAvailabilitySlot` | `vet_availability_slots` | Franjas horarias semanales declaradas por el veterinario para turnos programados. |
+| `FollowUp` | `follow_ups` | Controles y seguimientos clínicos programados post-consulta con estado y recordatorio. |
+| `WebPushSubscription` | `web_push_subscriptions` | Suscripciones VAPID de navegador (`endpoint`, `p256dh`, `auth`) para Web Push. |
+| `NotificationPreference` | `notification_preferences` | Preferencias por usuario de canales in-app, push web y recordatorios por email. |
+| `ClinicalTemplate` | `clinical_templates` | Plantillas reutilizables de evolución SOAP y recetas médicas (globales o por veterinario). |
+| `TelemedicineConsent` | `telemedicine_consents` | Registro auditable de consentimiento informado de telemedicina veterinaria. |
+| `PlatformFeatureFlag` | `platform_feature_flags` | Persistencia en PostgreSQL de los kill switches operativos. |
+| `PlatformPricingSetting` | `platform_pricing_settings` | Persistencia en PostgreSQL de arancel base, take-rate y moneda. |
+| `VetLedgerEntry` | `vet_ledger_entries` | Asientos de honorarios veterinarios (modo simulado/estimado preparado para PagoFlex). |
 
 ---
 

@@ -1,6 +1,7 @@
 import { useRef, useState, type ReactNode, type Ref } from "react";
 import { Icon } from "../../shared";
 import { WhatsAppCheck } from "../call/WhatsAppCheck";
+import { AuthenticatedMediaImage, downloadAuthenticatedMedia } from "../../lib/authenticatedMedia";
 
 export interface ClinicalChatDoc {
   title: string;
@@ -54,14 +55,7 @@ interface ClinicalChatThreadProps {
 
 function defaultDownload(doc: ClinicalChatDoc) {
   if (!doc.fileUrl) return;
-  const a = document.createElement("a");
-  a.href = doc.fileUrl;
-  a.download = doc.title || "adjunto-clinico";
-  a.target = "_blank";
-  a.rel = "noopener noreferrer";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  void downloadAuthenticatedMedia(doc.fileUrl, doc.title || "adjunto-clinico").catch(() => {});
 }
 
 export function ClinicalChatThread({
@@ -191,7 +185,7 @@ export function ClinicalChatThread({
                     }}
                     aria-label={`Ampliar fotografía: ${msg.imageThumb.caption}`}
                   >
-                    <img
+                    <AuthenticatedMediaImage
                       src={msg.imageThumb.src}
                       alt={msg.imageThumb.caption}
                       style={{
@@ -234,7 +228,7 @@ export function ClinicalChatThread({
                           marginBottom: 8,
                         }}
                       >
-                        <img
+                        <AuthenticatedMediaImage
                           src={msg.doc.fileUrl}
                           alt={msg.doc.title}
                           style={{

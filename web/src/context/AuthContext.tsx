@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
+import { QueryClientContext, type QueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import api, { setAccessToken, getAccessToken } from '../services/api';
 import { User, ApiResponse } from '../types';
@@ -38,7 +39,38 @@ const isPublicAuthPath = (pathname: string): boolean => {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const ACCOUNT_EXACT_STORAGE_KEYS = ['huellicam_vet_rx', 'huellicam_new_pet_draft'];
+const ACCOUNT_PREFIX_STORAGE_KEYS = [
+  'huellicam_vaccines_',
+  'huellicam_docs_',
+  'huellicam_chat_',
+  'huellicam_pet_photo_',
+];
+
+export function clearAccountScopedStorage(): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    for (const exactKey of ACCOUNT_EXACT_STORAGE_KEYS) {
+      window.localStorage.removeItem(exactKey);
+    }
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const key = window.localStorage.key(i);
+      if (key && ACCOUNT_PREFIX_STORAGE_KEYS.some((prefix) => key.startsWith(prefix))) {
+        keysToRemove.push(key);
+      }
+    }
+    for (const key of keysToRemove) {
+      window.localStorage.removeItem(key);
+    }
+  } catch {}
+}
+
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const queryClient = useContext(QueryClientContext);
+  const queryClientRef = useRef<QueryClient | undefined>(queryClient);
+  queryClientRef.current = queryClient;
+
   const [user, setUser] = useState<User | null>(() => {
     try {
       if (typeof window !== 'undefined' && window.localStorage) {
@@ -57,10 +89,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setUser(null);
     setAccessToken(null);
     notifyMobileAuthLogout();
+    queryClientRef.current?.clear();
     try {
       window.localStorage.removeItem('huellicam_user');
       window.localStorage.removeItem('huellicam_token');
-      window.localStorage.removeItem('huellicam_device_id');
+      // Preserve huellicam_device_id across logouts so device continuity & tracking stay consistent
+      clearAccountScopedStorage();
       window.sessionStorage.clear();
     } catch {}
   };
@@ -169,6 +203,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, []);
 
+  const resetCacheIfAccountChanged = (nextUserId: string) => {
+    try {
+      const rawPrev = typeof window !== 'undefined' ? window.localStorage.getItem('huellicam_user') : null;
+      if (rawPrev) {
+        const prev = JSON.parse(rawPrev) as { id?: string } | null;
+        if (prev?.id && prev.id !== nextUserId) {
+          clearAccountScopedStorage();
+          queryClientRef.current?.clear();
+        }
+      }
+    } catch {}
+  };
+
   const login = async (credentials: Record<string, any>): Promise<User> => {
     const res = await api.post<ApiResponse<{ user: User; accessToken: string }>>(
       '/api/auth/login',
@@ -178,6 +225,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       throw new Error(res.data.error?.message || 'Error iniciando sesion');
     }
     const { user: loggedUser, accessToken } = res.data.data;
+    resetCacheIfAccountChanged(loggedUser.id);
     setAccessToken(accessToken);
     setUser(loggedUser);
     try {
@@ -196,6 +244,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       throw new Error(res.data.error?.message || 'Error registrando usuario');
     }
     const { user: registeredUser, accessToken } = res.data.data;
+    resetCacheIfAccountChanged(registeredUser.id);
     setAccessToken(accessToken);
     setUser(registeredUser);
     try {

@@ -1,4 +1,5 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 export type IconName =
   | "home"
@@ -39,7 +40,8 @@ export type IconName =
   | "qr"
   | "users"
   | "repeat"
-  | "x";
+  | "x"
+  | "more";
 
 const iconPaths: Record<IconName, ReactNode> = {
   alert: <><path d="M12 3 2 20h20Z"/><path d="M12 10v4M12 17h.01"/></>,
@@ -81,6 +83,7 @@ const iconPaths: Record<IconName, ReactNode> = {
   chevron: <path d="m9 18 6-6-6-6"/>,
   edit: <><path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10Z"/><path d="m14 7 3 3"/></>,
   phone: <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.4 2.1L8.1 10a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.6 1.9Z"/>,
+  more: <><circle cx="12" cy="5" r="1.75" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.75" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.75" fill="currentColor" stroke="none"/></>,
 };
 
 export function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
@@ -136,7 +139,86 @@ export function PageHeader({ eyebrow, title, description, action }: { eyebrow?: 
 }
 
 export function Tabs({ tabs, active, onChange }: { tabs: string[]; active: string; onChange: (tab: string) => void }) {
-  return <div className="tabs" role="tablist">{tabs.map((tab) => <button role="tab" aria-selected={active === tab} className={active === tab ? "is-active" : ""} onClick={() => onChange(tab)} key={tab}>{tab}</button>)}</div>;
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const [indicator, setIndicator] = useState<{ left: number; width: number; ready: boolean }>({
+    left: 0,
+    width: 0,
+    ready: false,
+  });
+
+  useLayoutEffect(() => {
+    const updateIndicator = () => {
+      const container = listRef.current;
+      if (!container) return;
+      const activeBtn = container.querySelector<HTMLButtonElement>('button[aria-selected="true"]');
+      if (!activeBtn || activeBtn.offsetWidth === 0) {
+        setIndicator((prev) => (prev.ready ? { left: 0, width: 0, ready: false } : prev));
+        return;
+      }
+      setIndicator({
+        left: activeBtn.offsetLeft,
+        width: activeBtn.offsetWidth,
+        ready: true,
+      });
+    };
+
+    updateIndicator();
+    window.addEventListener("resize", updateIndicator);
+    let ro: ResizeObserver | undefined;
+    if (typeof ResizeObserver === "function" && listRef.current) {
+      ro = new ResizeObserver(updateIndicator);
+      ro.observe(listRef.current);
+    }
+    return () => {
+      window.removeEventListener("resize", updateIndicator);
+      ro?.disconnect();
+    };
+  }, [active, tabs]);
+
+  return (
+    <div ref={listRef} className={`tabs ${indicator.ready ? "has-indicator" : ""}`} role="tablist">
+      {tabs.map((tab) => (
+        <button
+          role="tab"
+          aria-selected={active === tab}
+          className={active === tab ? "is-active" : ""}
+          onClick={() => onChange(tab)}
+          key={tab}
+        >
+          {tab}
+        </button>
+      ))}
+      <span
+        className="tabs__indicator"
+        aria-hidden="true"
+        style={
+          indicator.ready
+            ? {
+                transform: `translateX(${indicator.left}px)`,
+                width: `${indicator.width}px`,
+                opacity: 1,
+              }
+            : { opacity: 0 }
+        }
+      />
+    </div>
+  );
+}
+
+export function SectionStage({
+  stageKey,
+  children,
+  className = "",
+}: {
+  stageKey: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div key={stageKey} className={className ? `hc-tab-stage ${className}` : "hc-tab-stage"}>
+      {children}
+    </div>
+  );
 }
 
 export type MessageState = "sending" | "sent" | "read" | "error";
@@ -175,7 +257,7 @@ export function EmptyState({ icon, title, text, action, onAction }: { icon: Icon
       go("/client/dashboard");
     }
   };
-  return <div className="empty-state"><span><Icon name={icon} size={27}/></span><h2>{title}</h2><p>{text}</p>{action && <Button icon={action === "Reintentar" ? "repeat" : action === "Volver al inicio" ? "arrow" : "plus"} onClick={handleClick}>{action}</Button>}</div>;
+  return <div className="empty-state hc-reveal"><span><Icon name={icon} size={27}/></span><h2>{title}</h2><p>{text}</p>{action && <Button icon={action === "Reintentar" ? "repeat" : action === "Volver al inicio" ? "arrow" : "plus"} onClick={handleClick}>{action}</Button>}</div>;
 }
 
 export function Modal({ title, text, cancel, confirm, destructive, onClose, onConfirm, children }: { title: string; text: string; cancel: string; confirm: string; destructive?: boolean; onClose: () => void; onConfirm?: () => void; children?: ReactNode }) {
@@ -198,5 +280,6 @@ export function Modal({ title, text, cancel, confirm, destructive, onClose, onCo
     document.addEventListener("keydown", onKey);
     return () => { document.removeEventListener("keydown", onKey); previous.current?.focus(); };
   }, [onClose]);
-  return <div className="modal-layer" role="presentation"><button className="modal-scrim" onClick={onClose} aria-label="Cerrar modal"/><div ref={dialog} className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-description"><button ref={close} className="button button--icon modal__close" onClick={onClose} aria-label="Cerrar"><Icon name="close" size={18}/></button><span className={`modal__icon ${destructive ? "is-danger" : ""}`}><Icon name={destructive ? "trash" : "file"}/></span><h2 id="modal-title">{title}</h2><p id="modal-description">{text}</p>{children}<div><Button variant="secondary" onClick={onClose}>{cancel}</Button><Button variant={destructive ? "danger" : "primary"} onClick={onConfirm ?? onClose}>{confirm}</Button></div></div></div>;
+  const modalNode = <div className="modal-layer" role="presentation"><button className="modal-scrim" onClick={onClose} aria-label="Cerrar modal"/><div ref={dialog} className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-description"><button ref={close} className="button button--icon modal__close" onClick={onClose} aria-label="Cerrar"><Icon name="close" size={18}/></button><span className={`modal__icon ${destructive ? "is-danger" : ""}`}><Icon name={destructive ? "trash" : "file"}/></span><h2 id="modal-title">{title}</h2><p id="modal-description">{text}</p>{children}<div><Button variant="secondary" onClick={onClose}>{cancel}</Button><Button variant={destructive ? "danger" : "primary"} onClick={onConfirm ?? onClose}>{confirm}</Button></div></div></div>;
+  return typeof document !== "undefined" ? createPortal(modalNode, document.body) : modalNode;
 }

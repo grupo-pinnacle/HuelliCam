@@ -3,6 +3,7 @@ import { Star, X, Loader2, Sparkles } from 'lucide-react';
 import { ReviewModalProps, ApiResponse, Review } from '../../types';
 import api from '../../services/api';
 import { cn } from '../../lib/utils';
+import { useFocusTrap } from '../common/DialogOverlay';
 
 const RATING_LABELS: Record<number, string> = {
   1: 'Insatisfactoria',
@@ -31,6 +32,9 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   const starRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useFocusTrap(isOpen, dialogRef, { onEscape: onClose });
 
   // Sync initial state when modal opens
   useEffect(() => {
@@ -41,20 +45,6 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
       setError(null);
     }
   }, [isOpen, initialRating, initialComment]);
-
-  // Handle ESC key to close modal
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -127,7 +117,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   return (
     <div
       data-testid={testId}
-      className="fixed inset-0 bg-[#183c3a]/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto"
+      className="fixed inset-0 bg-[#183c3a]/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto hc-dialog-backdrop"
       role="dialog"
       aria-modal="true"
       aria-labelledby="review-modal-title"
@@ -136,8 +126,9 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
       }}
     >
       <div
+        ref={dialogRef}
         className={cn(
-          'bg-[#fffbef] rounded-3xl max-w-md w-full shadow-2xl border border-[#e4dfd2] p-6 relative font-sans text-[#183c3a] my-8',
+          'bg-[#fffbef] rounded-3xl max-w-md w-full shadow-2xl border border-[#e4dfd2] p-6 relative font-sans text-[#183c3a] my-8 hc-dialog-panel',
           className
         )}
       >
@@ -146,7 +137,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           type="button"
           onClick={onClose}
           aria-label="Cerrar modal"
-          className="absolute top-4 right-4 text-[#607674] hover:text-[#183c3a] p-1.5 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#609f9c] transition-colors"
+          className="absolute top-4 right-4 text-[#4a6866] hover:text-[#183c3a] p-1.5 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#609f9c] transition-colors"
         >
           <X className="w-5 h-5" aria-hidden="true" />
         </button>
@@ -202,7 +193,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                     onMouseLeave={() => setHoverRating(0)}
                     onClick={() => setRating(star)}
                     disabled={isSubmitting}
-                    className="p-1 rounded-xl text-[#d4cfc2] hover:scale-110 active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#609f9c] focus-visible:ring-offset-2"
+                    className="p-1 rounded-xl text-[#d4cfc2] hover:scale-110 active:scale-95 transition-[transform,color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#609f9c] focus-visible:ring-offset-2"
                   >
                     <Star
                       className={cn(
@@ -240,7 +231,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
               value={comment}
               onChange={(e) => setComment(e.target.value)}
               disabled={isSubmitting}
-              className="w-full px-3.5 py-2.5 border border-[#e4dfd2] rounded-2xl text-sm bg-white text-[#183c3a] placeholder:text-[#607674]/70 focus:outline-none focus:ring-2 focus:ring-[#609f9c] focus:border-[#609f9c] transition-colors disabled:bg-[#f2eddd]/60 disabled:text-[#607674]"
+              className="w-full px-3.5 py-2.5 border border-[#e4dfd2] rounded-2xl text-sm bg-white text-[#183c3a] placeholder:text-[#4a6866]/80 focus:outline-none focus:ring-2 focus:ring-[#315f5d] focus:border-[#315f5d] transition-colors disabled:bg-[#f2eddd]/60 disabled:text-[#4a6866]"
             />
           </div>
 
@@ -251,7 +242,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
               data-testid="skip-review-button"
               onClick={onClose}
               disabled={isSubmitting}
-              className="order-2 sm:order-1 flex-1 px-4 py-2.5 text-[#454e4e] hover:text-[#183c3a] hover:bg-[#f2eddd] rounded-full text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#609f9c] disabled:opacity-50 text-center"
+              className="order-2 sm:order-1 flex-1 px-4 py-2.5 text-[#454e4e] hover:text-[#183c3a] hover:bg-[#f2eddd] rounded-full text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#315f5d] disabled:opacity-50 text-center"
             >
               Omitir por ahora
             </button>
@@ -260,7 +251,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
               type="submit"
               data-testid="submit-review-button"
               disabled={isSubmitting || rating === 0}
-              className="order-1 sm:order-2 flex-1 px-4 py-2.5 bg-[#609f9c] hover:bg-[#315f5d] text-white rounded-full text-sm font-bold shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#609f9c] focus-visible:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
+              className="order-1 sm:order-2 flex-1 px-4 py-2.5 bg-[#315f5d] hover:bg-[#183c3a] text-white rounded-full text-sm font-bold shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#315f5d] focus-visible:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
             >
               {isSubmitting ? (
                 <>

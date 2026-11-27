@@ -1,6 +1,8 @@
+import crypto from 'crypto';
 import QRCode from 'qrcode';
 import { User, Role, VetStatus, ConsultationStatus } from '@prisma/client';
 import prisma from '../../lib/prisma';
+import { config } from '../../config/env';
 import { AppError } from '../../middlewares/errorHandler';
 import { CreatePrescriptionDTO } from './prescriptions.schemas';
 import { notificationsService } from '../notifications/notifications.service';
@@ -22,15 +24,40 @@ export class PrescriptionsService {
       : 'https://app.huellicam.com.ar';
   }
 
-  private async buildQrPayload(prescriptionId: string): Promise<{ verifyUrl: string; qrCodeDataUrl: string }> {
+  public signPrescriptionId(prescriptionId: string): string {
+    return crypto
+      .createHmac('sha256', config.JWT_SECRET)
+      .update(`prescription:${prescriptionId}`)
+      .digest('hex');
+  }
+
+  public verifyPrescriptionSignature(prescriptionId: string, signature: string): boolean {
+    if (!signature) return false;
+    const expected = this.signPrescriptionId(prescriptionId);
+    const sigBuf = Buffer.from(signature, 'utf8');
+    const expBuf = Buffer.from(expected, 'utf8');
+    if (sigBuf.length !== expBuf.length) {
+      return false;
+    }
+    return crypto.timingSafeEqual(sigBuf, expBuf);
+  }
+
+  private async buildQrPayload(prescriptionId: string): Promise<{
+    verifyUrl: string;
+    signedVerifyUrl: string;
+    verificationSignature: string;
+    qrCodeDataUrl: string;
+  }> {
     const verifyUrl = `${this.getPublicBaseUrl()}/prescriptions/${prescriptionId}`;
+    const verificationSignature = this.signPrescriptionId(prescriptionId);
+    const signedVerifyUrl = `${verifyUrl}?sig=${verificationSignature}`;
     let qrCodeDataUrl = '';
     try {
       qrCodeDataUrl = await QRCode.toDataURL(verifyUrl);
     } catch (err) {
       logger.error({ prescriptionId, err: serializeError(err) }, 'Failed to generate QR code for prescription');
     }
-    return { verifyUrl, qrCodeDataUrl };
+    return { verifyUrl, signedVerifyUrl, verificationSignature, qrCodeDataUrl };
   }
 
   public async createPrescription(
@@ -95,7 +122,9 @@ export class PrescriptionsService {
       },
     });
 
-    const { verifyUrl, qrCodeDataUrl } = await this.buildQrPayload(prescription.id);
+    const { verifyUrl, signedVerifyUrl, verificationSignature, qrCodeDataUrl } = await this.buildQrPayload(
+      prescription.id
+    );
 
     await notificationsService
       .createAndDispatch(
@@ -158,6 +187,8 @@ export class PrescriptionsService {
       ...prescription,
       qrCodeDataUrl,
       verifyUrl,
+      signedVerifyUrl,
+      verificationSignature,
     };
   }
 
@@ -197,10 +228,14 @@ export class PrescriptionsService {
 
       return Promise.all(
         list.map(async (rx) => {
-          const { verifyUrl, qrCodeDataUrl } = await this.buildQrPayload(rx.id);
+          const { verifyUrl, signedVerifyUrl, verificationSignature, qrCodeDataUrl } = await this.buildQrPayload(
+            rx.id
+          );
           return {
             ...rx,
             verifyUrl,
+            signedVerifyUrl,
+            verificationSignature,
             qrCodeDataUrl,
           };
         })
@@ -239,17 +274,23 @@ export class PrescriptionsService {
 
     return Promise.all(
       list.map(async (rx) => {
-        const { verifyUrl, qrCodeDataUrl } = await this.buildQrPayload(rx.id);
+        const { verifyUrl, signedVerifyUrl, verificationSignature, qrCodeDataUrl } = await this.buildQrPayload(rx.id);
         return {
           ...rx,
           verifyUrl,
+          signedVerifyUrl,
+          verificationSignature,
           qrCodeDataUrl,
         };
       })
     );
   }
 
-  public async getPrescriptionById(prescriptionId: string, requester?: User) {
+  public async getPrescriptionById(prescriptionId: string, requester?: User, sig?: string) {
+    if (sig !== undefined && !this.verifyPrescriptionSignature(prescriptionId, sig)) {
+      throw new AppError('Firma de verificación de receta inválida', 403, 'INVALID_VERIFICATION_SIGNATURE');
+    }
+
     const prescription = await prisma.prescription.findUnique({
       where: { id: prescriptionId },
       include: {
@@ -267,17 +308,40 @@ export class PrescriptionsService {
       },
     });
 
-    if (!prescription) {
+    if (!prescription || prescription.consultation?.deletedAt) {
       throw new AppError('Receta no encontrada', 404, 'PRESCRIPTION_NOT_FOUND');
     }
 
-    // Public QR verification: allow unauthenticated third-party verification of non-sensitive official health data
-    const { verifyUrl, qrCodeDataUrl } = await this.buildQrPayload(prescription.id);
+    // Public QR verification: redact sensitive pet clinical/PII fields for unauthenticated callers
+    let normalizedPrescription = prescription;
+    if (!requester && prescription.consultation?.pet) {
+      const pet = prescription.consultation.pet;
+      normalizedPrescription = {
+        ...prescription,
+        consultation: {
+          ...prescription.consultation,
+          pet: {
+            id: pet.id,
+            name: pet.name,
+            species: pet.species,
+            breed: pet.breed,
+            weightKg: pet.weightKg,
+            sex: pet.sex,
+          } as typeof prescription.consultation.pet,
+        },
+      };
+    }
+
+    const { verifyUrl, signedVerifyUrl, verificationSignature, qrCodeDataUrl } = await this.buildQrPayload(
+      prescription.id
+    );
 
     return {
-      ...prescription,
+      ...normalizedPrescription,
       qrCodeDataUrl,
       verifyUrl,
+      signedVerifyUrl,
+      verificationSignature,
     };
   }
 }

@@ -120,7 +120,7 @@ export const CookiePolicy: React.FC = () => {
           <button
             type="button"
             onClick={handleResetConsent}
-            className="px-6 py-3 bg-[#609f9c] hover:bg-[#4d8d89] active:bg-[#315f5d] text-white font-bold text-xs rounded-full shadow-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#609f9c] cursor-pointer"
+            className="px-6 py-3 bg-[#315f5d] hover:bg-[#183c3a] active:bg-[#183c3a] text-white font-bold text-xs rounded-full shadow-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#315f5d] cursor-pointer"
           >
             Restablecer Preferencias de Cookies
           </button>

@@ -40,13 +40,13 @@ El servidor HTTP (`Express 5`) y el gateway en tiempo real (`Socket.io`) se ejec
 | `src/modules/auth/` | Registro, login, rotación de refresh tokens (`tokenVersion`), cookies `HttpOnly` / tokens mobile y recuperación de contraseña por código de 6 dígitos (`passwordReset.service.ts`). |
 | `src/modules/users/` | Actualización de perfil (`isOnline`, `bio`, `phone`, `photoUrl`) y cambio de contraseña autenticado (`PATCH /api/users/password`). |
 | `src/modules/pets/` | CRUD de mascotas con soft-delete, datos fisiológicos/clínicos (`birthDate`, microchip ISO, alergias, patologías crónicas) y registro de documentos clínicos. |
-| `src/modules/consultations/` | Flujo completo de consultas, motor determinista de triaje (`clinicalTriage.engine.ts`), control transaccional de concurrencia (`consultationConcurrency.service.ts`), mensajería y reseñas. |
+| `src/modules/consultations/` | Flujo completo de consultas (4 estados canónicos), motor determinista de triaje (`clinicalTriage.engine.ts`), handoff multi-dispositivo con CAS (`consultations.service.ts` + `ConsultationAuditLog`), mensajería y reseñas. |
 | `src/modules/calls/` | Generación de tokens JWT efímeros LiveKit (sin PII), timbrado en tiempo real (`ringCall`) y cierre de salas SFU (`deleteLiveKitRoom`). |
 | `src/modules/prescriptions/` | Emisión de recetas digitales, generación de URL pública para código QR y consulta pública sin autenticación. |
 | `src/modules/media/` | Subida multipart con almacenamiento temporal en disco, inspección de *Magic Bytes* (JPEG/PNG/PDF), control de cuota diaria (`DailyUploadCounter`) y streaming protegido o URL firmada S3. |
 | `src/modules/notifications/` | Bandeja persistida de notificaciones, emisión vía Socket.io y despacho remoto vía Expo Push API. |
 | `src/modules/admin/` | Validación de matrículas SENASA, CRUD completo de usuarios y mascotas, inspección de mensajes, revocación de sesiones, *AuditLog*, *feature flags*, métricas ejecutivas y tarifas base. |
-| `src/realtime/` | Autenticación de sockets (`socket.auth.middleware.ts`), salas por usuario/dispositivo/rol/consulta (`socket.server.ts`) y gateway de chat/señalización (`chat.gateway.ts`). |
+| `src/realtime/` | Autenticación de sockets (`socket.auth.middleware.ts`), presencia distribuida en Redis (`presence.service.ts`), deadlines ZSET (`vetDisconnectTracker.ts`), expulsión unificada (`sessionEviction.helper.ts`), salas y gateway (`chat.gateway.ts`). |
 | `src/services/` & `src/jobs/` | Despacho de correos vía Resend (`email.service.ts`) y scheduler horario con deduplicación persistida (`notifications.scheduler.ts`). |
 
 ---
@@ -56,7 +56,7 @@ El servidor HTTP (`Express 5`) y el gateway en tiempo real (`Socket.io`) se ejec
 Aplicación SPA construida con **React 18.3.1 (LTS)** y **Vite 6**, optimizada con *code-splitting* por ruta (`React.lazy` + `Suspense`) y hojas de estilo aisladas por portal (`ScopedStyle`):
 
 - **Portal Público y Auth:** `Landing.tsx`, `AuthExperience.tsx`, `PrescriptionView.tsx` y páginas legales (`/privacy`, `/terms`, `/cookies`, `/refunds`).
-- **Portal del Tutor (`/client/*`):** `ClientApp.tsx` (y componentes de soporte en `DashboardClient.tsx` / `ClinicalIntakeForm.tsx`) para gestión de mascotas, intake clínico guiado, historial, mensajes y recetas.
+- **Portal del Tutor (`/client/*`):** `ClientApp.tsx` (y componentes de soporte como `ClinicalIntakeForm.tsx`) para gestión de mascotas, intake clínico guiado, historial, mensajes y recetas.
 - **Consola Veterinaria (`/vet/*`):** `vet/VetApp.tsx` + `vet/vetkit.tsx` con disponibilidad de guardia, cola priorizada por triaje en vivo (`Socket.io` + polling reactivo), ficha de pacientes, mensajería y emisión de recetas.
 - **Sala de Videoconsulta (`/call/:id`):** `vet/CallRoom.tsx` integra LiveKit WebRTC (`<LiveKitRoom>` / `<VideoConference />`), chat clínico (`ClinicalChatThread.tsx`) y puente `window.ReactNativeWebView` para la app móvil.
 - **Consola Administrativa (`/admin/*`):** `AdminApp.tsx`, `AdminExecutiveMetrics.tsx` y `AdminFeatureFlagsModal.tsx`.

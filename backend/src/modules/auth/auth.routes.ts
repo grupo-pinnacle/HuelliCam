@@ -11,6 +11,8 @@ router.post('/login', controller.login);
 router.post('/refresh', controller.refresh);
 router.post('/logout', authenticate, controller.logout);
 router.get('/me', authenticate, controller.me);
+router.post('/verify-email', authenticate, controller.verifyEmail);
+router.post('/resend-verification', authenticate, controller.resendVerification);
 
 // Password recovery routes (hardened with IP & Email rate limiting)
 router.post('/forgot-password', passwordResetIpLimiter, passwordResetEmailLimiter, controller.forgotPassword);

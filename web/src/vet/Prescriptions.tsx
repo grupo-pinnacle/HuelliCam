@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Button, EmptyState, Icon, Modal, PageHeader, Tabs, go } from "../shared";
+import { Button, EmptyState, Icon, Modal, PageHeader, SectionStage, Tabs, go } from "../shared";
 import api from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { isReactNativeWebView } from "../lib/mobileBridge";
-import type { ApiResponse, Consultation as BackendConsultation, Prescription as BackendPrescription } from "../types";
+import type { ApiResponse, ClinicalTemplateDTO, Consultation as BackendConsultation, Prescription as BackendPrescription } from "../types";
 import { getPatient, registerPatient, type Rx } from "./data";
 import { mapBackendPetToPatient } from "./mappers";
 import { ConsultStatus, PetPhoto, useVet } from "./vetkit";
+import { formatDateAR } from "../lib/formatters";
 
 type BackendPrescriptionWithConsultation = BackendPrescription & {
   consultation?: BackendConsultation;
@@ -27,32 +28,62 @@ function mapBackendRxToVetRx(item: BackendPrescriptionWithConsultation): Rx {
     duration: `${item.durationDays} días`,
     notes: item.indications,
     status: "Emitida",
-    date: item.createdAt
-      ? new Date(item.createdAt).toLocaleDateString("es-AR", { day: "numeric", month: "short", year: "numeric" })
-      : "Hoy",
+    date: item.createdAt ? formatDateAR(item.createdAt) : "Hoy",
     qrCodeDataUrl: item.qrCodeDataUrl,
-    verifyUrl: item.verifyUrl,
+    verifyUrl: item.signedVerifyUrl || item.verifyUrl,
   };
 }
 
+const RX_PAGE_SIZE = 20;
+
 export function PrescriptionsPage() {
-  const { rx } = useVet();
+  const { rx, rxLoading, rxError, refetchRx, forceEmpty } = useVet();
   const { user } = useAuth();
   const vetName = user ? (user.lastName ? `Dr. ${user.firstName} ${user.lastName}` : (user.firstName ? `Dr. ${user.firstName}` : "Profesional")) : "Profesional";
   const [tab, setTab] = useState("Todas");
+  const [page, setPage] = useState(1);
+  useEffect(() => {
+    setPage(1);
+  }, [tab]);
   const shown = rx.filter((r) => tab === "Todas" || (tab === "Emitidas" ? r.status === "Emitida" : tab === "Borradores" ? r.status === "Borrador" : r.status === "Finalizada"));
+  const totalPages = Math.max(1, Math.ceil(shown.length / RX_PAGE_SIZE));
+  const paged = shown.slice((page - 1) * RX_PAGE_SIZE, page * RX_PAGE_SIZE);
   return <>
     <PageHeader eyebrow="Indicaciones médicas" title="Recetas" description="Recetas emitidas y borradores en preparación." action={<Button icon="plus" onClick={() => go("/vet/prescriptions/new")}>Nueva receta</Button>}/>
     <Tabs tabs={["Todas", "Emitidas", "Borradores", "Finalizadas"]} active={tab} onChange={setTab}/>
-    {shown.length === 0 ? <div className="panel"><EmptyState icon="file" title="No hay recetas para mostrar." text="Las recetas que emitas o guardes como borrador aparecerán acá."/></div> :
-      <div className="v-rows" role="list">{shown.map((r) => { const p = getPatient(r.petId); return <article role="listitem" className="v-row v-row--rx" key={r.id}>
+    <SectionStage stageKey={tab}>
+    {!forceEmpty && rxLoading && rx.length === 0 ? (
+      <div className="panel" aria-busy="true" aria-live="polite" style={{ padding: 20 }}>
+        <span className="sr-only">Cargando recetas</span>
+        <div className="skeleton skeleton--subtitle" />
+        <div className="skeleton skeleton--card" style={{ marginTop: 12 }} />
+      </div>
+    ) : !forceEmpty && rxError && rx.length === 0 ? (
+      <div className="panel" role="alert">
+        <EmptyState icon="alert" title="No pudimos cargar las recetas" text="Revisá tu conexión e intentá nuevamente." action="Reintentar" onAction={refetchRx} />
+      </div>
+    ) : shown.length === 0 ? <div className="panel"><EmptyState icon="file" title="No hay recetas para mostrar." text="Las recetas que emitas o guardes como borrador aparecerán acá."/></div> : <>
+      <div className="v-rows" role="list">{paged.map((r) => { const p = getPatient(r.petId); return <article role="listitem" className="v-row v-row--rx" key={r.id}>
         <div className="v-row__time"><b>{r.id.slice(-4)}</b><span>{r.date}</span></div>
         <PetPhoto pet={p} size={44}/>
         <div className="v-row__main"><h3>{r.med} <small>{p.name}</small></h3><p>{r.dose} · {r.freq} · {r.duration}</p><small>Tutor: {p.tutor} · {vetName} · {r.id}</small></div>
         <span className="v-row__meta"/>
         <ConsultStatus status={r.status}/>
         <Button variant="secondary" onClick={() => go(r.status === "Borrador" ? `/vet/prescriptions/new?draft=${r.id}` : `/vet/prescriptions/${r.id}`)}>{r.status === "Borrador" ? "Continuar borrador" : "Ver receta"}</Button>
-      </article>; })}</div>}
+      </article>; })}</div>
+      {totalPages > 1 && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 14, gap: 12 }}>
+          <span style={{ fontSize: 13, color: "var(--ink-soft)", fontVariantNumeric: "tabular-nums" }}>
+            Página {page} de {totalPages} · {shown.length} recetas
+          </span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Button variant="secondary" disabled={page <= 1} onClick={() => setPage((v) => Math.max(1, v - 1))}>Anterior</Button>
+            <Button variant="secondary" disabled={page >= totalPages} onClick={() => setPage((v) => Math.min(totalPages, v + 1))}>Siguiente</Button>
+          </div>
+        </div>
+      )}
+    </>}
+    </SectionStage>
   </>;
 }
 
@@ -68,7 +99,61 @@ export function NewPrescription() {
   const [f, setF] = useState<Form>(draft ? { pet: draft.petId, med: draft.med, dose: draft.dose, freq: draft.freq, duration: draft.duration, notes: draft.notes } : { pet: params.get("pet") ?? "", med: "", dose: "", freq: "", duration: "", notes: "" });
   const [errors, setErrors] = useState<Partial<Record<keyof Form, string>>>({});
   const [confirm, setConfirm] = useState(false);
+  const [rxTemplates, setRxTemplates] = useState<ClinicalTemplateDTO[]>([]);
+  const [savingTpl, setSavingTpl] = useState(false);
   const availablePatients = patientsList;
+
+  useEffect(() => {
+    api.get<ApiResponse<ClinicalTemplateDTO[]>>("/api/templates?kind=PRESCRIPTION")
+      .then((res) => {
+        if (res.data?.success && Array.isArray(res.data.data)) {
+          setRxTemplates(res.data.data);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const applyRxTemplate = (tpl: ClinicalTemplateDTO) => {
+    const c = tpl.content || {};
+    setF((prev) => ({
+      ...prev,
+      med: typeof c.medication === "string" ? c.medication : prev.med,
+      dose: typeof c.dosage === "string" ? c.dosage : prev.dose,
+      freq: typeof c.frequency === "string" ? c.frequency : prev.freq,
+      duration: c.durationDays ? `${c.durationDays} días` : prev.duration,
+      notes: typeof c.indications === "string" ? c.indications : prev.notes,
+    }));
+    setErrors({});
+  };
+
+  const handleSaveRxTemplate = async () => {
+    if (!f.med.trim()) return;
+    setSavingTpl(true);
+    try {
+      const durationMatch = f.duration.match(/\d+/);
+      const durationDays = durationMatch ? parseInt(durationMatch[0], 10) : 7;
+      const res = await api.post<ApiResponse<ClinicalTemplateDTO>>("/api/templates", {
+        kind: "PRESCRIPTION",
+        title: f.med.trim(),
+        category: "Receta",
+        content: {
+          medication: f.med.trim(),
+          dosage: f.dose.trim(),
+          frequency: f.freq.trim(),
+          durationDays,
+          indications: f.notes.trim(),
+        },
+      });
+      if (res.data?.success && res.data.data) {
+        setRxTemplates((prev) => [res.data.data!, ...prev]);
+        notify("Plantilla de receta guardada.");
+      }
+    } catch {
+      notify("No se pudo guardar la plantilla.");
+    } finally {
+      setSavingTpl(false);
+    }
+  };
   const set = (k: keyof Form, v: string) => { setF({ ...f, [k]: v }); if (errors[k]) setErrors({ ...errors, [k]: undefined }); };
   const validate = (keys: (keyof Form)[]) => { const e: typeof errors = {}; keys.forEach((k) => { if (!f[k].trim()) e[k] = `Completá ${labels[k].toLowerCase()}.`; }); setErrors(e); return Object.keys(e).length === 0; };
 
@@ -80,7 +165,18 @@ export function NewPrescription() {
       return draftId;
     }
 
-    const consultationId = params.get("consultationId") ?? consults.find((c) => c.petId === f.pet && c.status !== "Cancelada")?.id;
+    const paramConsultationId = params.get("consultationId");
+    const isEligibleStatus = (status?: string) => status === "Activa" || status === "Finalizada";
+    const paramMatch = paramConsultationId
+      ? consults.find((c) => c.id === paramConsultationId)
+      : undefined;
+    const consultationId = paramConsultationId
+      ? paramMatch
+        ? isEligibleStatus(paramMatch.status)
+          ? paramMatch.id
+          : undefined
+        : paramConsultationId
+      : consults.find((c) => c.petId === f.pet && isEligibleStatus(c.status))?.id;
     if (!consultationId) {
       notify("Para emitir una receta oficial con QR necesitás una consulta activa o finalizada de este paciente.");
       return null;
@@ -125,6 +221,21 @@ export function NewPrescription() {
     <button className="back-link" onClick={() => go("/vet/prescriptions")}><Icon name="arrow" size={17}/> Volver a recetas</button>
     <PageHeader eyebrow="Indicación médica" title="Nueva receta" description="Completá los datos. Vas a poder revisarlos antes de emitir."/>
     <form className="panel v-form" noValidate onSubmit={(e) => { e.preventDefault(); if (validate(required)) setConfirm(true); }}>
+      {rxTemplates.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }} aria-label="Plantillas de receta">
+          {rxTemplates.map((tpl) => (
+            <button
+              key={tpl.id}
+              type="button"
+              className="v-chip"
+              style={{ cursor: "pointer", border: "1px solid var(--line, #e4dfd2)", background: "#faf8f5" }}
+              onClick={() => applyRxTemplate(tpl)}
+            >
+              + {tpl.title}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="v-form__grid">
         <label className={`v-field v-field--wide ${errors.pet ? "has-error" : ""}`}><span>Paciente</span>
           <select value={f.pet} onChange={(e) => set("pet", e.target.value)} aria-invalid={!!errors.pet}><option value="">Elegí un paciente</option>{availablePatients.map((x) => <option key={x.id} value={x.id}>{x.name} · {x.kind} · {x.tutor}</option>)}</select>{errors.pet && <em role="alert">{errors.pet}</em>}</label>
@@ -135,6 +246,11 @@ export function NewPrescription() {
       </div>
       <div className="v-form__bar">
         <Button variant="secondary" onClick={() => { if (validate(["pet", "med"])) { void save("Borrador"); notify("Borrador guardado en esta vista."); go("/vet/prescriptions"); } }}>Guardar borrador</Button>
+        {f.med.trim() && (
+          <Button variant="soft" disabled={savingTpl} onClick={handleSaveRxTemplate}>
+            {savingTpl ? "Guardando..." : "Guardar plantilla"}
+          </Button>
+        )}
         <Button type="submit" icon="check">Emitir receta</Button>
       </div>
     </form>

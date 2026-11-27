@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, ShieldAlert, CheckCircle, AlertTriangle } from 'lucide-react';
 import api from '../../services/api';
+import { useFocusTrap } from '../common/DialogOverlay';
 
 export interface FeatureFlagDTO {
   key: 'PAYMENTS_ENABLED' | 'TRIAGE_ACTIVE' | 'VIDEOCALLS_ENABLED' | 'NEW_REGISTRATIONS_ENABLED';
@@ -77,8 +78,15 @@ export function AdminFeatureFlagsModal({
     }
   };
 
+  const panelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(isOpen, panelRef, { onEscape: onClose });
+
   return (
     <div
+      className="hc-dialog-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
       style={{
         position: 'fixed',
         inset: 0,
@@ -92,6 +100,11 @@ export function AdminFeatureFlagsModal({
       }}
     >
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Kill Switches y Resiliencia"
+        className="hc-dialog-panel"
         style={{
           backgroundColor: '#fffbef',
           border: '1px solid #e4dfd2',
@@ -237,7 +250,7 @@ export function AdminFeatureFlagsModal({
                         cursor: isBusy ? 'not-allowed' : 'pointer',
                         border: 'none',
                         color: '#ffffff',
-                        backgroundColor: flag.enabled ? '#ae4d45' : '#609f9c',
+                        backgroundColor: flag.enabled ? '#ae4d45' : '#315f5d',
                         transition: 'opacity 0.2s, background-color 0.2s',
                         opacity: isBusy ? 0.7 : 1,
                         flexShrink: 0,

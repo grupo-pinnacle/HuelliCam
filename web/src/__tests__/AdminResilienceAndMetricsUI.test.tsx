@@ -63,13 +63,14 @@ describe('FEATURE-ADMIN-OPS-01: UI Executive Metrics & Kill Switches Modal', () 
     expect(onToggleMock).toHaveBeenCalledWith('PAYMENTS_ENABLED', false, expect.any(String));
   });
 
-  it('AdminApp.tsx debe conectar AdminExecutiveMetrics, AdminFeatureFlagsModal y el endpoint /revoke-sessions', () => {
+  it('AdminApp.tsx debe conectar AdminExecutiveMetrics, AdminFeatureFlagsModal y el endpoint /ban', () => {
     const adminAppPath = path.resolve(__dirname, '../pages/AdminApp.tsx');
     const adminAppCode = fs.readFileSync(adminAppPath, 'utf-8');
 
     expect(adminAppCode).toMatch(/AdminExecutiveMetrics/);
     expect(adminAppCode).toMatch(/AdminFeatureFlagsModal/);
-    expect(adminAppCode).toMatch(/revoke-sessions/);
+    expect(adminAppCode).toMatch(/\/api\/admin\/users\/.*\/ban/);
+    expect(adminAppCode).not.toMatch(/revoke-sessions/);
   });
 
   it('AdminExecutiveMetrics debe mostrar la tarifa Marca Blanca activa y permitir actualizar arancel base y take-rate', async () => {

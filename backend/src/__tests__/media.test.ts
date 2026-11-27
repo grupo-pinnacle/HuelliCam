@@ -22,6 +22,7 @@ jest.mock('../lib/prisma', () => ({
       create: jest.fn(),
       findFirst: jest.fn(),
     },
+    $transaction: jest.fn((callback: (tx: unknown) => unknown) => callback(prisma)),
   },
 }));
 

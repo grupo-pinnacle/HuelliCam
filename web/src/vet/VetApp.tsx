@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Drawer } from "vaul";
 import { useAuth } from "../context/AuthContext";
 import ClientScopedStyle from "../styles/ClientScopedStyle";
 import "./vet.css";
 import { Button, EmptyState, Icon, Logo, PageHeader, go, type IconName } from "../shared";
+import { useIsMobileViewport } from "../lib/useIsMobileViewport";
+import { formatBadgeCount, formatPluralAR, getInitials } from "../lib/formatters";
 import { getPatient, triageMeta, type QueueItem, type Triage } from "./data";
 import { ConsultStatus, PetPhoto, Sheet, TriageBadge, VetProvider, WaitTimer, useVet, type Avail } from "./vetkit";
 import { ConsultationDetail, ConsultationsPage } from "./Consultations";
@@ -10,7 +13,7 @@ import { PatientDetail, PatientsPage } from "./Patients";
 import { AppointmentsPage, AvailabilityPage } from "./Agenda";
 import { MessagesPage } from "./Messages";
 import { NewPrescription, PrescriptionDetail, PrescriptionsPage } from "./Prescriptions";
-import { FollowUpsPage, ProfilePage, SettingsPage } from "./Admin";
+import { FollowUpsPage, ProfilePage, SettingsPage, VetEarningsPage } from "./Admin";
 
 const clinical: { label: string; path: string; icon: IconName }[] = [
   { label: "Inicio", path: "/vet/dashboard", icon: "home" },
@@ -25,6 +28,7 @@ const clinical: { label: string; path: string; icon: IconName }[] = [
 const admin: typeof clinical = [
   { label: "Mi perfil profesional", path: "/vet/profile", icon: "user" },
   { label: "Disponibilidad", path: "/vet/availability", icon: "clock" },
+  { label: "Honorarios", path: "/vet/earnings", icon: "shield" },
   { label: "Configuración", path: "/vet/settings", icon: "settings" },
 ];
 
@@ -38,47 +42,120 @@ const availSlug = (a: Avail) => (a === "Disponible" ? "on" : a === "En consulta"
 function AvailabilityControl() {
   const { avail, requestAvail } = useVet();
   const [open, setOpen] = useState(false);
+  const isMobile = useIsMobileViewport();
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!open) return;
+    if (!open || isMobile) return;
     const close = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
     const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
     document.addEventListener("mousedown", close);
     document.addEventListener("keydown", esc);
     return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", esc); };
-  }, [open]);
+  }, [open, isMobile]);
   const current = availOptions.find((o) => o.value === avail)!;
+  const optionsBody = (
+    <>
+      <span className="v-avail__grip" aria-hidden="true"/>
+      <span className="eyebrow">Estado profesional</span>
+      {availOptions.map((o) => <button key={o.value} role="radio" aria-checked={avail === o.value} className={`v-avail__opt v-avail--${availSlug(o.value)} ${avail === o.value ? "is-selected" : ""}`} onClick={() => { requestAvail(o.value); setOpen(false); }}>
+        <span className="v-avail__dot"><Icon name={o.icon} size={12}/></span><span><b>{o.value}</b><small>{o.text}</small></span>{avail === o.value && <Icon name="check" size={16}/>}
+      </button>)}
+    </>
+  );
   return <div className="v-avail" ref={ref}>
     <button className={`v-avail__btn v-avail--${availSlug(avail)}`} onClick={() => setOpen(!open)} aria-haspopup="true" aria-expanded={open}>
       <span className="v-avail__dot"><Icon name={current.icon} size={11}/></span>
       <span><small>Mi estado</small><b>{avail}</b></span>
       <Icon name="chevron" size={14}/>
     </button>
-    {open && <>
-      <button className="v-avail__scrim" aria-label="Cerrar" onClick={() => setOpen(false)}/>
-      <div className="v-avail__pop" role="radiogroup" aria-label="Estado de disponibilidad">
-        <span className="v-avail__grip" aria-hidden="true"/>
-        <span className="eyebrow">Estado profesional</span>
-        {availOptions.map((o) => <button key={o.value} role="radio" aria-checked={avail === o.value} className={`v-avail__opt v-avail--${availSlug(o.value)} ${avail === o.value ? "is-selected" : ""}`} onClick={() => { requestAvail(o.value); setOpen(false); }}>
-          <span className="v-avail__dot"><Icon name={o.icon} size={12}/></span><span><b>{o.value}</b><small>{o.text}</small></span>{avail === o.value && <Icon name="check" size={16}/>}
-        </button>)}
-      </div>
-    </>}
+    {open && (isMobile ? (
+      <Drawer.Root open={open} onOpenChange={setOpen}>
+        <Drawer.Portal>
+          <Drawer.Overlay className="v-avail__scrim" style={{ position: "fixed", inset: 0, zIndex: 99 }} />
+          <Drawer.Content className="v-avail__pop" role="radiogroup" aria-label="Estado de disponibilidad" aria-describedby={undefined} style={{ zIndex: 100 }}>
+            <Drawer.Title className="sr-only">Estado profesional</Drawer.Title>
+            {optionsBody}
+          </Drawer.Content>
+        </Drawer.Portal>
+      </Drawer.Root>
+    ) : (
+      <>
+        <button className="v-avail__scrim" aria-label="Cerrar" onClick={() => setOpen(false)}/>
+        <div className="v-avail__pop" role="radiogroup" aria-label="Estado de disponibilidad">
+          {optionsBody}
+        </div>
+      </>
+    ))}
   </div>;
 }
 
 function NotificationsPop() {
   const { queue } = useVet();
   const [open, setOpen] = useState(false);
-  const items: [IconName, string, string][] = queue.map((q): [IconName, string, string] => [
+  const [dbNotifs, setDbNotifs] = useState<Array<{ id: string; title: string; body: string; isRead: boolean }>>([]);
+  const isMobile = useIsMobileViewport();
+
+  useEffect(() => {
+    let active = true;
+    import("../services/api").then(({ default: apiClient }) => {
+      apiClient.get("/api/notifications").then((res) => {
+        if (!active) return;
+        if (res.data?.success && Array.isArray(res.data?.data)) {
+          setDbNotifs(res.data.data.slice(0, 12));
+        }
+      }).catch(() => {});
+    });
+    return () => { active = false; };
+  }, [open]);
+
+  const queueItems: [IconName, string, string][] = queue.map((q): [IconName, string, string] => [
     q.triage === "Crítico" ? "alert" : "calendar",
     `Caso en espera: ${getPatient(q.petId).name} (${q.triage})`,
     "En sala de espera",
   ]);
+  const notifItems: [IconName, string, string][] = dbNotifs.map((n): [IconName, string, string] => [
+    n.isRead ? "bell" : "alert",
+    n.title,
+    n.body,
+  ]);
+  const items = [...queueItems, ...notifItems];
+  const hasUnread = queueItems.length > 0 || dbNotifs.some((n) => !n.isRead);
+
+  const handleToggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next && dbNotifs.some((n) => !n.isRead)) {
+      import("../services/api").then(({ default: apiClient }) => {
+        apiClient.patch("/api/notifications/read-all").then(() => {
+          setDbNotifs((prev) => prev.map((n) => ({ ...n, isRead: true })));
+        }).catch(() => {});
+      });
+    }
+  };
+
+  const listBody = (
+    <>
+      <span className="v-avail__grip" aria-hidden="true"/>
+      <span className="eyebrow">Notificaciones</span>
+      {items.length === 0 ? <div style={{ padding: "14px 16px", color: "var(--ink-soft)", fontSize: 13 }}>No tenés notificaciones pendientes.</div> : items.map((n, idx) => <div key={`${n[1]}-${idx}`} className="v-notif__item"><Icon name={n[0]} size={18}/><div><b>{n[1]}</b><small>{n[2]}</small></div></div>)}
+    </>
+  );
 
   return <div className="v-notif">
-    <button className={`icon-button ${items.length > 0 ? "has-dot" : ""}`} onClick={() => setOpen(!open)} aria-label="Notificaciones" aria-expanded={open}><Icon name="bell"/></button>
-    {open && <><button className="v-avail__scrim" aria-label="Cerrar" onClick={() => setOpen(false)}/><div className="v-avail__pop v-notif__pop"><span className="v-avail__grip" aria-hidden="true"/><span className="eyebrow">Notificaciones</span>{items.length === 0 ? <div style={{ padding: "14px 16px", color: "var(--ink-soft)", fontSize: 13 }}>No tenés notificaciones pendientes.</div> : items.map((n) => <div key={n[1]} className="v-notif__item"><Icon name={n[0]} size={18}/><div><b>{n[1]}</b><small>{n[2]}</small></div></div>)}</div></>}
+    <button className={`icon-button ${hasUnread ? "has-dot" : ""}`} onClick={handleToggle} aria-label="Notificaciones" aria-expanded={open}><Icon name="bell"/></button>
+    {open && (isMobile ? (
+      <Drawer.Root open={open} onOpenChange={setOpen}>
+        <Drawer.Portal>
+          <Drawer.Overlay className="v-avail__scrim" style={{ position: "fixed", inset: 0, zIndex: 99 }} />
+          <Drawer.Content className="v-avail__pop v-notif__pop" aria-describedby={undefined} style={{ zIndex: 100 }}>
+            <Drawer.Title className="sr-only">Notificaciones</Drawer.Title>
+            {listBody}
+          </Drawer.Content>
+        </Drawer.Portal>
+      </Drawer.Root>
+    ) : (
+      <><button className="v-avail__scrim" aria-label="Cerrar" onClick={() => setOpen(false)}/><div className="v-avail__pop v-notif__pop">{listBody}</div></>
+    ))}
   </div>;
 }
 
@@ -87,7 +164,9 @@ function VetShell({ path, children }: { path: string; children: ReactNode }) {
   const { user, logout } = useAuth();
   const [menu, setMenu] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const initials = user ? `${user.firstName?.[0] || ""}${user.lastName?.[0] || ""}`.toUpperCase() || "VC" : "VC";
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const fullName = user ? `${user.firstName || ""} ${user.lastName || ""}`.trim() : "";
+  const initials = getInitials(fullName, "VC");
   const displayName = user ? `Dr. ${user.firstName || ""} ${user.lastName || ""}`.trim() : "Profesional Veterinario";
   const sub = user?.licenseNumber ? `Clínica general · MP ${user.licenseNumber}` : (user?.role === "VET" ? "Clínica general" : "Veterinario");
   const shortName = user?.lastName ? `Dr. ${user.lastName}` : (user?.firstName ? `Dr. ${user.firstName}` : "Profesional");
@@ -100,8 +179,23 @@ function VetShell({ path, children }: { path: string; children: ReactNode }) {
   const active = (p: string) => path.startsWith(p) || (p === "/vet/dashboard" && path === "/vet");
   const item = (n: typeof clinical[number]) => { const b = badge(n.path); return <button key={n.path} className={`nav-item ${active(n.path) ? "is-active" : ""}`} aria-current={active(n.path) ? "page" : undefined} onClick={() => { go(n.path); setMenu(false); }}><Icon name={n.icon}/><span>{n.label}</span>{b > 0 && <small aria-label={`${b} pendientes`}>{b}</small>}</button>; };
   const mobile = [clinical[0], clinical[1], clinical[2], clinical[5], clinical[4]];
-  return <div className="app-shell v-shell">
-    <aside className={`sidebar ${menu ? "is-open" : ""}`}>
+  const isMessagesPage = path.startsWith("/vet/messages");
+  return <div className={`app-shell v-shell ${isMessagesPage ? "app-shell--messages" : ""}`}>
+    <aside
+      className={`sidebar ${menu ? "is-open" : ""}`}
+      onTouchStart={(e) => {
+        if (!menu || e.touches.length !== 1) return;
+        touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      }}
+      onTouchEnd={(e) => {
+        const start = touchStartRef.current;
+        touchStartRef.current = null;
+        if (!menu || !start || e.changedTouches.length !== 1) return;
+        const dx = e.changedTouches[0].clientX - start.x;
+        const dy = e.changedTouches[0].clientY - start.y;
+        if (dx < -56 && Math.abs(dx) > Math.abs(dy)) setMenu(false);
+      }}
+    >
       <div className="sidebar__head"><Logo to="/vet/dashboard"/><Button variant="icon" icon="close" onClick={() => setMenu(false)} ariaLabel="Cerrar menú" className="sidebar__close"/></div>
       <button
         type="button"
@@ -130,14 +224,14 @@ function VetShell({ path, children }: { path: string; children: ReactNode }) {
       )}
     </aside>
     {menu && <button className="scrim" onClick={() => setMenu(false)} aria-label="Cerrar menú"/>}
-    <div className="app-main">
+    <div className={`app-main ${isMessagesPage ? "app-main--messages" : ""}`}>
       <header className="topbar v-topbar">
         <div className="topbar__mobile"><Button variant="icon" icon="menu" onClick={() => setMenu(true)} ariaLabel="Abrir menú"/><Logo to="/vet/dashboard"/></div>
         <div className="v-topbar__pro"><b>Consola profesional</b><span>{topDate}</span></div>
         <div className="topbar__spacer"/>
         <AvailabilityControl/>
         <NotificationsPop/>
-        <button className="icon-button v-topbar__msgs" onClick={() => go("/vet/messages")} aria-label={`Mensajes${unread ? `, ${unread} sin leer` : ""}`}><Icon name="message"/>{unread > 0 && <b className="v-count">{unread}</b>}</button>
+        <button className="icon-button v-topbar__msgs" onClick={() => go("/vet/messages")} aria-label={`Mensajes${unread ? `, ${unread} sin leer` : ""}`}><Icon name="message"/>{unread > 0 && <b className="v-count">{formatBadgeCount(unread)}</b>}</button>
         <div className="user-menu-wrapper">
           <button
             className="user-menu"
@@ -198,9 +292,9 @@ function VetShell({ path, children }: { path: string; children: ReactNode }) {
           )}
         </div>
       </header>
-      <main className="content content--wide">{children}</main>
+      <main className={isMessagesPage ? "content content--messages" : "content content--wide"}>{children}</main>
     </div>
-    <nav className="mobile-nav" aria-label="Navegación móvil">
+    <nav className={`mobile-nav ${isMessagesPage ? "mobile-nav--messages" : ""}`} aria-label="Navegación móvil">
       {mobile.map((n) => { const b = badge(n.path); return <button key={n.path} className={active(n.path) ? "is-active" : ""} aria-current={active(n.path) ? "page" : undefined} onClick={() => go(n.path)}><Icon name={n.icon}/><span>{n.label === "Cola de atención" ? "Cola" : n.label}</span>{b > 0 && <small>{b}</small>}</button>; })}
     </nav>
   </div>;
@@ -228,7 +322,7 @@ export function QueueRow({ item }: { item: QueueItem }) {
       <p className="v-queue-row__tutor">Tutor: {pet.tutor} · Solicitó a las {item.requested}</p>
     </div>
     <div className="v-queue-row__triage"><span className="v-label">Triage</span><TriageBadge level={item.triage}/><small>{triageMeta[item.triage].hint}</small></div>
-    <div className="v-queue-row__wait"><span className="v-label">Espera</span><WaitTimer base={item.wait}/></div>
+    <div className="v-queue-row__wait"><span className="v-label">Espera</span><WaitTimer base={item.wait} createdAt={item.createdAt}/></div>
     <div className="v-queue-row__cta">
       <Button onClick={() => setReviewing(true)} disabled={blocked}>Revisar solicitud</Button>
       {blocked && <small>Pasá a Disponible para aceptar.</small>}
@@ -242,7 +336,7 @@ export function QueueRow({ item }: { item: QueueItem }) {
       <dl className="v-kv v-kv--stack">
         <div><dt>Motivo informado</dt><dd>{item.reason}</dd></div>
         <div><dt>Contexto enviado por el tutor</dt><dd>{item.note}</dd></div>
-        <div><dt>Solicitud</dt><dd>{item.requested} · <WaitTimer base={item.wait}/></dd></div>
+        <div><dt>Solicitud</dt><dd>{item.requested} · <WaitTimer base={item.wait} createdAt={item.createdAt}/></dd></div>
         <div><dt>Alergias registradas</dt><dd>{pet.allergies.join(" · ")}</dd></div>
         <div><dt>Medicación actual</dt><dd>{pet.meds.join(" · ")}</dd></div>
         <div><dt>Antecedentes relevantes</dt><dd>{pet.history.join(" · ")}</dd></div>
@@ -254,30 +348,60 @@ export function QueueRow({ item }: { item: QueueItem }) {
 const triageSlug = (t: Triage) => t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
 function sortedQueue(q: QueueItem[]) {
-  return [...q].sort((a, b) => triageMeta[a.triage].rank - triageMeta[b.triage].rank || b.wait - a.wait);
+  return [...q].sort((a, b) => {
+    const rankDiff = triageMeta[a.triage].rank - triageMeta[b.triage].rank;
+    if (rankDiff !== 0) return rankDiff;
+    const aMs = a.createdAt ? new Date(a.createdAt).getTime() : NaN;
+    const bMs = b.createdAt ? new Date(b.createdAt).getTime() : NaN;
+    if (Number.isFinite(aMs) && Number.isFinite(bMs)) return aMs - bMs;
+    return b.wait - a.wait;
+  });
 }
 
 function QueueList() {
-  const { queue } = useVet();
+  const { queue, consultsLoading, consultsError, refetchConsults, forceEmpty } = useVet();
+  if (!forceEmpty && consultsLoading && queue.length === 0) {
+    return (
+      <div className="panel" aria-busy="true" aria-live="polite" style={{ padding: 20 }}>
+        <span className="sr-only">Cargando cola de atención</span>
+        <div className="skeleton skeleton--subtitle" />
+        <div className="skeleton skeleton--card" style={{ marginTop: 12 }} />
+      </div>
+    );
+  }
+  if (!forceEmpty && consultsError) {
+    return (
+      <div className="panel" data-testid="vet-consultations-error-state">
+        <EmptyState
+          icon="alert"
+          title="No pudimos cargar las consultas"
+          text="Revisá tu conexión e intentá nuevamente."
+          action="Reintentar"
+          onAction={refetchConsults}
+        />
+      </div>
+    );
+  }
   if (!queue.length) return <div className="panel"><EmptyState icon="users" title="No hay pacientes en espera" text="Cuando un tutor solicite atención, vas a verlo acá ordenado por prioridad."/></div>;
   return <div className="v-queue" role="list" aria-label="Pacientes en espera, ordenados por prioridad">{sortedQueue(queue).map((q) => <div role="listitem" key={q.id}><QueueRow item={q}/></div>)}</div>;
 }
 
 function Dashboard() {
-  const { avail, requestAvail, queue, consults, unread, threads } = useVet();
+  const { avail, requestAvail, queue, consults, unread, threads, consultsError, refetchConsults, forceEmpty } = useVet();
   const today = consults.filter((c) => c.day === "Hoy");
   const next = consults.filter((c) => c.day === "Hoy" && c.status === "Próxima").sort((a, b) => a.time.localeCompare(b.time))[0];
   const done = today.filter((c) => c.status === "Finalizada").length;
   const active = consults.filter((c) => c.status === "Activa");
   const critical = queue.filter((q) => q.triage === "Crítico").length;
+  const unreadThreads = threads.filter((t) => t.unread).length;
   const upcoming = consults.filter((c) => c.day === "Hoy" && c.status === "Próxima").sort((a, b) => a.time.localeCompare(b.time));
   const heading = avail === "Disponible" ? "Disponible para consultas" : avail === "En consulta" ? "En consulta" : "No disponible para consultas";
   const metrics: { label: string; value: string; sub: string; icon: IconName; to: string; alert?: boolean }[] = [
-    { label: "Consultas de hoy", value: String(today.length), sub: `${active.length} activa${active.length === 1 ? "" : "s"}`, icon: "video", to: "/vet/consultations" },
-    { label: "En espera", value: String(queue.length), sub: critical ? `${critical} crítico` : "Sin casos críticos", icon: critical ? "alert" : "users", to: "/vet/queue", alert: critical > 0 },
+    { label: "Consultas de hoy", value: String(today.length), sub: formatPluralAR(active.length, "activa", "activas"), icon: "video", to: "/vet/consultations" },
+    { label: "En espera", value: String(queue.length), sub: critical ? formatPluralAR(critical, "crítico", "críticos") : "Sin casos críticos", icon: critical ? "alert" : "users", to: "/vet/queue", alert: critical > 0 },
     { label: "Próxima consulta", value: next?.time ?? "—", sub: next ? getPatient(next.petId).name : "Sin próximas", icon: "clock", to: "/vet/appointments" },
     { label: "Finalizadas", value: String(done), sub: "hoy", icon: "check", to: "/vet/consultations" },
-    { label: "Mensajes pendientes", value: String(unread), sub: unread ? `${threads.filter((t) => t.unread).length} conversaciones` : "Al día", icon: "message", to: "/vet/messages" },
+    { label: "Mensajes pendientes", value: String(unread), sub: unread ? formatPluralAR(unreadThreads, "conversación", "conversaciones") : "Al día", icon: "message", to: "/vet/messages" },
   ];
   const { user } = useAuth();
   const vetName = user ? (user.lastName ? `Dr. ${user.firstName} ${user.lastName}` : `Dr. ${user.firstName}`) : "Colega";
@@ -297,7 +421,13 @@ function Dashboard() {
     <div className="v-dash">
       <section className="v-dash__active" aria-labelledby="active-h">
         <div className="v-head"><h2 id="active-h">Consultas activas</h2></div>
-        {active.length ? active.map((c) => { const p = getPatient(c.petId); return <article className="v-active" key={c.id}>
+        {!forceEmpty && consultsError ? (
+          <div className="panel v-mini-empty" role="alert">
+            <Icon name="alert" size={20}/>
+            <p>No pudimos cargar las consultas activas.</p>
+            <Button variant="secondary" onClick={refetchConsults}>Reintentar</Button>
+          </div>
+        ) : active.length ? active.map((c) => { const p = getPatient(c.petId); return <article className="v-active" key={c.id}>
           <PetPhoto pet={p} size={48}/><div><h3>{p.name} <ConsultStatus status="Activa"/></h3><p>{c.reason} · {c.mode} desde las {c.time}</p><small>Tutor: {p.tutor}</small></div>
           <div className="v-active__actions"><Button onClick={() => go(`/vet/consultations/${c.id}`)}>Abrir consulta</Button>{c.mode === "Videoconsulta" && <Button variant="secondary" icon="video" onClick={() => go(`/call/${c.id}`)}>Videollamada</Button>}</div>
         </article>; }) : <div className="panel v-mini-empty"><Icon name="video" size={20}/><p>No tenés consultas activas. Aceptá un paciente de la cola para comenzar.</p></div>}
@@ -308,7 +438,7 @@ function Dashboard() {
       </section>
       <section className="v-dash__msgs" aria-labelledby="msgs-h">
         <div className="v-head"><h2 id="msgs-h">Mensajes sin leer</h2><button onClick={() => go("/vet/messages")}>Abrir <Icon name="arrow" size={15}/></button></div>
-        <div className="panel v-list">{threads.filter((t) => t.unread).length ? threads.filter((t) => t.unread).map((t) => { const p = getPatient(t.petId); return <button key={t.id} onClick={() => go("/vet/messages")}><PetPhoto pet={p} size={34}/><span><b>{p.tutor} · {p.name}</b><small>{t.last}</small></span><em className="unread">{t.unread}</em></button>; }) : <p className="v-mini-empty">No tenés conversaciones pendientes.</p>}</div>
+        <div className="panel v-list">{threads.filter((t) => t.unread).length ? threads.filter((t) => t.unread).map((t) => { const p = getPatient(t.petId); return <button key={t.id} onClick={() => go("/vet/messages")}><PetPhoto pet={p} size={34}/><span><b>{p.tutor} · {p.name}</b><small>{t.last}</small></span><em className="unread">{formatBadgeCount(t.unread)}</em></button>; }) : <p className="v-mini-empty">No tenés conversaciones pendientes.</p>}</div>
       </section>
       <section className="v-dash__agenda" aria-labelledby="ag-h">
         <div className="v-head"><h2 id="ag-h">Próximas hoy</h2><button onClick={() => go("/vet/appointments")}>Agenda <Icon name="arrow" size={15}/></button></div>
@@ -348,6 +478,7 @@ function Router({ path }: { path: string }) {
     case "prescriptions": return id === "new" ? <NewPrescription/> : id ? <PrescriptionDetail id={id}/> : <PrescriptionsPage/>;
     case "follow-ups": return <FollowUpsPage/>;
     case "profile": return <ProfilePage/>;
+    case "earnings": return <VetEarningsPage/>;
     case "settings": return <SettingsPage/>;
     default: return <div className="panel"><EmptyState icon="paw" title="No encontramos esta página" text="Volvé a la consola para seguir con tu trabajo clínico."/><div className="v-retry"><Button onClick={() => go("/vet/dashboard")}>Ir al inicio</Button></div></div>;
   }
@@ -364,7 +495,7 @@ export default function VetApp({ path }: { path: string }) {
   return <VetProvider forceEmpty={state === "empty"} key={state ?? "ok"}>
     <ClientScopedStyle />
     <VetShell path={path}>
-      {state === "loading" ? <Loading/> : state === "error" ? <div className="panel"><EmptyState icon="alert" title="No pudimos cargar esta información" text="Revisá tu conexión e intentá nuevamente."/><div className="v-retry"><Button variant="secondary" onClick={() => go(path)}>Reintentar</Button></div></div> : <Router path={path}/>}
+      {state === "loading" ? <Loading/> : state === "error" ? <div className="panel"><EmptyState icon="alert" title="No pudimos cargar esta información" text="Revisá tu conexión e intentá nuevamente."/><div className="v-retry"><Button variant="secondary" onClick={() => go(path)}>Reintentar</Button></div></div> : <div key={path} className="hc-page-stage" style={path.startsWith("/vet/messages") ? { display: "flex", flex: 1, minHeight: 0, width: "100%" } : undefined}><Router path={path}/></div>}
     </VetShell>
   </VetProvider>;
 }

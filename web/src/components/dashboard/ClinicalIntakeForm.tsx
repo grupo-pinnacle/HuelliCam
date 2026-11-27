@@ -226,7 +226,7 @@ export const ClinicalIntakeForm: React.FC<ClinicalIntakeFormProps> = ({
         <div
           role="alert"
           data-testid="intake-emergency-banner"
-          className="p-3.5 bg-rose-50 border border-rose-300 rounded-xl flex items-start gap-3 text-xs text-rose-900 animate-pulse"
+          className="p-3.5 bg-rose-50 border border-rose-300 rounded-xl flex items-start gap-3 text-xs text-rose-900"
         >
           <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" aria-hidden="true" />
           <div className="space-y-1">

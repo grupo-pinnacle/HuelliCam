@@ -12,7 +12,7 @@ flowchart TD
     Users --> Proxy["Reverse Proxy TLS (Traefik / Coolify)\nHTTPS + WSS"]
     Proxy --> Backend["Backend API (Node.js 20 / Express 5)\nPuerto 3001 + Socket.io"]
     Backend --> Postgres[("PostgreSQL 16 (Supabase / VPS)\nPrisma ORM 6")]
-    Backend --> Redis[("Redis 7\nSocket.io Adapter")]
+    Backend --> Redis[("Redis 7 (requerido en producción)\nSocket.io Adapter, presencia, rate limit\ny deadlines de desconexión del vet")]
     Backend --> LiveKit["LiveKit Cloud SFU\nWebRTC 720p"]
     Backend --> Storage["Amazon S3 / Disco Persistente\nArchivos Clínicos"]
     Backend --> Resend["Resend API\nOTP Reset, Recetas y Scheduler"]
@@ -44,12 +44,14 @@ FRONTEND_URL="https://app.huellicam.com.ar"
 CLIENT_URL="https://app.huellicam.com.ar"
 COOKIE_SECURE=true
 COOKIE_SAME_SITE=none
+# COOKIE_DOMAIN=.huellicam.com.ar   # opcional: solo si web y API comparten el dominio raíz
 
 LIVEKIT_URL="wss://huellicam.livekit.cloud"
 LIVEKIT_API_KEY="..."
 LIVEKIT_API_SECRET="..."
 
 STORAGE_DRIVER="s3" # o "local" con volumen persistente
+# UPLOAD_DIR="./uploads"            # solo con STORAGE_DRIVER=local; montar un volumen persistente
 AWS_REGION="us-east-1"
 AWS_BUCKET_NAME="huellicam-media-prod"
 AWS_ACCESS_KEY_ID="..."
@@ -58,17 +60,60 @@ AWS_SECRET_ACCESS_KEY="..."
 RESEND_API_KEY="re_..."
 EMAIL_FROM="Huellicam <notificaciones@tudominio.com>"
 ENABLE_EMAIL_SCHEDULER="true"
+
+# Opcionales de ajuste: DB_POOL_LIMIT, DATABASE_CONNECTION_LIMIT, DB_POOL_TIMEOUT, DISCONNECT_DEBOUNCE_MS (ms, default 5000)
 ```
 
+> **`REDIS_URL` es obligatoria en producción.** Si falta o no es una URL `redis://` / `rediss://` válida, `backend/src/config/env.ts` aborta el arranque; si Redis no responde al iniciar, `backend/src/server.ts` ejecuta `gracefulShutdown('REDIS_CONNECTION_FAILED', 1)`. Ver la sección 2.4.
+
 ### 2.3 Comandos de Despliegue del Backend
+El repositorio es un monorepo con un único `package-lock.json` en la raíz, por lo que la instalación se ejecuta desde la raíz (igual que `backend/Dockerfile` y `.github/workflows/ci.yml`):
+
 ```bash
-cd backend
 npm ci
-npx prisma generate
-npx prisma migrate deploy
-npm run build
-npm start
+npx prisma generate --schema backend/prisma/schema.prisma
+npx prisma migrate deploy --schema backend/prisma/schema.prisma
+npm run build -w backend
+npm start -w backend
 ```
+
+`prisma migrate deploy` requiere `DIRECT_URL` (conexión directa, sin PgBouncer) y aplica, entre otras, la migración idempotente `20261126000000_sync_consultation_lifecycle_schema`:
+- En una base nueva crea las columnas de ciclo de vida de `consultations`, `consultation_audit_log` y `password_reset_tokens`, que antes solo existían en `schema.prisma`.
+- En una base aprovisionada con `prisma db push` es un no-op, salvo que aún tenga los 6 literales legados de `ConsultationStatus`: en ese caso normaliza las filas (`vet_id` nulo → `WAITING`, si no → `ACTIVE`, con una fila `LEGACY_STATUS_BACKFILL` en `consultation_audit_log`) y recrea el enum con los 4 estados canónicos.
+- Es seguro reejecutarla. Hacer un backup (snapshot) de PostgreSQL antes del primer `migrate deploy` en producción.
+
+Si la base de producción fue creada con `prisma db push` y nunca tuvo historial de migraciones, `migrate deploy` falla con `P3005`. Resolver una sola vez marcando como aplicadas las migraciones anteriores a la nueva y luego desplegando:
+
+```bash
+npx prisma migrate resolve --applied 20260915000000_init --schema backend/prisma/schema.prisma
+npx prisma migrate resolve --applied 20261113000000_pet_birthdate_and_email_dispatch_logs --schema backend/prisma/schema.prisma
+npx prisma migrate resolve --applied 20261124000000_add_call_telemetry --schema backend/prisma/schema.prisma
+npx prisma migrate deploy --schema backend/prisma/schema.prisma
+```
+
+Solo marcar como aplicadas las migraciones cuyo contenido ya está realmente en la base (por ejemplo, `calls.livekit_*` de `add_call_telemetry`); ante la duda, comparar con `npx prisma migrate diff --from-url "$DIRECT_URL" --to-schema-datamodel backend/prisma/schema.prisma`.
+
+### 2.4 Redis en Producción
+Redis sostiene el adapter de Socket.io, la presencia distribuida, el rate limiting y los deadlines persistidos de 3 minutos del `VetDisconnectTracker` (ZSET). Requisitos:
+- Política `maxmemory-policy noeviction` y persistencia AOF (`appendonly yes`): una evicción o un reinicio sin disco perdería los deadlines.
+- Contraseña obligatoria y red privada o TLS (`rediss://`).
+
+**Opción A — Redis en el mismo VPS** con [docker-compose.redis.yml](../docker-compose.redis.yml) (ya trae `noeviction`, AOF, contraseña y healthcheck):
+```bash
+REDIS_PASSWORD="<secreto-largo>" docker compose -f docker-compose.redis.yml up -d
+# REDIS_URL del backend (misma red Docker / servicio de Coolify):
+# redis://default:<secreto-largo>@redis:6379
+```
+
+**Opción B — Redis administrado** (Upstash u otro): usar la URL `rediss://default:<password>@<host>:6379` y verificar en el panel que la política de evicción sea `noeviction`.
+
+**Checklist de activación (cuando exista el Redis):**
+1. Levantar Redis y comprobar `redis-cli -u "$REDIS_URL" ping` → `PONG`.
+2. Cargar `REDIS_URL` en las variables del backend (Coolify) y redeployar.
+3. Verificar `GET /health` → `200` con `"redis": "connected"` (en producción responde `503` y `"status": "degraded"` si Redis no contesta el `PING`).
+4. Verificar en los logs el arranque sin `REDIS_CONNECTION_FAILED`.
+5. Con dos dispositivos: iniciar sesión en el segundo y comprobar que el primero recibe `auth:session_terminated`.
+6. Si se escala a más de una réplica del backend, Redis ya es el estado compartido (adapter + presencia + deadlines); no se requiere configuración adicional.
 
 > **Nota sobre correos y QR públicos:** El scheduler automático (`NotificationsScheduler`) se activa por defecto cuando `NODE_ENV=production` (salvo `ENABLE_EMAIL_SCHEDULER=false`). Para envíos productivos a cualquier destinatario en Resend, configurar un dominio verificado (SPF/DKIM/DMARC) en `EMAIL_FROM` y apuntar `CLIENT_URL` / `FRONTEND_URL` al dominio web final para que los códigos QR de recetas apunten a `https://app.tudominio.com/prescriptions/:id`.
 
@@ -80,6 +125,8 @@ El repositorio incluye [vercel.json](../vercel.json) en la raíz del monorepo:
 - **Build Command:** `npm run build -w web`
 - **Output Directory:** `web/dist`
 - **Rewrites:** Redirección `/(.*) -> /web/dist/index.html` para soportar rutas SPA de React Router.
+
+Si el proyecto de Vercel se configura con **Root Directory = `web`**, aplica en cambio [web/vercel.json](../web/vercel.json) (`buildCommand: "npm run build"`, `outputDirectory: "dist"`, `installCommand: "npm install"`, rewrite `/(.*) -> /index.html`). Usar una sola de las dos configuraciones por proyecto.
 
 ### Variables de Entorno en Vercel
 | Variable | Ejemplo Producción | Descripción |
@@ -127,4 +174,8 @@ Antes de promover un cambio a producción, el pipeline de CI ([.github/workflows
 1. `npx prisma validate` y `npx prisma generate`
 2. `npm run check:governance`
 3. `npm run typecheck`
-4. Suites de pruebas (`backend`, `web`, `mobile`)
+4. `npm run lint --if-present`
+5. Suites de pruebas (`backend`, `web`, `mobile`)
+6. Job `security-scan` con `npm audit --audit-level=critical`
+
+Localmente, `npm run verify:predeploy` (script de la raíz) agrupa las verificaciones previas al despliegue. La imagen del backend incluye un `HEALTHCHECK` contra `http://localhost:3001/health`, que devuelve `503` si PostgreSQL no responde o, en producción, si Redis no responde.

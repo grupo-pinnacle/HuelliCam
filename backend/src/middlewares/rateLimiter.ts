@@ -1,10 +1,12 @@
 import rateLimit from 'express-rate-limit';
+import { RedisRateLimitStore } from '../lib/redisRateLimitStore';
 
 export const mediaUploadRateLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour window
   max: 20, // max 20 file uploads per hour per IP/user
   standardHeaders: true,
   legacyHeaders: false,
+  store: new RedisRateLimitStore('huellicam:rl:media', 60 * 60 * 1000),
   message: {
     success: false,
     error: {
@@ -20,6 +22,7 @@ export const consultationRateLimiter = rateLimit({
   max: 10, // max 10 triage requests per hour per IP/user
   standardHeaders: true,
   legacyHeaders: false,
+  store: new RedisRateLimitStore('huellicam:rl:consultation', 60 * 60 * 1000),
   message: {
     success: false,
     error: {
@@ -35,6 +38,7 @@ export const passwordResetIpLimiter = rateLimit({
   max: 5, // max 5 attempts per 15 min per IP
   standardHeaders: true,
   legacyHeaders: false,
+  store: new RedisRateLimitStore('huellicam:rl:pwdreset-ip', 15 * 60 * 1000),
   message: {
     success: false,
     error: {
@@ -50,10 +54,11 @@ export const passwordResetEmailLimiter = rateLimit({
   max: 5, // max 5 attempts per 15 min per email
   standardHeaders: true,
   legacyHeaders: false,
+  store: new RedisRateLimitStore('huellicam:rl:pwdreset-email', 15 * 60 * 1000),
   validate: { keyGeneratorIpFallback: false },
   keyGenerator: (req) => {
     const email = req.body?.email;
-    return email ? String(email).trim().toLowerCase() : (req.ip || 'anonymous');
+    return typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : (req.ip || 'anonymous');
   },
   message: {
     success: false,
