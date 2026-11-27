@@ -188,10 +188,32 @@ export class EmailService {
     return this.sendEmail({ to, subject, html, text });
   }
 
+  public async sendEmailVerificationCode(to: string, userName: string, code: string): Promise<boolean> {
+    const subject = `${code} es tu código de verificación de Huellicam`;
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head><meta charset="utf-8"></head>
+      <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f7f9f8;padding:24px;color:#183c3a;">
+        <div style="max-width:520px;margin:0 auto;background:#fff;border-radius:16px;border:1px solid #d9e5e3;padding:32px;">
+          <div style="font-size:20px;font-weight:800;margin-bottom:20px;">🐾 Huellicam</div>
+          <h2>Confirmá tu correo electrónico</h2>
+          <p>Hola <strong>${userName}</strong>, usá este código para verificar tu cuenta:</p>
+          <div style="background:#eaf3f1;border:2px dashed #315f5d;border-radius:12px;padding:18px;text-align:center;margin:24px 0;font-size:32px;font-weight:900;letter-spacing:6px;">
+            ${code}
+          </div>
+          <p style="font-size:13px;color:#648482;">Este código vence en 24 horas.</p>
+        </div>
+      </body>
+      </html>
+    `;
+    return this.sendEmail({ to, subject, html, text: `Tu código de verificación de Huellicam es: ${code}` });
+  }
+
   public async sendReminderEmail(params: {
     to: string;
     clientName: string;
-    type: 'APPOINTMENT' | 'CHECKUP' | 'BIRTHDAY';
+    type: 'APPOINTMENT' | 'CHECKUP' | 'BIRTHDAY' | 'VACCINE' | 'FOLLOW_UP';
     title: string;
     message: string;
     actionUrl?: string;

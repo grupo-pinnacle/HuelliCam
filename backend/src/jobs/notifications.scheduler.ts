@@ -1,6 +1,7 @@
 import { config } from '../config/env';
 import prisma from '../lib/prisma';
 import { emailService } from '../services/email.service';
+import { notificationsService } from '../modules/notifications/notifications.service';
 import { logger, serializeError } from '../lib/logger';
 
 const CHECKUP_INTERVAL_DAYS = 180;
@@ -72,8 +73,23 @@ export class NotificationsScheduler {
 
   public async runChecks(now: Date = new Date()): Promise<void> {
     await this.checkUpcomingConsultations(now);
+    await this.checkScheduledAppointments(now);
+    await this.checkDueVaccines(now);
+    await this.checkDueFollowUps(now);
     await this.checkPreventiveCheckups(now);
     await this.checkPetBirthdays(now);
+  }
+
+  private async getUserEmailPrefs(userId?: string | null) {
+    if (!userId || !prisma.notificationPreference?.findUnique) {
+      return { emailRemindersEnabled: true, vaccineReminders: true, appointmentReminders: true };
+    }
+    const prefs = await prisma.notificationPreference.findUnique({ where: { userId } }).catch(() => null);
+    return {
+      emailRemindersEnabled: prefs ? prefs.emailRemindersEnabled : true,
+      vaccineReminders: prefs ? prefs.vaccineReminders : true,
+      appointmentReminders: prefs ? prefs.appointmentReminders : true,
+    };
   }
 
   private async dispatchReminderOnce(params: {
@@ -81,17 +97,37 @@ export class NotificationsScheduler {
     entityId: string;
     to: string;
     clientName: string;
-    type: 'APPOINTMENT' | 'CHECKUP' | 'BIRTHDAY';
+    type: 'APPOINTMENT' | 'CHECKUP' | 'BIRTHDAY' | 'VACCINE' | 'FOLLOW_UP';
     title: string;
     message: string;
     actionUrl?: string;
   }): Promise<boolean> {
     const { dedupeKey, entityId, to, clientName, type, title, message, actionUrl } = params;
 
-    const existing = await prisma.emailDispatchLog.findUnique({
-      where: { dedupeKey },
-    });
-    if (existing) return false;
+    if (prisma.emailDispatchLog?.findUnique) {
+      const existing = await prisma.emailDispatchLog.findUnique({
+        where: { dedupeKey },
+      });
+      if (existing) return false;
+    }
+
+    try {
+      await prisma.emailDispatchLog.create({
+        data: {
+          dedupeKey,
+          type,
+          entityId,
+          recipientEmail: to,
+        },
+      });
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code;
+      if (code === 'P2002') {
+        return false;
+      }
+      logger.warn({ dedupeKey, err: serializeError(err) }, '[Scheduler] Dedupe lock insert failed');
+      return false;
+    }
 
     const sent = await emailService
       .sendReminderEmail({
@@ -104,22 +140,181 @@ export class NotificationsScheduler {
       })
       .catch(() => false);
 
-    if (!sent) return false;
-
-    try {
-      await prisma.emailDispatchLog.create({
-        data: {
-          dedupeKey,
-          type,
-          entityId,
-          recipientEmail: to,
-        },
-      });
-    } catch {
-      // Ignorar colisión concurrente sobre dedupeKey
+    if (!sent) {
+      await prisma.emailDispatchLog.delete({ where: { dedupeKey } }).catch(() => {});
+      return false;
     }
 
     return true;
+  }
+
+  public async checkScheduledAppointments(now: Date = new Date()): Promise<void> {
+    if (!prisma.consultationMetadata?.findMany) return;
+    const in24h = new Date(now.getTime() + DAY_MS);
+    const dayIso = now.toISOString().slice(0, 10);
+
+    const upcoming = await prisma.consultationMetadata.findMany({
+      where: {
+        scheduledAt: { gte: now, lte: in24h },
+        consultation: {
+          status: 'WAITING',
+          deletedAt: null,
+        },
+      },
+      include: {
+        consultation: {
+          include: {
+            client: { select: { id: true, email: true, firstName: true } },
+            pet: { select: { name: true } },
+          },
+        },
+      },
+      take: 30,
+    });
+
+    for (const row of upcoming) {
+      const c = row.consultation;
+      if (!c?.client?.id) continue;
+      const prefs = await this.getUserEmailPrefs(c.client.id);
+      if (!prefs.appointmentReminders) continue;
+
+      const scheduledLabel = row.scheduledAt
+        ? row.scheduledAt.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+        : '';
+      const title = `Turno próximo para ${c.pet?.name || 'tu mascota'}`;
+      const message = `Recordatorio: tenés una teleconsulta programada hoy${scheduledLabel ? ` a las ${scheduledLabel}` : ''} para ${c.pet?.name || 'tu mascota'}.`;
+
+      if (prefs.emailRemindersEnabled && c.client.email) {
+        const dispatched = await this.dispatchReminderOnce({
+          dedupeKey: `SCHEDULED_APPT:${c.id}:${dayIso}`,
+          entityId: c.id,
+          to: c.client.email,
+          clientName: c.client.firstName || 'Tutor',
+          type: 'APPOINTMENT',
+          title,
+          message,
+          actionUrl: `${this.clientBaseUrl}/client/appointments`,
+        });
+        if (dispatched) {
+          await notificationsService
+            .createAndDispatch(c.client.id, title, message, 'APPOINTMENT_REMINDER', {
+              consultationId: c.id,
+            })
+            .catch(() => {});
+        }
+      }
+    }
+  }
+
+  public async checkDueVaccines(now: Date = new Date()): Promise<void> {
+    if (!prisma.petVaccine?.findMany) return;
+    const in7Days = new Date(now.getTime() + 7 * DAY_MS);
+
+    const vaccines = await prisma.petVaccine.findMany({
+      where: {
+        deletedAt: null,
+        nextDueAt: { gte: now, lte: in7Days },
+      },
+      include: {
+        pet: {
+          select: {
+            id: true,
+            name: true,
+            ownerId: true,
+            owner: { select: { id: true, email: true, firstName: true } },
+          },
+        },
+      },
+      take: 50,
+    });
+
+    for (const v of vaccines) {
+      const owner = v.pet?.owner;
+      if (!owner?.id || !v.nextDueAt) continue;
+      const prefs = await this.getUserEmailPrefs(owner.id);
+      if (!prefs.vaccineReminders) continue;
+
+      const dueDay = v.nextDueAt.toISOString().slice(0, 10);
+      const title = `Vacuna próxima: ${v.name} (${v.pet.name})`;
+      const message = `La vacuna ${v.name} de ${v.pet.name} vence el ${v.nextDueAt.toLocaleDateString('es-AR')}. Coordiná su aplicación para mantener su libreta al día.`;
+
+      let shouldNotifyInApp = true;
+      if (prefs.emailRemindersEnabled && owner.email) {
+        shouldNotifyInApp = await this.dispatchReminderOnce({
+          dedupeKey: `VACCINE_DUE:${v.id}:${dueDay}`,
+          entityId: v.id,
+          to: owner.email,
+          clientName: owner.firstName || 'Tutor',
+          type: 'VACCINE',
+          title,
+          message,
+          actionUrl: `${this.clientBaseUrl}/client/pets/${v.pet.id}`,
+        });
+      }
+
+      if (shouldNotifyInApp) {
+        await notificationsService
+          .createAndDispatch(owner.id, title, message, 'VACCINE_REMINDER', {
+            petId: v.pet.id,
+            vaccineId: v.id,
+          })
+          .catch(() => {});
+      }
+    }
+  }
+
+  public async checkDueFollowUps(now: Date = new Date()): Promise<void> {
+    if (!prisma.followUp?.findMany) return;
+    const in24h = new Date(now.getTime() + DAY_MS);
+
+    const followUps = await prisma.followUp.findMany({
+      where: {
+        status: 'PENDING',
+        reminderSentAt: null,
+        dueAt: { gte: now, lte: in24h },
+      },
+      include: {
+        client: { select: { id: true, email: true, firstName: true } },
+        pet: { select: { id: true, name: true } },
+      },
+      take: 50,
+    });
+
+    for (const fu of followUps) {
+      if (!fu.client?.id) continue;
+      const prefs = await this.getUserEmailPrefs(fu.client.id);
+      if (!prefs.appointmentReminders) continue;
+
+      const title = `Seguimiento clínico: ${fu.title}`;
+      const message = `Tenés un seguimiento programado para ${fu.pet?.name || 'tu mascota'} el ${fu.dueAt.toLocaleDateString('es-AR')}.`;
+
+      if (prefs.emailRemindersEnabled && fu.client.email) {
+        await this.dispatchReminderOnce({
+          dedupeKey: `FOLLOW_UP_DUE:${fu.id}`,
+          entityId: fu.id,
+          to: fu.client.email,
+          clientName: fu.client.firstName || 'Tutor',
+          type: 'FOLLOW_UP',
+          title,
+          message,
+          actionUrl: `${this.clientBaseUrl}/client/appointments`,
+        });
+      }
+
+      await notificationsService
+        .createAndDispatch(fu.client.id, title, message, 'FOLLOW_UP_REMINDER', {
+          followUpId: fu.id,
+          petId: fu.petId,
+        })
+        .catch(() => {});
+
+      await prisma.followUp
+        .update({
+          where: { id: fu.id },
+          data: { reminderSentAt: now },
+        })
+        .catch(() => {});
+    }
   }
 
   /**
@@ -246,3 +441,7 @@ export class NotificationsScheduler {
 }
 
 export const notificationsScheduler = new NotificationsScheduler();
+
+export function stopNotificationsScheduler(): void {
+  notificationsScheduler.stop();
+}

@@ -1,9 +1,11 @@
 import { Role, VetStatus, ConsultationStatus, Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import prisma from '../../lib/prisma';
+import { getRedisClient } from '../../lib/redis';
 import { AppError } from '../../middlewares/errorHandler';
 import { io } from '../../realtime/socket.server';
 import { presenceService } from '../../realtime/presence.service';
+import { evictUserRealtimeAndCall } from '../../realtime/sessionEviction.helper';
 import {
   RejectVetDTO,
   AdminCreateUserDTO,
@@ -11,9 +13,17 @@ import {
   AdminCreatePetDTO,
   AdminUpdatePetDTO,
   RevokeUserSessionsDTO,
+  SUPPORTED_CURRENCIES,
   SupportedCurrency,
   UpdatePricingSettingsDTO,
 } from './admin.schemas';
+
+export const REDIS_PRICING_SETTINGS_KEY = 'huellicam:pricing_settings';
+const PRICING_SYNC_TTL_MS = 2_000;
+
+interface RefreshTokenDelegate {
+  deleteMany: (args: { where: { userId: string } }) => Promise<{ count?: number }>;
+}
 
 const userSelectFields = {
   id: true,
@@ -55,7 +65,9 @@ export class AdminService {
       prisma.user.count({ where: { role: Role.VET, vetStatus: VetStatus.APPROVED, deletedAt: null } }),
       prisma.user.count({ where: { role: Role.VET, vetStatus: VetStatus.REJECTED, deletedAt: null } }),
       useDistributedPresence
-        ? presenceService.getOnlineVetsCount()
+        ? presenceService.getOnlineVetsCount().catch(() =>
+            prisma.user.count({ where: { role: Role.VET, vetStatus: VetStatus.APPROVED, isOnline: true, deletedAt: null } })
+          )
         : prisma.user.count({ where: { role: Role.VET, vetStatus: VetStatus.APPROVED, isOnline: true, deletedAt: null } }),
     ]);
 
@@ -340,11 +352,60 @@ export class AdminService {
       data.password = await bcrypt.hash(dto.password, 12);
     }
 
+    const roleChanged = dto.role !== undefined && dto.role !== user.role;
+    const vetStatusChanged = dto.vetStatus !== undefined && dto.vetStatus !== user.vetStatus;
+    const passwordChanged = Boolean(dto.password);
+    const shouldRevokeSession = roleChanged || vetStatusChanged || passwordChanged;
+
+    const wasApprovedVet = user.role === Role.VET && user.vetStatus === VetStatus.APPROVED;
+    const nextRole = dto.role ?? user.role;
+    const nextVetStatus = dto.vetStatus !== undefined ? dto.vetStatus : user.vetStatus;
+    const isStillApprovedVet = nextRole === Role.VET && nextVetStatus === VetStatus.APPROVED;
+    const lostApprovedVetStatus = wasApprovedVet && !isStillApprovedVet;
+
+    if (shouldRevokeSession) {
+      data.tokenVersion = { increment: 1 };
+      if (lostApprovedVetStatus) {
+        data.isOnline = false;
+      }
+    }
+
     const updated = await prisma.user.update({
       where: { id: userId },
       data,
       select: userSelectFields,
     });
+
+    if (shouldRevokeSession) {
+      await presenceService.clearUserPresence(userId).catch(() => {});
+
+      await evictUserRealtimeAndCall({
+        userId,
+        role: updated.role,
+        reason: 'SESSION_REVOKED',
+        message: 'Tu perfil o credenciales fueron actualizados por un administrador. Iniciá sesión nuevamente.',
+        emitEvent: false,
+      }).catch(() => {});
+      if (io) {
+        try {
+          io.to(`user:${userId}`).emit('auth:session_terminated', {
+            reason: 'SESSION_REVOKED',
+            message: 'Tu perfil o credenciales fueron actualizados por un administrador. Iniciá sesión nuevamente.',
+          });
+          if (lostApprovedVetStatus) {
+            io.in(`user:${userId}`).socketsLeave('role:vets');
+            io.to('role:vets').emit('vet:presence', {
+              vetId: userId,
+              isOnline: false,
+              lastSeen: new Date().toISOString(),
+            });
+          }
+          this.disconnectUserSocketsAfterFlush(userId);
+        } catch {
+          // Non-blocking realtime notification
+        }
+      }
+    }
 
     await prisma.auditLog.create({
       data: {
@@ -379,6 +440,16 @@ export class AdminService {
     });
 
     await presenceService.clearUserPresence(userId).catch(() => {});
+
+    await evictUserRealtimeAndCall({
+      userId,
+      role: updated.role,
+      reason: 'ACCOUNT_BANNED',
+      message:
+        reason ||
+        'Tu cuenta ha sido suspendida permanentemente por un administrador por infracción de términos de servicio.',
+      emitEvent: false,
+    }).catch(() => {});
 
     // Notify user in real-time if connected via Socket.io
     if (io) {
@@ -745,7 +816,7 @@ export class AdminService {
     adminId: string,
     targetUserId: string,
     dto: RevokeUserSessionsDTO
-  ): Promise<{ revokedCount: number; status: string }> {
+  ): Promise<{ revokedCount: number; status: string; tokenVersionRevoked: boolean }> {
     const user = await prisma.user.findUnique({ where: { id: targetUserId } });
     if (!user) {
       throw new AppError('Usuario no encontrado', 404, 'USER_NOT_FOUND');
@@ -760,14 +831,23 @@ export class AdminService {
     });
 
     let revokedCount = 0;
-    if ((prisma as any).refreshToken?.deleteMany) {
-      const res = await (prisma as any).refreshToken.deleteMany({
+    const refreshTokenDelegate = (prisma as unknown as { refreshToken?: RefreshTokenDelegate }).refreshToken;
+    if (refreshTokenDelegate?.deleteMany) {
+      const res = await refreshTokenDelegate.deleteMany({
         where: { userId: targetUserId },
       });
       revokedCount = res?.count ?? 0;
     }
 
     await presenceService.clearUserPresence(targetUserId).catch(() => {});
+
+    await evictUserRealtimeAndCall({
+      userId: targetUserId,
+      role: user.role,
+      reason: 'SESSION_REVOKED',
+      message: dto.reason,
+      emitEvent: false,
+    }).catch(() => {});
 
     if (io) {
       try {
@@ -798,6 +878,7 @@ export class AdminService {
           reason: dto.reason,
           suspendAccount: dto.suspendAccount,
           revokedSessions: revokedCount,
+          tokenVersionRevoked: true,
         },
       },
     }).catch(() => {});
@@ -805,6 +886,7 @@ export class AdminService {
     return {
       revokedCount,
       status: dto.suspendAccount ? 'SUSPENDED' : 'ACTIVE',
+      tokenVersionRevoked: true,
     };
   }
 
@@ -825,11 +907,60 @@ export class AdminService {
     updatedBy: null,
   };
 
+  private static lastPricingSyncedAt = 0;
+
   public getPricingSettings(): PricingSettingsResponse {
     return { ...AdminService.currentPricingSettings };
   }
 
+  public async syncPricingFromRedis(force = false): Promise<PricingSettingsResponse> {
+    const now = Date.now();
+    if (!force && now - AdminService.lastPricingSyncedAt < PRICING_SYNC_TTL_MS) {
+      return this.getPricingSettings();
+    }
+
+    const client = getRedisClient();
+    if (!client || client.status !== 'ready') {
+      return this.getPricingSettings();
+    }
+
+    try {
+      const raw = await client.get(REDIS_PRICING_SETTINGS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<PricingSettingsResponse>;
+        const validFee =
+          typeof parsed.baseConsultationFee === 'number' &&
+          Number.isFinite(parsed.baseConsultationFee) &&
+          parsed.baseConsultationFee > 0;
+        const validRate =
+          typeof parsed.platformTakeRate === 'number' &&
+          Number.isFinite(parsed.platformTakeRate) &&
+          parsed.platformTakeRate >= 0 &&
+          parsed.platformTakeRate <= 1;
+        const validCurrency =
+          typeof parsed.currency === 'string' &&
+          SUPPORTED_CURRENCIES.includes(parsed.currency as SupportedCurrency);
+
+        if (validFee && validRate && validCurrency) {
+          AdminService.currentPricingSettings = {
+            baseConsultationFee: parsed.baseConsultationFee!,
+            platformTakeRate: parsed.platformTakeRate!,
+            currency: parsed.currency as SupportedCurrency,
+            updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
+            updatedBy: parsed.updatedBy ?? null,
+          };
+        }
+      }
+      AdminService.lastPricingSyncedAt = now;
+    } catch {
+      // Fallback safely to in-memory pricing settings
+    }
+
+    return this.getPricingSettings();
+  }
+
   public resetPricingForTests(): void {
+    AdminService.lastPricingSyncedAt = 0;
     AdminService.currentPricingSettings = {
       ...AdminService.defaultPricingSettings,
       updatedAt: new Date().toISOString(),
@@ -849,6 +980,37 @@ export class AdminService {
     };
 
     AdminService.currentPricingSettings = updated;
+    AdminService.lastPricingSyncedAt = Date.now();
+
+    const client = getRedisClient();
+    if (client && client.status === 'ready') {
+      try {
+        await client.set(REDIS_PRICING_SETTINGS_KEY, JSON.stringify(updated));
+      } catch {
+        // Non-blocking Redis write-through
+      }
+    }
+
+    if (prisma.platformPricingSetting?.upsert) {
+      await prisma.platformPricingSetting
+        .upsert({
+          where: { id: 'default' },
+          create: {
+            id: 'default',
+            baseConsultationFee: updated.baseConsultationFee,
+            platformTakeRate: updated.platformTakeRate,
+            currency: updated.currency,
+            updatedBy: adminId,
+          },
+          update: {
+            baseConsultationFee: updated.baseConsultationFee,
+            platformTakeRate: updated.platformTakeRate,
+            currency: updated.currency,
+            updatedBy: adminId,
+          },
+        })
+        .catch(() => {});
+    }
 
     try {
       await prisma.auditLog.create({
@@ -875,6 +1037,7 @@ export class AdminService {
     unitPrice?: number,
     commissionRate?: number
   ): Promise<ExecutiveMetricsResponse> {
+    await this.syncPricingFromRedis();
     const activeUnitPrice = unitPrice !== undefined ? unitPrice : AdminService.currentPricingSettings.baseConsultationFee;
     const activeCommissionRate = commissionRate !== undefined ? commissionRate : AdminService.currentPricingSettings.platformTakeRate;
 

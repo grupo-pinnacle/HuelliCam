@@ -45,9 +45,12 @@ export class PrescriptionsController {
   public getByIdPublic = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
       const prescriptionId = getParamId(req.params.id);
+      const sigParam = req.query.sig;
+      const sig = typeof sigParam === 'string' ? sigParam : undefined;
       const prescription = await prescriptionsService.getPrescriptionById(
         prescriptionId,
-        req.user
+        req.user,
+        sig
       );
       res.status(200).json({
         success: true,

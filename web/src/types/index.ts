@@ -10,14 +10,8 @@ export type ConsultationStatus =
   | 'WAITING'
   | 'ACTIVE'
   | 'COMPLETED'
-  | 'CANCELLED'
-  | 'TRIAGE_CRITICAL_QUEUED'
-  | 'CLAIM_PENDING_SYNC'
-  | 'LIVEKIT_CONNECTING'
-  | 'IN_CALL_ACTIVE'
-  | 'AWAITING_EMERGENCY_CALLBACK'
-  | 'HANDOFF_IN_PROGRESS';
-export type CallStatus = 'INITIATED' | 'ACTIVE' | 'ENDED';
+  | 'CANCELLED';
+export type CallStatus = 'INITIATED' | 'ACTIVE' | 'ENDED' | 'FAILED';
 
 // Triage: stored in Spanish in DB (inside `notes` field as "[Prioridad: ROJO] ...")
 export type TriagePriority = 'GREEN' | 'YELLOW' | 'RED';
@@ -53,6 +47,7 @@ export interface User {
   ratingAvg: number;
   ratingCount: number;
   isOnline: boolean;
+  emailVerified?: boolean;
   lastSeen?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -87,6 +82,10 @@ export interface Consultation {
   diagnosisNotes?: string | null;
   startedAt?: string | null;
   endedAt?: string | null;
+  scheduledAt?: string | null;
+  incidentCode?: string | null;
+  activeDeviceId?: string | null;
+  activeCallSessionId?: string | null;
   createdAt: string;
   updatedAt: string;
   deletedAt?: string | null;
@@ -126,7 +125,14 @@ export interface Prescription {
   createdAt: string;
   qrCodeDataUrl?: string;
   verifyUrl?: string;
+  signedVerifyUrl?: string;
+  verificationSignature?: string;
   vet?: Partial<User>;
+  consultation?: Partial<Consultation> & {
+    pet?: Pet;
+    client?: Partial<User>;
+    vet?: Partial<User>;
+  };
 }
 
 export interface Review {
@@ -407,3 +413,189 @@ export interface ConfirmModalProps extends BaseComponentProps {
   onConfirm: () => void | Promise<void>;
   onCancel: () => void;
 }
+
+// ============================================================
+// ROADMAP PHASES 1-5 DTOs
+// ============================================================
+
+export type VaccineStatusDTO = 'AL_DIA' | 'PROXIMA' | 'VENCIDA';
+export type PetDocumentCategoryDTO = 'VACUNA' | 'ESTUDIO' | 'RECETA' | 'INFORME' | 'OTRO';
+export type FollowUpStatusDTO = 'PENDING' | 'COMPLETED' | 'CANCELLED';
+export type ClinicalTemplateKindDTO = 'EVOLUTION' | 'PRESCRIPTION';
+export type LedgerEntryStatusDTO = 'SIMULATED' | 'PENDING_PAYOUT' | 'SETTLED';
+
+export interface PetVaccineDTO {
+  id: string;
+  petId: string;
+  name: string;
+  appliedAt: string;
+  nextDueAt: string | null;
+  lotNumber: string | null;
+  notes: string | null;
+  status: VaccineStatusDTO;
+  createdAt: string;
+}
+
+export interface PetDocumentDTO {
+  id: string;
+  petId: string;
+  mediaFileId: string | null;
+  consultationId: string | null;
+  category: PetDocumentCategoryDTO;
+  title: string;
+  mimeType: string;
+  sizeBytes: number;
+  url: string;
+  uploadedById: string;
+  createdAt: string;
+}
+
+export interface ClinicalEvolutionDTO {
+  id: string;
+  petId: string;
+  consultationId: string | null;
+  vetId: string;
+  vetName?: string;
+  summary: string;
+  diagnosis: string | null;
+  createdAt: string;
+}
+
+export interface PetCoOwnerDTO {
+  id: string;
+  petId: string;
+  userId: string;
+  email: string;
+  name: string;
+  role: string;
+  status: string;
+  createdAt: string;
+}
+
+export interface PetDossierDTO {
+  pet: Pet & {
+    photoUrl?: string | null;
+    owner?: { id: string; firstName: string; lastName: string; email: string; phone?: string | null };
+  };
+  vaccines: PetVaccineDTO[];
+  documents: PetDocumentDTO[];
+  evolutions: ClinicalEvolutionDTO[];
+  coOwners: PetCoOwnerDTO[];
+  consultations: Array<{
+    id: string;
+    status: string;
+    startedAt: string | null;
+    endedAt: string | null;
+    createdAt: string;
+    notes: string | null;
+    diagnosisNotes: string | null;
+    triagePriority: string | null;
+    vet?: { id: string; firstName: string; lastName: string; specialty?: string | null } | null;
+    prescriptions?: Array<{
+      id: string;
+      medication: string;
+      dosage: string;
+      frequency: string;
+      durationDays: number;
+      indications: string;
+      issuedAt: string;
+    }>;
+  }>;
+  sharedMedia: Array<{
+    id: string;
+    url: string;
+    mimeType: string;
+    sizeBytes: number;
+    originalName: string;
+    createdAt: string;
+    consultationId: string | null;
+  }>;
+}
+
+export interface FollowUpDTO {
+  id: string;
+  petId: string;
+  petName?: string;
+  vetId: string;
+  vetName?: string;
+  clientId: string;
+  consultationId: string | null;
+  title: string;
+  scheduledAt: string;
+  status: FollowUpStatusDTO;
+  notes: string | null;
+  createdAt: string;
+}
+
+export interface VetAvailabilitySlotDTO {
+  id: string;
+  vetId: string;
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  slotMinutes?: number;
+  slotDurationMin?: number;
+  active?: boolean;
+  isActive?: boolean;
+}
+
+export interface VetPublicDTO {
+  id: string;
+  firstName: string;
+  lastName: string;
+  specialty: string | null;
+  licenseNumber: string | null;
+  bio: string | null;
+  photoUrl: string | null;
+  isOnline: boolean;
+  rating: number | null;
+  slots?: VetAvailabilitySlotDTO[];
+}
+
+export interface NotificationPreferenceDTO {
+  inAppEnabled: boolean;
+  pushEnabled: boolean;
+  emailEnabled: boolean;
+  vaccineReminderDaysBefore: number;
+  followUpReminderHoursBefore: number;
+}
+
+export interface ClinicalTemplateDTO {
+  id: string;
+  vetId: string | null;
+  kind: ClinicalTemplateKindDTO;
+  title: string;
+  category: string | null;
+  content: Record<string, unknown>;
+  isDefault: boolean;
+}
+
+export interface VetLedgerEntryDTO {
+  id: string;
+  consultationId: string;
+  grossCents: number;
+  platformFeeCents: number;
+  netCents: number;
+  currency: string;
+  status: LedgerEntryStatusDTO;
+  provider: string;
+  settledAt: string | null;
+  createdAt: string;
+}
+
+export interface VetLedgerSummaryDTO {
+  totalGrossCents: number;
+  totalNetCents: number;
+  totalFeeCents: number;
+  currency: string;
+  mode: string;
+  entries: VetLedgerEntryDTO[];
+}
+
+export interface TelemedicineConsentDTO {
+  id: string;
+  userId: string;
+  version: string;
+  acceptedAt: string;
+}
+

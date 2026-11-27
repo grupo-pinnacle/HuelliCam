@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { PawPrint } from 'lucide-react';
 import { AvatarProps } from '../../types';
+import { getInitials } from '../../lib/formatters';
 
 export const Avatar: React.FC<AvatarProps> = ({
   src,
@@ -11,6 +12,10 @@ export const Avatar: React.FC<AvatarProps> = ({
   'data-testid': testId,
 }) => {
   const [imageError, setImageError] = useState(false);
+
+  useEffect(() => {
+    setImageError(false);
+  }, [src]);
 
   const sizeStyles = {
     sm: 'w-8 h-8 text-xs',
@@ -30,12 +35,7 @@ export const Avatar: React.FC<AvatarProps> = ({
     offline: 'bg-slate-400 ring-white',
   };
 
-  const initials = alt
-    .split(' ')
-    .map((w) => w[0])
-    .join('')
-    .substring(0, 2)
-    .toUpperCase();
+  const initials = getInitials(alt, '');
 
   return (
     <div

@@ -586,4 +586,86 @@ describe('SocketContext singleton lifecycle, ref-counting & session termination'
     const joinCalls = sock2.emit.mock.calls.filter(([evt]) => evt === 'join:consultation');
     expect(joinCalls).toHaveLength(0);
   });
+
+  it('tracks reconnectingConsultations via consultation:tutor_reconnecting / tutor_reconnected and clears on call:ended or cancellation', () => {
+    const ReconnectProbe: React.FC = () => {
+      const { reconnectingConsultations } = useSocket();
+      return <div data-testid="reconnecting-map">{JSON.stringify(reconnectingConsultations)}</div>;
+    };
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <SocketProvider>
+          <ReconnectProbe />
+        </SocketProvider>
+      </QueryClientProvider>
+    );
+
+    const sock = mockState.socket!;
+    expect(screen.getByTestId('reconnecting-map').textContent).toBe('{}');
+
+    act(() => {
+      sock.__trigger('consultation:tutor_reconnecting', {
+        consultationId: 'c-rec-1',
+        userId: 'client-1',
+        startedAt: '2026-11-26T12:00:00Z',
+      });
+    });
+
+    expect(screen.getByTestId('reconnecting-map').textContent).toBe(
+      '{"c-rec-1":"2026-11-26T12:00:00Z"}'
+    );
+
+    act(() => {
+      sock.__trigger('consultation:tutor_reconnected', {
+        consultationId: 'c-rec-1',
+        userId: 'client-1',
+      });
+    });
+
+    expect(screen.getByTestId('reconnecting-map').textContent).toBe('{}');
+
+    // Also cleared by consultation:cancelled and call:ended
+    act(() => {
+      sock.__trigger('consultation:tutor_reconnecting', {
+        consultationId: 'c-rec-2',
+        startedAt: '2026-11-26T12:01:00Z',
+      });
+      sock.__trigger('consultation:tutor_reconnecting', {
+        consultationId: 'c-rec-3',
+        startedAt: '2026-11-26T12:02:00Z',
+      });
+    });
+
+    act(() => {
+      sock.__trigger('consultation:cancelled', { consultationId: 'c-rec-2' });
+      sock.__trigger('call:ended', { consultationId: 'c-rec-3' });
+    });
+
+    expect(screen.getByTestId('reconnecting-map').textContent).toBe('{}');
+  });
+
+  it('defaults session:invalidated fallback reason to SESSION_MIGRATED_NEW_DEVICE', () => {
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <SocketProvider>
+          <div />
+        </SocketProvider>
+      </QueryClientProvider>
+    );
+
+    const sock = mockState.socket!;
+    act(() => {
+      sock.__trigger('session:invalidated', {});
+    });
+
+    const terminatedEvents = dispatchSpy.mock.calls
+      .map(([evt]) => evt)
+      .filter((evt): evt is CustomEvent => evt instanceof CustomEvent && evt.type === 'huellicam:session_terminated');
+
+    expect(terminatedEvents.at(-1)?.detail.reason).toBe('SESSION_MIGRATED_NEW_DEVICE');
+    dispatchSpy.mockRestore();
+  });
 });

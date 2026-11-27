@@ -14,7 +14,7 @@ export { ScopedStyle };
 
 const Landing = lazy(() => import('./pages/Landing'));
 const AuthExperience = lazy(() => import('./pages/AuthExperience'));
-const GlobalCallListener = lazy(() => import('./components/call/GlobalCallListener'));
+import { GlobalCallListener } from './components/call/GlobalCallListener';
 const ClientApp = lazy(() => import('./pages/ClientApp'));
 const VetApp = lazy(() => import('./vet/VetApp'));
 const CallRoom = lazy(() => import('./vet/CallRoom'));
@@ -31,11 +31,7 @@ const NotFound = lazy(() => import('./pages/NotFound'));
 const AuthenticatedCallListener: React.FC = () => {
   const { user } = useAuth();
   if (!user) return null;
-  return (
-    <Suspense fallback={null}>
-      <GlobalCallListener />
-    </Suspense>
-  );
+  return <GlobalCallListener />;
 };
 
 const LandingWrapper: React.FC = () => <Landing />;
@@ -87,7 +83,10 @@ const VetWrapper: React.FC = () => {
 
 const CallWrapper: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  return <CallRoom id={id || 'milo'} />;
+  if (!id || !id.trim()) {
+    return <NotFound />;
+  }
+  return <CallRoom id={id} />;
 };
 
 const MobileNavigationBridge: React.FC = () => {
@@ -187,7 +186,15 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 5 * 60 * 1000,
-      retry: 1,
+      gcTime: 15 * 60 * 1000,
+      refetchOnWindowFocus: false,
+      retryDelay: 400,
+      retry: (failureCount, error) => {
+        if (failureCount >= 1) return false;
+        const status = (error as { response?: { status?: number } })?.response?.status;
+        if (typeof status === 'number' && status < 502) return false;
+        return true;
+      },
     },
   },
 });

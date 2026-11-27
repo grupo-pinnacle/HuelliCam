@@ -159,7 +159,7 @@ describe('Backend Fail-Fast Environment Validation & Graceful Shutdown', () => {
     }
   });
 
-  it('should flush pending disconnectQueue entries during gracefulShutdown before httpServer close clears the queue', async () => {
+  it('should clear vetDisconnectTracker and disconnect Prisma during gracefulShutdown', async () => {
     const savedEnv = { ...process.env };
     try {
       jest.resetModules();
@@ -168,11 +168,8 @@ describe('Backend Fail-Fast Environment Validation & Graceful Shutdown', () => {
       process.env.REDIS_URL = '';
 
       const reloadedPrisma = require('../lib/prisma').default;
-      const { disconnectQueue: reloadedQueue } = require('../realtime/disconnectQueue');
-      const { consultationConcurrencyService: reloadedConcurrency } = require('../modules/consultations/consultationConcurrency.service');
-      const markSpy = jest
-        .spyOn(reloadedConcurrency, 'markSocketDisconnect')
-        .mockResolvedValue({ updated: true, rowCount: 1, ok: true });
+      const { vetDisconnectTracker: reloadedTracker } = require('../realtime/vetDisconnectTracker');
+      const clearSpy = jest.spyOn(reloadedTracker, 'clear');
 
       const serverModule = require('../server');
       const httpServer = serverModule.default;
@@ -180,27 +177,21 @@ describe('Backend Fail-Fast Environment Validation & Graceful Shutdown', () => {
         await new Promise<void>((resolve) => httpServer.once('listening', resolve));
       }
 
-      reloadedQueue.enqueue('tutor-shutdown-1', 'dev-shutdown-1');
-      expect(reloadedQueue.pendingCount).toBe(1);
-
       await serverModule.gracefulShutdown('SIGTERM');
 
-      expect(markSpy).toHaveBeenCalledTimes(1);
-      expect(markSpy).toHaveBeenCalledWith('tutor-shutdown-1', 'dev-shutdown-1');
-      expect(reloadedQueue.pendingCount).toBe(0);
+      expect(clearSpy).toHaveBeenCalled();
       expect(reloadedPrisma.$disconnect).toHaveBeenCalled();
-      markSpy.mockRestore();
+      clearSpy.mockRestore();
     } finally {
       process.env = savedEnv;
       jest.resetModules();
     }
   });
 
-  it('should complete gracefulShutdown in < 2000ms with an actively connected Socket.io websocket client and a pending disconnectQueue entry', async () => {
+  it('should complete gracefulShutdown in < 2000ms with an actively connected Socket.io websocket client', async () => {
     const savedEnv = { ...process.env };
     let clientSocket: ClientSocket | undefined;
     const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
-    let markSpy: jest.SpyInstance | undefined;
 
     try {
       jest.resetModules();
@@ -220,12 +211,6 @@ describe('Backend Fail-Fast Environment Validation & Graceful Shutdown', () => {
         vetStatus: null,
         deletedAt: null,
       });
-
-      const { disconnectQueue: reloadedQueue } = require('../realtime/disconnectQueue');
-      const { consultationConcurrencyService: reloadedConcurrency } = require('../modules/consultations/consultationConcurrency.service');
-      markSpy = jest
-        .spyOn(reloadedConcurrency, 'markSocketDisconnect')
-        .mockResolvedValue({ updated: true, rowCount: 1, ok: true });
 
       const serverModule = require('../server');
       const httpServer = serverModule.default;
@@ -252,18 +237,12 @@ describe('Backend Fail-Fast Environment Validation & Graceful Shutdown', () => {
 
       expect(clientSocket.connected).toBe(true);
 
-      reloadedQueue.enqueue('tutor-pending-1', 'dev-pending-1');
-      expect(reloadedQueue.pendingCount).toBe(1);
-
       const startedAt = Date.now();
       await serverModule.gracefulShutdown('SIGTERM');
       const elapsedMs = Date.now() - startedAt;
 
       expect(elapsedMs).toBeLessThan(2000);
       expect(exitSpy).not.toHaveBeenCalled();
-      expect(markSpy).toHaveBeenCalledTimes(1);
-      expect(markSpy).toHaveBeenCalledWith('tutor-pending-1', 'dev-pending-1');
-      expect(reloadedQueue.pendingCount).toBe(0);
       expect(reloadedPrisma.$disconnect).toHaveBeenCalled();
       expect(httpServer.listening).toBe(false);
     } finally {
@@ -271,7 +250,6 @@ describe('Backend Fail-Fast Environment Validation & Graceful Shutdown', () => {
         clientSocket.disconnect();
         clientSocket.close();
       }
-      markSpy?.mockRestore();
       exitSpy.mockRestore();
       process.env = savedEnv;
       jest.resetModules();

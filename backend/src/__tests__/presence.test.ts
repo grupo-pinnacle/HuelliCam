@@ -807,8 +807,16 @@ describe('Redis-Backed Presence with TTL & No Pod-Startup Wipe (M3)', () => {
     let vetOnlineInLua = false;
     const luaRedisMock = {
       status: 'ready',
-      eval: jest.fn(async (...args: unknown[]) => {
-        evalCalls.push(args);
+      eval: jest.fn(async (script: string, ...args: unknown[]) => {
+        evalCalls.push([script, ...args]);
+        if (script.includes('ZCARD')) {
+          // UNREGISTER_SOCKET_DISCONNECT_LUA: { wentOffline, wasOnlineVet }
+          return [1, 1];
+        }
+        if (script.includes("redis.call('ZSCORE', KEYS[1]")) {
+          // REFRESH_SOCKET_PRESENCE_LUA: { socketActive, effectiveIsOnline }
+          return [1, 1];
+        }
         const transitioned = vetOnlineInLua ? 0 : 1;
         vetOnlineInLua = true;
         return [transitioned, 0, 1];
@@ -835,6 +843,27 @@ describe('Redis-Backed Presence with TTL & No Pod-Startup Wipe (M3)', () => {
 
     expect(evalCalls).toHaveLength(2);
     expect([lua1.transitionedOnline, lua2.transitionedOnline]).toEqual([true, false]);
+
+    // Verify atomic Lua eval path for refreshSocketPresence and unregisterSocketDisconnect
+    const refreshAck = await presenceService.refreshSocketPresence({
+      userId: 'vet-lua-1',
+      socketId: 'sock-l1',
+      role: Role.VET,
+      vetStatus: VetStatus.APPROVED,
+      now: fakeNow,
+    });
+    expect(refreshAck.isOnline).toBe(true);
+
+    const disconnectResult = await presenceService.unregisterSocketDisconnect({
+      userId: 'vet-lua-1',
+      socketId: 'sock-l1',
+      role: Role.VET,
+      vetStatus: VetStatus.APPROVED,
+      now: fakeNow,
+    });
+    expect(disconnectResult.wentOffline).toBe(true);
+    expect(disconnectResult.wasOnlineVet).toBe(true);
+    expect(evalCalls).toHaveLength(4);
   });
 
   it('throttles rapid presence:heartbeat spam within cooldown while honoring first heartbeat', async () => {

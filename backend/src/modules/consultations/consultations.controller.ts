@@ -1,15 +1,15 @@
 import { Response, NextFunction } from 'express';
-import { ConsultationsService } from './consultations.service';
+import { consultationsService } from './consultations.service';
 import {
   createConsultationSchema,
   completeConsultationSchema,
   cancelConsultationSchema,
+  rescheduleConsultationSchema,
   reviewConsultationSchema,
   createMessageSchema,
 } from './consultations.schemas';
 import { AuthenticatedRequest } from '../auth/auth.middleware';
-
-const consultationsService = new ConsultationsService();
+import { extractDeviceId } from '../../contracts/consultation.contract';
 
 const getParamId = (param: string | string[]): string => (Array.isArray(param) ? param[0] : param);
 
@@ -17,7 +17,8 @@ export class ConsultationsController {
   public create = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
       const validated = createConsultationSchema.parse(req.body);
-      const consultation = await consultationsService.createConsultation(req.user!.id, validated);
+      const deviceId = extractDeviceId(req.headers['x-device-id']);
+      const consultation = await consultationsService.createConsultation(req.user!.id, validated, deviceId);
       res.status(201).json({
         success: true,
         data: consultation,
@@ -93,6 +94,20 @@ export class ConsultationsController {
     }
   };
 
+  public reschedule = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const id = getParamId(req.params.id);
+      const validated = rescheduleConsultationSchema.parse(req.body);
+      const consultation = await consultationsService.rescheduleConsultation(id, req.user!, validated);
+      res.status(200).json({
+        success: true,
+        data: consultation,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
   public review = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
       const id = getParamId(req.params.id);
@@ -129,6 +144,19 @@ export class ConsultationsController {
       res.status(201).json({
         success: true,
         data: message,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public deleteMessages = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const id = getParamId(req.params.id);
+      const result = await consultationsService.deleteConsultationMessages(id, req.user!);
+      res.status(200).json({
+        success: true,
+        data: result,
       });
     } catch (error) {
       next(error);

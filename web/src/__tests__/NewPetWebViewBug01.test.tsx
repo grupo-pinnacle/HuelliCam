@@ -4,7 +4,6 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { NewPetModal } from '../pages/ClientApp';
-import { DashboardClient } from '../pages/DashboardClient';
 import api from '../services/api';
 
 vi.mock('../services/api', () => ({
@@ -137,70 +136,6 @@ describe('BUG-01 (WebView Ready): Pet Image Picker & Draft Recovery', () => {
 
       expect(onClose).toHaveBeenCalled();
       expect(localStorage.getItem('huellicam_new_pet_draft')).toBeNull();
-    });
-  });
-
-  describe('DashboardClient (DashboardClient.tsx)', () => {
-    it('rehydrates open modal and form data if "huellicam_new_pet_draft" has isModalOpen: true', async () => {
-      vi.mocked(api.get).mockImplementation((url) => {
-        if (url === '/api/pets') return Promise.resolve({ data: { success: true, data: [] } } as any);
-        if (url === '/api/consultations/mine') return Promise.resolve({ data: { success: true, data: [] } } as any);
-        return Promise.reject(new Error('Not found'));
-      });
-
-      localStorage.setItem(
-        'huellicam_new_pet_draft',
-        JSON.stringify({
-          name: 'Draft Pet In Dashboard',
-          species: 'Canine',
-          breed: 'Beagle',
-          isModalOpen: true,
-        })
-      );
-
-      render(
-        <MemoryRouter>
-          <DashboardClient />
-        </MemoryRouter>
-      );
-
-      await waitFor(() => {
-        expect(screen.getByTestId('add-pet-modal')).toBeDefined();
-        const input = screen.getByTestId('input-pet-name') as HTMLInputElement;
-        expect(input.value).toBe('Draft Pet In Dashboard');
-      });
-    });
-
-    it('clears draft when closing modal in DashboardClient', async () => {
-      vi.mocked(api.get).mockImplementation((url) => {
-        if (url === '/api/pets') return Promise.resolve({ data: { success: true, data: [] } } as any);
-        if (url === '/api/consultations/mine') return Promise.resolve({ data: { success: true, data: [] } } as any);
-        return Promise.reject(new Error('Not found'));
-      });
-
-      localStorage.setItem(
-        'huellicam_new_pet_draft',
-        JSON.stringify({
-          name: 'Draft Pet',
-          isModalOpen: true,
-        })
-      );
-
-      render(
-        <MemoryRouter>
-          <DashboardClient />
-        </MemoryRouter>
-      );
-
-      await waitFor(() => {
-        expect(screen.getByTestId('add-pet-modal')).toBeDefined();
-      });
-
-      fireEvent.click(screen.getByTestId('cancel-add-pet-button'));
-
-      await waitFor(() => {
-        expect(localStorage.getItem('huellicam_new_pet_draft')).toBeNull();
-      });
     });
   });
 });

@@ -1,11 +1,18 @@
 import { AccessToken, RoomServiceClient, WebhookReceiver } from 'livekit-server-sdk';
 import { User, Role, ConsultationStatus, CallStatus, Prisma } from '@prisma/client';
-import prisma from '../../lib/prisma';
+import prisma, { isMissingTableError } from '../../lib/prisma';
 import { config } from '../../config/env';
 import { AppError } from '../../middlewares/errorHandler';
 import { io } from '../../realtime/socket.server';
 import { notificationsService } from '../notifications/notifications.service';
 import { logger, serializeError } from '../../lib/logger';
+import { captureTelemetryException } from '../../lib/telemetry';
+import { featureFlagsService } from '../admin/feature-flags.service';
+import { extractDeviceId } from '../../contracts/consultation.contract';
+
+const CALLABLE_CONSULTATION_STATUSES: ReadonlyArray<ConsultationStatus> = [
+  ConsultationStatus.ACTIVE,
+];
 
 const getLiveKitConfig = () => {
   const apiKey = process.env.LIVEKIT_API_KEY || config.LIVEKIT_API_KEY;
@@ -63,23 +70,31 @@ export class CallsService {
 
   private async ensureCallInitiated(consultationId: string) {
     if (!prisma.call) return null;
-    const existing = await prisma.call.findFirst({
-      where: {
-        consultationId,
-        status: { in: [CallStatus.INITIATED, CallStatus.ACTIVE] },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-    if (existing) {
-      return existing;
+    try {
+      const existing = await prisma.call.findFirst({
+        where: {
+          consultationId,
+          status: { in: [CallStatus.INITIATED, CallStatus.ACTIVE] },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (existing) {
+        return existing;
+      }
+      return await prisma.call.create({
+        data: {
+          consultationId,
+          roomName: consultationId,
+          status: CallStatus.INITIATED,
+        },
+      });
+    } catch (err) {
+      if (typeof isMissingTableError === 'function' && isMissingTableError(err)) {
+        logger.warn({ consultationId }, '[LiveKit Token] Skipping Call telemetry row due to schema lag');
+        return null;
+      }
+      throw err;
     }
-    return prisma.call.create({
-      data: {
-        consultationId,
-        roomName: consultationId,
-        status: CallStatus.INITIATED,
-      },
-    });
   }
 
   public async deleteLiveKitRoom(roomName: string): Promise<void> {
@@ -199,13 +214,41 @@ export class CallsService {
       }
 
       case 'participant_joined': {
+        const joinedIdentity = event.participant?.identity;
+        if (joinedIdentity && typeof prisma.consultation?.findUnique === 'function') {
+          const cons = await prisma.consultation.findUnique({
+            where: { id: roomName },
+            select: { clientId: true, activeDeviceId: true },
+          });
+          if (cons?.activeDeviceId) {
+            const tutorPrefix = `tutor_${cons.clientId}:`;
+            const isLegacyIdentity = joinedIdentity === cons.clientId;
+            const isMismatchedDevice =
+              joinedIdentity.startsWith(tutorPrefix) &&
+              joinedIdentity.slice(tutorPrefix.length) !== cons.activeDeviceId;
+
+            if (isLegacyIdentity || isMismatchedDevice) {
+              logger.info(
+                {
+                  consultationId: roomName,
+                  identity: joinedIdentity,
+                  activeDeviceId: cons.activeDeviceId,
+                  outcome: 'reactive_sfu_eviction',
+                },
+                '[LiveKit Webhook] Evicting stale participant on participant_joined'
+              );
+              void this.removeParticipant(roomName, joinedIdentity);
+              return event;
+            }
+          }
+        }
         if (call.status === CallStatus.ENDED) {
           return event;
         }
         await prisma.call.update({
           where: { id: call.id },
           data: {
-            participantCount: Math.max(1, (call.participantCount ?? 0) + 1),
+            participantCount: { increment: 1 },
             livekitRoomSid: roomSid ?? call.livekitRoomSid,
             lastEvent: 'participant_joined',
             metadata: appendTelemetryEvent(call.metadata, eventRecord),
@@ -221,7 +264,7 @@ export class CallsService {
         await prisma.call.update({
           where: { id: call.id },
           data: {
-            participantCount: Math.max(0, (call.participantCount ?? 1) - 1),
+            participantCount: (call.participantCount ?? 0) > 0 ? { decrement: 1 } : 0,
             livekitRoomSid: roomSid ?? call.livekitRoomSid,
             lastEvent: 'participant_left',
             metadata: appendTelemetryEvent(call.metadata, eventRecord),
@@ -233,10 +276,26 @@ export class CallsService {
       case 'participant_connection_aborted':
       case 'room_aborted':
       case 'track_publish_failed': {
+        if (call.status === CallStatus.ENDED) {
+          return event;
+        }
         const isParticipantAbort = eventName === 'participant_connection_aborted';
+        const isRoomAborted = eventName === 'room_aborted';
+        const durationSeconds =
+          isRoomAborted && call.startedAt
+            ? Math.max(0, Math.round((eventTime.getTime() - new Date(call.startedAt).getTime()) / 1000))
+            : undefined;
         await prisma.call.update({
           where: { id: call.id },
           data: {
+            ...(!isParticipantAbort ? { status: CallStatus.FAILED } : {}),
+            ...(isRoomAborted
+              ? {
+                  endedAt: eventTime,
+                  participantCount: 0,
+                  ...(durationSeconds !== undefined ? { durationSeconds } : {}),
+                }
+              : {}),
             errorCode: eventName.toUpperCase(),
             errorMessage: `LiveKit ${eventName}${
               event.participant?.identity ? ` (${event.participant.identity})` : ''
@@ -245,12 +304,17 @@ export class CallsService {
             lastEvent: eventName,
             livekitRoomSid: roomSid ?? call.livekitRoomSid,
             ...(isParticipantAbort
-              ? { participantCount: Math.max(0, (call.participantCount ?? 1) - 1) }
+              ? { participantCount: (call.participantCount ?? 0) > 0 ? { decrement: 1 } : 0 }
               : {}),
             metadata: appendTelemetryEvent(call.metadata, eventRecord, {
               lastFailure: eventRecord,
             }),
           },
+        });
+        io?.to([`consultation:${call.consultationId}`]).emit('call:degraded', {
+          consultationId: call.consultationId,
+          errorCode: eventName.toUpperCase(),
+          at: eventTime.toISOString(),
         });
         break;
       }
@@ -295,7 +359,10 @@ export class CallsService {
     return event;
   }
 
-  public async generateLiveKitToken(consultationId: string, user: User) {
+  public async generateLiveKitToken(consultationId: string, user: User, requestDeviceId?: string) {
+    await featureFlagsService.syncFromRedis();
+    featureFlagsService.assertEnabled('VIDEOCALLS_ENABLED');
+
     const consultation = await prisma.consultation.findUnique({
       where: { id: consultationId },
     });
@@ -312,16 +379,59 @@ export class CallsService {
       throw new AppError('Acceso denegado: no eres participante de esta consulta', 403, 'FORBIDDEN');
     }
 
-    if (consultation.status !== ConsultationStatus.ACTIVE) {
+    if (!CALLABLE_CONSULTATION_STATUSES.includes(consultation.status)) {
       throw new AppError('Solo se pueden generar tokens para consultas activas', 400, 'INVALID_CONSULTATION_STATE');
     }
 
     const { apiKey, apiSecret, wsUrl } = getLiveKitConfig();
+    const normalizedRequestDeviceId = extractDeviceId(requestDeviceId);
+    let effectiveDeviceId: string | null = consultation.activeDeviceId ?? null;
+
+    if (isClient) {
+      if (effectiveDeviceId !== null) {
+        if (normalizedRequestDeviceId !== effectiveDeviceId) {
+          throw new AppError(
+            'Tu sesión activa fue transferida a otro dispositivo',
+            409,
+            'DEVICE_SESSION_STALE'
+          );
+        }
+      } else if (normalizedRequestDeviceId) {
+        if (typeof prisma.consultation.updateMany === 'function') {
+          const bindCas = await prisma.consultation.updateMany({
+            where: {
+              id: consultationId,
+              clientId: user.id,
+              activeDeviceId: null,
+              deletedAt: null,
+            },
+            data: {
+              activeDeviceId: normalizedRequestDeviceId,
+              stateVersion: { increment: 1 },
+            },
+          });
+
+          if (bindCas.count === 0) {
+            const latest = await prisma.consultation.findUnique({
+              where: { id: consultationId },
+              select: { activeDeviceId: true },
+            });
+            if (latest?.activeDeviceId !== normalizedRequestDeviceId) {
+              throw new AppError(
+                'Tu sesión activa fue transferida a otro dispositivo',
+                409,
+                'DEVICE_SESSION_STALE'
+              );
+            }
+          }
+        }
+        effectiveDeviceId = normalizedRequestDeviceId;
+      }
+    }
 
     // Zero PII guardrail: compound identity for tutor with active device, else user.id (NO email or phone)
-    const identity = isClient && consultation.activeDeviceId
-      ? `tutor_${user.id}:${consultation.activeDeviceId}`
-      : user.id;
+    const identity =
+      isClient && effectiveDeviceId ? `tutor_${user.id}:${effectiveDeviceId}` : user.id;
 
     const at = new AccessToken(apiKey, apiSecret, {
       identity,
@@ -348,6 +458,9 @@ export class CallsService {
   }
 
   public async ringCall(consultationId: string, callerUser: User) {
+    await featureFlagsService.syncFromRedis();
+    featureFlagsService.assertEnabled('VIDEOCALLS_ENABLED');
+
     const consultation = await prisma.consultation.findUnique({
       where: { id: consultationId },
     });
@@ -356,7 +469,7 @@ export class CallsService {
       throw new AppError('Consulta no encontrada', 404, 'CONSULTATION_NOT_FOUND');
     }
 
-    if (consultation.status !== ConsultationStatus.ACTIVE) {
+    if (!CALLABLE_CONSULTATION_STATUSES.includes(consultation.status)) {
       throw new AppError('La consulta debe estar ACTIVE para iniciar llamada', 400, 'INVALID_CONSULTATION_STATE');
     }
 
@@ -400,6 +513,86 @@ export class CallsService {
       consultationId,
       targetUserId,
       status: 'RINGING',
+    };
+  }
+
+  public async reportIncident(
+    consultationId: string,
+    reporter: User,
+    dto: { reason: string; errorCode?: string }
+  ) {
+    const consultation = await prisma.consultation.findUnique({
+      where: { id: consultationId },
+    });
+
+    if (!consultation || consultation.deletedAt) {
+      throw new AppError('Consulta no encontrada', 404, 'CONSULTATION_NOT_FOUND');
+    }
+
+    const isClient = consultation.clientId === reporter.id;
+    const isVet = consultation.vetId === reporter.id;
+    const isAdmin = reporter.role === Role.ADMIN;
+    if (!isClient && !isVet && !isAdmin) {
+      throw new AppError('No eres participante de esta consulta', 403, 'NOT_CONSULTATION_PARTICIPANT');
+    }
+
+    const incidentCode = (dto.errorCode || 'CALL_CONNECTION_DEGRADED').trim();
+
+    if (prisma.consultationMetadata?.upsert) {
+      await prisma.consultationMetadata
+        .upsert({
+          where: { consultationId },
+          create: { consultationId, incidentCode },
+          update: { incidentCode },
+        })
+        .catch((err) => {
+          if (typeof isMissingTableError === 'function' && isMissingTableError(err)) return;
+          throw err;
+        });
+    }
+
+    if (prisma.consultationAuditLog?.create) {
+      await prisma.consultationAuditLog.create({
+        data: {
+          consultationId,
+          eventType: 'CALL_INCIDENT',
+          previousState: consultation.status,
+          newState: consultation.status,
+          actorId: reporter.id,
+          metadata: { incidentCode, reason: dto.reason },
+        },
+      });
+    }
+
+    io?.to([`consultation:${consultationId}`]).emit('call:degraded', {
+      consultationId,
+      errorCode: incidentCode,
+      reason: dto.reason,
+      reportedBy: reporter.id,
+    });
+    void captureTelemetryException(new Error(dto.reason), {
+      consultationId,
+      incidentCode,
+      reporterId: reporter.id,
+    });
+
+    const recipientId = isClient ? consultation.vetId : consultation.clientId;
+    if (recipientId) {
+      await notificationsService
+        .createAndDispatch(
+          recipientId,
+          'Inconveniente técnico en videollamada',
+          `${reporter.firstName || 'El participante'} reportó un fallo técnico: ${dto.reason}. Podés continuar por chat o reprogramar.`,
+          'CALL_INCIDENT',
+          { consultationId, incidentCode }
+        )
+        .catch(() => {});
+    }
+
+    return {
+      consultationId,
+      incidentCode,
+      reason: dto.reason,
     };
   }
 }

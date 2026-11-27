@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
 import { startRingtone, stopRingtone } from '../../lib/ringtone';
 import { Video, PhoneCall, PhoneOff, ShieldCheck } from 'lucide-react';
+import { useFocusTrap } from '../common/DialogOverlay';
 
 import api from '../../services/api';
 
@@ -10,9 +12,11 @@ interface IncomingCallData {
   consultationId: string;
   callerName: string;
   roomName: string;
+  isResume?: boolean;
 }
 
 export const GlobalCallListener: React.FC = () => {
+  const { user } = useAuth();
   const { socket, emitEvent } = useSocket();
   const navigate = useNavigate();
   const [incomingCall, setIncomingCall] = useState<IncomingCallData | null>(null);
@@ -41,11 +45,20 @@ export const GlobalCallListener: React.FC = () => {
       startRingtone();
     };
 
-    const handleCriticalResume = (data: { consultationId: string }) => {
+    const handleCriticalResume = (data: { consultationId?: string }) => {
       stopRingtone();
       setIncomingCall(null);
-      if (data?.consultationId) {
-        navigate(`/call/${data.consultationId}`);
+      if (
+        data?.consultationId &&
+        typeof window !== 'undefined' &&
+        !window.location.pathname.startsWith(`/call/${data.consultationId}`)
+      ) {
+        setIncomingCall({
+          consultationId: data.consultationId,
+          callerName: 'Tenés una consulta activa en curso',
+          roomName: data.consultationId,
+          isResume: true,
+        });
       }
     };
 
@@ -59,37 +72,46 @@ export const GlobalCallListener: React.FC = () => {
     socket.on?.('call:incoming', handleIncomingCall);
     socket.on?.('consultation:critical_resume', handleCriticalResume);
     socket.on?.('call:ended', handleDismissCall);
-    socket.on?.('call:cancelled', handleDismissCall);
+    socket.on?.('consultation:cancelled', handleDismissCall);
 
     return () => {
       stopRingtone();
       socket.off?.('call:incoming', handleIncomingCall);
       socket.off?.('consultation:critical_resume', handleCriticalResume);
       socket.off?.('call:ended', handleDismissCall);
-      socket.off?.('call:cancelled', handleDismissCall);
+      socket.off?.('consultation:cancelled', handleDismissCall);
     };
-  }, [socket, navigate]);
+  }, [socket, navigate, user?.role]);
 
   const handleAccept = async () => {
     if (!incomingCall) return;
     const cid = incomingCall.consultationId;
+    const targetUrl = user?.role === 'CLIENT' ? `/call/${cid}?from=client` : `/call/${cid}`;
     stopRingtone();
     setIncomingCall(null);
     try {
-      await api.patch(`/api/consultations/${cid}/assign`);
+      if (user?.role !== 'CLIENT') {
+        await api.patch(`/api/consultations/${cid}/assign`);
+      }
     } catch {
       // Fallback defensivo: CallRoom.tsx reintentará si sigue en WAITING o ignorará si ya está ACTIVE
     } finally {
-      navigate(`/call/${cid}`);
+      navigate(targetUrl);
     }
   };
+
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   const handleReject = () => {
     if (!incomingCall) return;
     stopRingtone();
-    emitEvent('call:rejected', { consultationId: incomingCall.consultationId });
+    if (!incomingCall.isResume) {
+      emitEvent('call:rejected', { consultationId: incomingCall.consultationId });
+    }
     setIncomingCall(null);
   };
+
+  useFocusTrap(Boolean(incomingCall), dialogRef, { onEscape: handleReject });
 
   if (!incomingCall) return null;
 
@@ -99,9 +121,9 @@ export const GlobalCallListener: React.FC = () => {
       aria-modal="true"
       aria-labelledby="incoming-call-title"
       data-testid="global-incoming-call-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#183c3a]/55 backdrop-blur-md animate-in fade-in duration-300"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#183c3a]/55 backdrop-blur-md hc-dialog-backdrop"
     >
-      <div className="bg-[#fffbef] rounded-3xl max-w-sm w-full p-6 sm:p-7 shadow-[0_25px_60px_-15px_rgba(24,60,58,0.28)] border border-[#e4dfd2] text-center space-y-5 animate-in zoom-in-95 duration-200">
+      <div ref={dialogRef} className="bg-[#fffbef] rounded-3xl max-w-sm w-full p-6 sm:p-7 shadow-[0_25px_60px_-15px_rgba(24,60,58,0.28)] border border-[#e4dfd2] text-center space-y-5 hc-dialog-panel">
         {/* Pulsing Clinical Video Call Avatar */}
         <div className="relative mx-auto w-20 h-20">
           <div className="absolute inset-0 rounded-full bg-[#609f9c]/25 animate-ping" />
@@ -136,20 +158,20 @@ export const GlobalCallListener: React.FC = () => {
             type="button"
             data-testid="reject-incoming-call-button"
             onClick={handleReject}
-            className="flex items-center justify-center gap-2 py-3 px-4 rounded-full text-xs font-bold text-[#ae4d45] bg-[#fcece9] hover:bg-[#f9ded8] active:bg-[#f6cfc7] border border-[#e98b70]/50 transition-all cursor-pointer"
+            className="flex items-center justify-center gap-2 py-3 px-4 rounded-full text-xs font-bold text-[#ae4d45] bg-[#fcece9] hover:bg-[#f9ded8] active:bg-[#f6cfc7] active:scale-[0.97] border border-[#e98b70]/50 transition-[transform,background-color,border-color] duration-150 cursor-pointer"
           >
             <PhoneOff className="w-4 h-4" />
-            <span>Rechazar</span>
+            <span>{incomingCall.isResume ? 'Más tarde' : 'Rechazar'}</span>
           </button>
 
           <button
             type="button"
             data-testid="accept-incoming-call-button"
             onClick={handleAccept}
-            className="flex items-center justify-center gap-2 py-3 px-4 rounded-full text-xs font-extrabold text-white bg-[#609f9c] hover:bg-[#4d8d89] active:bg-[#315f5d] shadow-md shadow-[#609f9c]/25 transition-all cursor-pointer"
+            className="flex items-center justify-center gap-2 py-3 px-4 rounded-full text-xs font-extrabold text-white bg-[#315f5d] hover:bg-[#183c3a] active:bg-[#183c3a] active:scale-[0.97] shadow-md shadow-[#315f5d]/25 transition-[transform,background-color] duration-150 cursor-pointer"
           >
-            <PhoneCall className="w-4 h-4 animate-bounce" />
-            <span>Atender</span>
+            <PhoneCall className="w-4 h-4" aria-hidden="true" />
+            <span>{incomingCall.isResume ? 'Entrar' : 'Atender'}</span>
           </button>
         </div>
       </div>

@@ -64,4 +64,22 @@ describe('SessionTerminatedModal Component', () => {
 
     expect(mockDismiss).toHaveBeenCalledTimes(1);
   });
+
+  it('should render dedicated handoff title and copy for SESSION_MIGRATED_NEW_DEVICE', () => {
+    mockSessionTerminated = {
+      reason: 'SESSION_MIGRATED_NEW_DEVICE',
+      message: '',
+    };
+
+    render(
+      <MemoryRouter>
+        <SessionTerminatedModal />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('Llamada transferida a otro dispositivo')).toBeDefined();
+    expect(
+      screen.getByText(/Retomaste esta consulta desde otro dispositivo o navegador/i)
+    ).toBeDefined();
+  });
 });

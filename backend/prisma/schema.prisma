@@ -25,12 +25,6 @@ enum ConsultationStatus {
   ACTIVE
   COMPLETED
   CANCELLED
-  TRIAGE_CRITICAL_QUEUED
-  CLAIM_PENDING_SYNC
-  LIVEKIT_CONNECTING
-  IN_CALL_ACTIVE
-  AWAITING_EMERGENCY_CALLBACK
-  HANDOFF_IN_PROGRESS
 }
 
 enum CallStatus {
@@ -38,6 +32,37 @@ enum CallStatus {
   ACTIVE
   ENDED
   FAILED
+}
+
+enum VaccineStatus {
+  UP_TO_DATE
+  UPCOMING
+  OVERDUE
+}
+
+enum PetDocumentCategory {
+  LAB_RESULT
+  IMAGING
+  CERTIFICATE
+  PRESCRIPTION
+  OTHER
+}
+
+enum FollowUpStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+enum ClinicalTemplateKind {
+  EVOLUTION
+  PRESCRIPTION
+}
+
+enum LedgerEntryStatus {
+  SIMULATED
+  PENDING_SETTLEMENT
+  SETTLED
 }
 
 model User {
@@ -61,18 +86,32 @@ model User {
   updatedAt     DateTime   @updatedAt @map("updated_at")
   deletedAt     DateTime?  @map("deleted_at")
 
-  pets                Pet[]
-  clientConsultations Consultation[]       @relation("ClientConsultations")
-  vetConsultations    Consultation[]       @relation("VetConsultations")
-  messages            Message[]
-  issuedPrescriptions Prescription[]
-  givenReviews        Review[]             @relation("GivenReviews")
-  receivedReviews     Review[]             @relation("ReceivedReviews")
-  auditLogs           AuditLog[]
-  pushTokens          PushToken[]
-  notifications       Notification[]
-  mediaFiles          MediaFile[]
-  dailyUploadCounters DailyUploadCounter[]
+  pets                   Pet[]
+  clientConsultations    Consultation[]          @relation("ClientConsultations")
+  vetConsultations       Consultation[]          @relation("VetConsultations")
+  messages               Message[]
+  issuedPrescriptions    Prescription[]
+  givenReviews           Review[]                @relation("GivenReviews")
+  receivedReviews        Review[]                @relation("ReceivedReviews")
+  auditLogs              AuditLog[]
+  pushTokens             PushToken[]
+  notifications          Notification[]
+  mediaFiles             MediaFile[]
+  dailyUploadCounters    DailyUploadCounter[]
+  emailVerification      EmailVerificationToken?
+  petVaccinesCreated     PetVaccine[]
+  petDocumentsUploaded   PetDocument[]
+  clinicalEvolutions     ClinicalEvolution[]
+  coOwnedPets            PetCoOwner[]            @relation("CoOwnerUser")
+  invitedCoOwners        PetCoOwner[]            @relation("CoOwnerInvitedBy")
+  availabilitySlots      VetAvailabilitySlot[]
+  vetFollowUps           FollowUp[]              @relation("VetFollowUps")
+  clientFollowUps        FollowUp[]              @relation("ClientFollowUps")
+  webPushSubscriptions   WebPushSubscription[]
+  notificationPreference NotificationPreference?
+  clinicalTemplates      ClinicalTemplate[]
+  telemedicineConsents   TelemedicineConsent[]
+  ledgerEntries          VetLedgerEntry[]
 
   @@index([role, isOnline, vetStatus, deletedAt])
   @@map("users")
@@ -94,8 +133,15 @@ model Pet {
   updatedAt         DateTime  @updatedAt @map("updated_at")
   deletedAt         DateTime? @map("deleted_at")
 
-  owner         User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  owner         User                @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   consultations Consultation[]
+  profileMedia  PetProfileMedia?
+  mediaLinks    MediaPetLink[]
+  vaccines      PetVaccine[]
+  documents     PetDocument[]
+  evolutions    ClinicalEvolution[]
+  coOwners      PetCoOwner[]
+  followUps     FollowUp[]
 
   @@index([ownerId, deletedAt])
   @@map("pets")
@@ -129,6 +175,11 @@ model Consultation {
   review        Review?
   mediaFiles    MediaFile[]
   auditLogs     ConsultationAuditLog[]
+  clinicalMeta  ConsultationMetadata?
+  evolutions    ClinicalEvolution[]
+  petDocuments  PetDocument[]
+  followUps     FollowUp[]
+  ledgerEntry   VetLedgerEntry?
 
   @@index([clientId, status, deletedAt])
   @@index([vetId, status, deletedAt])
@@ -274,6 +325,9 @@ model MediaFile {
 
   owner        User          @relation(fields: [ownerId], references: [id])
   consultation Consultation? @relation(fields: [consultationId], references: [id])
+  petLink      MediaPetLink?
+  petDocuments PetDocument[]
+  petPhotos    PetProfileMedia[]
 
   @@index([ownerId, deletedAt])
   @@index([consultationId, deletedAt])
@@ -334,4 +388,290 @@ model EmailDispatchLog {
 
   @@index([type, entityId, sentAt])
   @@map("email_dispatch_logs")
+}
+
+model EmailVerificationToken {
+  id         String    @id @default(uuid())
+  userId     String    @unique @map("user_id")
+  email      String
+  codeHash   String    @map("code_hash")
+  expiresAt  DateTime  @map("expires_at")
+  verifiedAt DateTime? @map("verified_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([email, expiresAt])
+  @@map("email_verification_tokens")
+}
+
+model PetProfileMedia {
+  petId       String     @id @map("pet_id")
+  mediaFileId String?    @map("media_file_id")
+  photoUrl    String     @map("photo_url")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+
+  pet       Pet        @relation(fields: [petId], references: [id], onDelete: Cascade)
+  mediaFile MediaFile? @relation(fields: [mediaFileId], references: [id], onDelete: SetNull)
+
+  @@map("pet_profile_media")
+}
+
+model MediaPetLink {
+  mediaFileId String   @id @map("media_file_id")
+  petId       String   @map("pet_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  mediaFile MediaFile @relation(fields: [mediaFileId], references: [id], onDelete: Cascade)
+  pet       Pet       @relation(fields: [petId], references: [id], onDelete: Cascade)
+
+  @@index([petId])
+  @@map("media_pet_links")
+}
+
+model ConsultationMetadata {
+  consultationId    String    @id @map("consultation_id")
+  scheduledAt       DateTime? @map("scheduled_at")
+  rescheduledFromId String?   @map("rescheduled_from_id")
+  incidentCode      String?   @map("incident_code")
+  feeSnapshot       Int?      @map("fee_snapshot")
+  takeRateSnapshot  Float?    @map("take_rate_snapshot")
+  currencySnapshot  String?   @map("currency_snapshot")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  consultation Consultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+
+  @@index([scheduledAt])
+  @@map("consultation_metadata")
+}
+
+model PetVaccine {
+  id          String        @id @default(uuid())
+  petId       String        @map("pet_id")
+  createdById String        @map("created_by_id")
+  name        String
+  appliedAt   DateTime      @map("applied_at")
+  nextDueAt   DateTime?     @map("next_due_at")
+  status      VaccineStatus @default(UP_TO_DATE)
+  notes       String?
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+  deletedAt   DateTime?     @map("deleted_at")
+
+  pet       Pet  @relation(fields: [petId], references: [id], onDelete: Cascade)
+  createdBy User @relation(fields: [createdById], references: [id])
+
+  @@index([petId, deletedAt])
+  @@index([nextDueAt, deletedAt])
+  @@map("pet_vaccines")
+}
+
+model PetDocument {
+  id             String              @id @default(uuid())
+  petId          String              @map("pet_id")
+  consultationId String?             @map("consultation_id")
+  mediaFileId    String?             @map("media_file_id")
+  uploadedById   String              @map("uploaded_by_id")
+  title          String
+  category       PetDocumentCategory @default(OTHER)
+  externalUrl    String?             @map("external_url")
+  sizeLabel      String?             @map("size_label")
+  createdAt      DateTime            @default(now()) @map("created_at")
+  updatedAt      DateTime            @updatedAt @map("updated_at")
+  deletedAt      DateTime?           @map("deleted_at")
+
+  pet          Pet           @relation(fields: [petId], references: [id], onDelete: Cascade)
+  consultation Consultation? @relation(fields: [consultationId], references: [id])
+  mediaFile    MediaFile?    @relation(fields: [mediaFileId], references: [id])
+  uploadedBy   User          @relation(fields: [uploadedById], references: [id])
+
+  @@index([petId, deletedAt])
+  @@index([mediaFileId])
+  @@map("pet_documents")
+}
+
+model ClinicalEvolution {
+  id             String    @id @default(uuid())
+  petId          String    @map("pet_id")
+  consultationId String?   @map("consultation_id")
+  vetId          String    @map("vet_id")
+  summary        String
+  subjective     String?
+  objective      String?
+  assessment     String?
+  plan           String?
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  pet          Pet           @relation(fields: [petId], references: [id], onDelete: Cascade)
+  consultation Consultation? @relation(fields: [consultationId], references: [id])
+  vet          User          @relation(fields: [vetId], references: [id])
+
+  @@index([petId, createdAt(sort: Desc)])
+  @@index([consultationId])
+  @@map("clinical_evolutions")
+}
+
+model PetCoOwner {
+  id          String    @id @default(uuid())
+  petId       String    @map("pet_id")
+  userId      String    @map("user_id")
+  invitedById String    @map("invited_by_id")
+  role        String    @default("CO_TUTOR")
+  acceptedAt  DateTime? @map("accepted_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  pet       Pet  @relation(fields: [petId], references: [id], onDelete: Cascade)
+  user      User @relation("CoOwnerUser", fields: [userId], references: [id], onDelete: Cascade)
+  invitedBy User @relation("CoOwnerInvitedBy", fields: [invitedById], references: [id])
+
+  @@unique([petId, userId])
+  @@index([userId])
+  @@map("pet_co_owners")
+}
+
+model VetAvailabilitySlot {
+  id              String   @id @default(uuid())
+  vetId           String   @map("vet_id")
+  dayOfWeek       Int      @map("day_of_week")
+  startTime       String   @map("start_time")
+  endTime         String   @map("end_time")
+  slotDurationMin Int      @default(30) @map("slot_duration_min")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  vet User @relation(fields: [vetId], references: [id], onDelete: Cascade)
+
+  @@index([vetId, dayOfWeek, isActive])
+  @@map("vet_availability_slots")
+}
+
+model FollowUp {
+  id             String         @id @default(uuid())
+  petId          String         @map("pet_id")
+  consultationId String?        @map("consultation_id")
+  vetId          String         @map("vet_id")
+  clientId       String         @map("client_id")
+  title          String
+  notes          String?
+  dueAt          DateTime       @map("due_at")
+  status         FollowUpStatus @default(PENDING)
+  reminderSentAt DateTime?      @map("reminder_sent_at")
+  completedAt    DateTime?      @map("completed_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  pet          Pet           @relation(fields: [petId], references: [id], onDelete: Cascade)
+  consultation Consultation? @relation(fields: [consultationId], references: [id])
+  vet          User          @relation("VetFollowUps", fields: [vetId], references: [id])
+  client       User          @relation("ClientFollowUps", fields: [clientId], references: [id])
+
+  @@index([vetId, status, dueAt])
+  @@index([clientId, status, dueAt])
+  @@map("follow_ups")
+}
+
+model WebPushSubscription {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?  @map("user_agent")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("web_push_subscriptions")
+}
+
+model NotificationPreference {
+  userId                String   @id @map("user_id")
+  inAppEnabled          Boolean  @default(true) @map("in_app_enabled")
+  pushEnabled           Boolean  @default(true) @map("push_enabled")
+  emailRemindersEnabled Boolean  @default(true) @map("email_reminders_enabled")
+  vaccineReminders      Boolean  @default(true) @map("vaccine_reminders")
+  appointmentReminders  Boolean  @default(true) @map("appointment_reminders")
+  marketingEnabled      Boolean  @default(false) @map("marketing_enabled")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification_preferences")
+}
+
+model ClinicalTemplate {
+  id        String               @id @default(uuid())
+  vetId     String?              @map("vet_id")
+  kind      ClinicalTemplateKind
+  name      String
+  category  String               @default("General")
+  payload   Json
+  createdAt DateTime             @default(now()) @map("created_at")
+  updatedAt DateTime             @updatedAt @map("updated_at")
+
+  vet User? @relation(fields: [vetId], references: [id], onDelete: Cascade)
+
+  @@index([vetId, kind])
+  @@map("clinical_templates")
+}
+
+model TelemedicineConsent {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  version    String
+  acceptedAt DateTime @default(now()) @map("accepted_at")
+  ipAddress  String?  @map("ip_address")
+  userAgent  String?  @map("user_agent")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, version])
+  @@map("telemedicine_consents")
+}
+
+model PlatformFeatureFlag {
+  key         String   @id
+  enabled     Boolean
+  description String
+  updatedBy   String?  @map("updated_by")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("platform_feature_flags")
+}
+
+model PlatformPricingSetting {
+  id                 String   @id @default("default")
+  baseConsultationFee Int     @default(15000) @map("base_consultation_fee")
+  platformTakeRate   Float    @default(0.2) @map("platform_take_rate")
+  currency           String   @default("ARS")
+  updatedBy          String?  @map("updated_by")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@map("platform_pricing_settings")
+}
+
+model VetLedgerEntry {
+  id               String            @id @default(uuid())
+  consultationId   String            @unique @map("consultation_id")
+  vetId            String            @map("vet_id")
+  grossAmount      Int               @map("gross_amount")
+  platformFee      Int               @map("platform_fee")
+  vetNetAmount     Int               @map("vet_net_amount")
+  currency         String            @default("ARS")
+  status           LedgerEntryStatus @default(SIMULATED)
+  externalProvider String?           @map("external_provider")
+  externalRef      String?           @map("external_ref")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+
+  consultation Consultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+  vet          User         @relation(fields: [vetId], references: [id])
+
+  @@index([vetId, status, createdAt(sort: Desc)])
+  @@map("vet_ledger_entries")
 }

@@ -1,4 +1,5 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { memo, useEffect, useState, useRef, useCallback } from "react";
+import { Drawer } from "vaul";
 import "./vet.css";
 import ClientScopedStyle from "../styles/ClientScopedStyle";
 import { getWsUrl } from "../lib/ws";
@@ -21,6 +22,10 @@ import { ReviewModal } from "../components/ui/ReviewModal";
 import { HamsterMascot } from "../components/ui/HamsterMascot";
 import { parseConsultationNotes } from "../lib/consultationNotes";
 import { postMobileBridgeMessage } from "../lib/mobileBridge";
+import { normalizeMediaUrl } from "../lib/authenticatedMedia";
+import { useVisualViewport } from "../lib/useVisualViewport";
+import { useIsMobileViewport } from "../lib/useIsMobileViewport";
+import { prefersReducedMotion } from "../lib/motion";
 
 const WAITING_TIPS = [
   "Habilitá la cámara y el micrófono en tu navegador para que el veterinario pueda ver y escuchar a tu mascota.",
@@ -69,6 +74,7 @@ function WaitingRoomExperience({
   vetInitials,
   symptom,
   clock,
+  waitSecs = 0,
   tierLabel,
   onBack,
   onCancel,
@@ -81,6 +87,7 @@ function WaitingRoomExperience({
   vetInitials?: string;
   symptom?: string;
   clock: string;
+  waitSecs?: number;
   tierLabel?: string | null;
   onBack: () => void;
   onCancel?: () => void;
@@ -101,6 +108,10 @@ function WaitingRoomExperience({
 
   // Logo entrance animations
   useEffect(() => {
+    if (prefersReducedMotion()) {
+      setIsLive(true);
+      return;
+    }
     const g = (id: string) => logoRef.current?.querySelector<SVGElement>(`#${id}`) || null;
     const pop = (el: SVGElement | null, delay: number, rot = 0) => {
       if (!el || typeof el.animate !== "function") return;
@@ -108,11 +119,11 @@ function WaitingRoomExperience({
       el.style.transformOrigin = "50% 50%";
       el.animate(
         [
-          { opacity: 0, transform: `scale(0) rotate(${rot}deg)` },
-          { opacity: 1, transform: `scale(1.18) rotate(${rot ? 6 : 0}deg)`, offset: 0.6 },
+          { opacity: 0, transform: `scale(0.9) rotate(${rot}deg)` },
+          { opacity: 1, transform: `scale(1.08) rotate(${rot ? 4 : 0}deg)`, offset: 0.6 },
           { opacity: 1, transform: "none" }
         ],
-        { duration: 380, delay, easing: "cubic-bezier(.3,.7,.3,1)", fill: "backwards" }
+        { duration: 300, delay, easing: "cubic-bezier(0.23, 1, 0.32, 1)", fill: "backwards" }
       );
     };
 
@@ -200,32 +211,21 @@ function WaitingRoomExperience({
     window.setTimeout(jump, letters.length * 85 + 300);
   }, []);
 
-  // Wordmark letters initial entrance + periodic bounce
+  // Wordmark letters initial entrance (one-shot, no infinite bounce cycle)
   useEffect(() => {
     const word = wordRef.current;
-    if (!word) return;
+    if (!word || prefersReducedMotion()) return;
     const letters = word.querySelectorAll<HTMLElement>(".v-wait__ch");
 
     letters.forEach((e, i) => {
       if (typeof e.animate === "function") {
         e.animate(
-          [{ opacity: 0, transform: "scale(0)" }, { opacity: 1, transform: "scale(1.35)", offset: 0.6 }, { opacity: 1, transform: "scale(1)" }],
-          { duration: 420, delay: 1700 + i * 90, easing: "ease-out", fill: "backwards" }
+          [{ opacity: 0, transform: "scale(0.9)" }, { opacity: 1, transform: "scale(1.08)", offset: 0.6 }, { opacity: 1, transform: "scale(1)" }],
+          { duration: 280, delay: 900 + i * 50, easing: "cubic-bezier(0.23, 1, 0.32, 1)", fill: "backwards" }
         );
       }
     });
-
-    let cycleInterval: number;
-    const initialCycleTimeout = window.setTimeout(() => {
-      triggerCycle();
-      cycleInterval = window.setInterval(triggerCycle, 6400);
-    }, 4900);
-
-    return () => {
-      window.clearTimeout(initialCycleTimeout);
-      window.clearInterval(cycleInterval);
-    };
-  }, [triggerCycle]);
+  }, []);
 
   // Status transitions
   useEffect(() => {
@@ -362,7 +362,14 @@ function WaitingRoomExperience({
           <div className="v-wait__timer" role="timer" aria-label={isVet ? "Tiempo de guardia" : "Tiempo de espera"}>
             <svg viewBox="0 0 48 48" aria-hidden="true">
               <circle className="v-wait__tr" cx="24" cy="24" r="21" />
-              <circle className="v-wait__tf" cx="24" cy="24" r="21" pathLength={100} />
+              <circle
+                className="v-wait__tf"
+                cx="24"
+                cy="24"
+                r="21"
+                pathLength={100}
+                style={{ animationDelay: `-${(waitSecs ?? 0) % 60}s` }}
+              />
             </svg>
             <span className="v-wait__clock">{clock}</span>
           </div>
@@ -555,6 +562,53 @@ function WaitingRoomExperience({
   );
 }
 
+const LIVEKIT_STAGE_STYLE = {
+  width: "100%",
+  height: "100%",
+  position: "absolute",
+  inset: 0,
+} as const;
+
+const LiveKitCallCanvas = memo(function LiveKitCallCanvas({
+  cam,
+  mic,
+  token,
+  serverUrl,
+  onConnected,
+  onError,
+  onMediaDeviceFailure,
+  onDisconnected,
+}: {
+  cam: boolean;
+  mic: boolean;
+  token: string;
+  serverUrl?: string;
+  onConnected: () => void;
+  onError: (err: Error) => void;
+  onMediaDeviceFailure: (failure?: unknown) => void;
+  onDisconnected: (reason?: unknown) => void;
+}) {
+  return (
+    <LiveKitRoom
+      video={cam}
+      audio={mic}
+      token={token}
+      serverUrl={serverUrl}
+      connect={true}
+      options={LIVEKIT_ROOM_OPTIONS}
+      data-lk-theme="default"
+      style={LIVEKIT_STAGE_STYLE}
+      onConnected={onConnected}
+      onError={onError}
+      onMediaDeviceFailure={onMediaDeviceFailure}
+      onDisconnected={onDisconnected}
+    >
+      <LiveKitTrackSynchronizer mic={mic} cam={cam} />
+      <VideoConference />
+    </LiveKitRoom>
+  );
+});
+
 export function LiveKitTrackSynchronizer({ mic, cam }: { mic: boolean; cam: boolean }) {
   const { localParticipant } = useLocalParticipant();
 
@@ -701,10 +755,17 @@ function CallChatPanel({
       });
     };
 
+    const handleChatDeleted = (payload?: { consultationId?: string }) => {
+      if (payload?.consultationId && payload.consultationId !== consultationId) return;
+      setMessages([]);
+    };
+
     socket.on?.("message:new", handleMessageNew);
+    socket.on?.("chat:deleted", handleChatDeleted);
 
     return () => {
       socket.off?.("message:new", handleMessageNew);
+      socket.off?.("chat:deleted", handleChatDeleted);
     };
   }, [socket, consultationId, user?.id]);
 
@@ -811,16 +872,7 @@ function CallChatPanel({
       consultationEpochRef.current !== targetEpoch;
     if (isStaleTarget()) return;
 
-    const localPreviewUrl = URL.createObjectURL(file);
     const sizeKB = (file.size / 1024).toFixed(1);
-    const localDoc: ClinicalChatDoc = {
-      title: file.name,
-      sub: isImage ? `Imagen clínica · ${sizeKB} KB` : `Documento clínico · ${sizeKB} KB`,
-      bannerTag: isImage ? "FOTO / ARCHIVO CLÍNICO" : "DOCUMENTO ADJUNTO",
-      bannerTitle: "HuelliCam · Expediente Clínico",
-      fileUrl: localPreviewUrl,
-      isImage,
-    };
 
     let uploadedAttachmentUrl: string | undefined;
     try {
@@ -834,17 +886,29 @@ function CallChatPanel({
       if (isStaleTarget()) return;
       const uploadedId = uploadRes.data?.data?.id;
       const uploadedUrl = uploadRes.data?.data?.url;
-      if (uploadedUrl) {
-        uploadedAttachmentUrl = uploadedUrl;
-      } else if (uploadedId) {
-        uploadedAttachmentUrl = `/api/media/${uploadedId}`;
-      }
+      uploadedAttachmentUrl = uploadedUrl
+        ? normalizeMediaUrl(uploadedUrl)
+        : uploadedId
+          ? `/api/media/${uploadedId}`
+          : undefined;
     } catch (err) {
       if (isStaleTarget()) return;
-      console.warn("Media upload fallback to clinical chat entry:", err);
+      console.warn("Media upload failed, aborting chat attachment message:", err);
+      return;
     }
 
-    if (isStaleTarget()) return;
+    if (!uploadedAttachmentUrl || isStaleTarget()) {
+      return;
+    }
+
+    const localDoc: ClinicalChatDoc = {
+      title: file.name,
+      sub: isImage ? `Imagen clínica · ${sizeKB} KB` : `Documento clínico · ${sizeKB} KB`,
+      bannerTag: isImage ? "FOTO / ARCHIVO CLÍNICO" : "DOCUMENTO ADJUNTO",
+      bannerTitle: "HuelliCam · Expediente Clínico",
+      fileUrl: uploadedAttachmentUrl,
+      isImage,
+    };
 
     await dispatchMessage(`📎 Adjunto: ${file.name}`, {
       attachmentUrl: uploadedAttachmentUrl,
@@ -921,25 +985,57 @@ function CallChatPanel({
 export type CallRoomPanel = "" | "Chat" | "Ficha" | "Evolución";
 
 function Room({ id }: { id: string }) {
-  const { user } = useAuth();
-  const { socket, joinConsultation, leaveConsultation, emitEvent } = useSocket();
+  const { user, loading: authLoading } = useAuth();
+  const { socket, reconnectingConsultations = {}, joinConsultation, leaveConsultation, emitEvent } = useSocket();
   const roomActionsRef = useRef({ joinConsultation, leaveConsultation });
   roomActionsRef.current = { joinConsultation, leaveConsultation };
   const queryClient = useQueryClient();
   const { consults, queue, finish } = useVet();
+  const [authErrorStatus, setAuthErrorStatus] = useState<number | null>(null);
+
+  const cachedUser = (() => {
+    try {
+      const raw = typeof window !== "undefined" ? window.localStorage.getItem("huellicam_user") : null;
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  })();
+  const effectiveUser = user || cachedUser;
 
   // Fetch real consultation data from PostgreSQL (reactive invalidation via SocketContext)
   const { data: consultation, refetch: refetchConsultation } = useQuery<BackendConsultation | null>({
     queryKey: ["consultation", id],
+    enabled: Boolean(id && effectiveUser),
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
     queryFn: async () => {
       try {
         const res = await api.get<ApiResponse<BackendConsultation>>(`/api/consultations/${id}`);
+        setAuthErrorStatus(null);
         return res.data.success && res.data.data ? res.data.data : null;
-      } catch {
+      } catch (err: unknown) {
+        const status = (err as { response?: { status?: number } })?.response?.status;
+        if (status === 401 || status === 403) {
+          setAuthErrorStatus(status);
+        }
         return null;
       }
     },
   });
+
+  // Sync consultation state when returning to browser tab while waiting
+  useEffect(() => {
+    if (!id || !effectiveUser || authErrorStatus) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && (!consultationStatusRef.current || consultationStatusRef.current === "WAITING")) {
+        void refetchConsultation();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [id, effectiveUser, authErrorStatus, refetchConsultation]);
 
   // Dynamically register pet into local dictionary if loaded
   useEffect(() => {
@@ -979,7 +1075,7 @@ function Room({ id }: { id: string }) {
   const wasWaitingRef = useRef(false);
   const [ending, setEnding] = useState(false);
   const endingRef = useRef(false);
-  const disconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const evictedRef = useRef(false);
   endingRef.current = ending;
   const isMountedRef = useRef(true);
   const activeIdRef = useRef(id);
@@ -988,24 +1084,12 @@ function Room({ id }: { id: string }) {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
-      if (disconnectTimerRef.current) {
-        clearTimeout(disconnectTimerRef.current);
-        disconnectTimerRef.current = null;
-      }
     };
   }, []);
   const [showReviewModal, setShowReviewModal] = useState(false);
+  const reviewPromptedRef = useRef(false);
   const localVideoRef = useRef<HTMLVideoElement>(null);
 
-  const cachedUser = (() => {
-    try {
-      const raw = typeof window !== "undefined" ? window.localStorage.getItem("huellicam_user") : null;
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
-  })();
-  const effectiveUser = user || cachedUser;
   const isVet = effectiveUser?.role === "VET";
   const fromClient = effectiveUser
     ? effectiveUser.role === "CLIENT"
@@ -1018,10 +1102,7 @@ function Room({ id }: { id: string }) {
   const assignAttemptedRef = useRef(false);
 
   useEffect(() => {
-    const isPendingAssign =
-      consultation?.status === "WAITING" ||
-      consultation?.status === "TRIAGE_CRITICAL_QUEUED" ||
-      consultation?.status === "CLAIM_PENDING_SYNC";
+    const isPendingAssign = consultation?.status === "WAITING";
 
     if (isPendingAssign && isVet && !assignAttemptedRef.current) {
       assignAttemptedRef.current = true;
@@ -1073,8 +1154,13 @@ function Room({ id }: { id: string }) {
     : (tutorName || "el tutor");
 
   // Derive callState from consultation lifecycle
-  const isConsultationActive =
-    consultation?.status === "ACTIVE" || consultation?.status === "IN_CALL_ACTIVE";
+  const isConsultationActive = consultation?.status === "ACTIVE";
+  const canReview = Boolean(
+    fromClient && consultation?.status === "COMPLETED" && !consultation?.review
+  );
+  const isTutorReconnecting = Boolean(!fromClient && id && reconnectingConsultations?.[id]);
+  const { viewportHeight: callViewportHeight, keyboardInset: callKeyboardInset } = useVisualViewport();
+  const isMobileCallViewport = useIsMobileViewport();
 
   const [callState, setCallState] = useState<"connecting" | "waiting" | "connected" | "reconnecting" | "ended" | "error">(
     isConsultationActive ? "connected" : fromClient ? "waiting" : "connecting"
@@ -1086,11 +1172,9 @@ function Room({ id }: { id: string }) {
   fromClientRef.current = fromClient;
 
   useEffect(() => {
-    if (disconnectTimerRef.current) {
-      clearTimeout(disconnectTimerRef.current);
-      disconnectTimerRef.current = null;
-    }
+    evictedRef.current = false;
     callEndedRef.current = false;
+    reviewPromptedRef.current = false;
     assignAttemptedRef.current = false;
     wasWaitingRef.current = false;
     setLivekitToken(null);
@@ -1100,7 +1184,7 @@ function Room({ id }: { id: string }) {
   }, [id]);
 
   useEffect(() => {
-    const active = consultation?.status === "ACTIVE" || consultation?.status === "IN_CALL_ACTIVE";
+    const active = consultation?.status === "ACTIVE";
     const ended = consultation?.status === "COMPLETED" || consultation?.status === "CANCELLED";
     if (ended) {
       callEndedRef.current = true;
@@ -1116,13 +1200,16 @@ function Room({ id }: { id: string }) {
     }
   }, [consultation?.status, consultation, fromClient]);
 
+  useEffect(() => {
+    if (callState === "ended" && canReview && !reviewPromptedRef.current) {
+      reviewPromptedRef.current = true;
+      setShowReviewModal(true);
+    }
+  }, [callState, canReview]);
+
   // WAITING -> ACTIVE: celebrate for 1.4s (fill ECG to 100%) before mounting the call console
   useEffect(() => {
-    const isWaitingStatus =
-      consultation?.status === "WAITING" ||
-      consultation?.status === "TRIAGE_CRITICAL_QUEUED" ||
-      consultation?.status === "CLAIM_PENDING_SYNC" ||
-      consultation?.status === "LIVEKIT_CONNECTING";
+    const isWaitingStatus = consultation?.status === "WAITING";
     if (isWaitingStatus) {
       wasWaitingRef.current = true;
     } else if (isConsultationActive && wasWaitingRef.current) {
@@ -1137,26 +1224,129 @@ function Room({ id }: { id: string }) {
   const [livekitToken, setLivekitToken] = useState<string | null>(null);
   const [livekitWsUrl, setLivekitWsUrl] = useState<string | undefined>(undefined);
   const [livekitFailed, setLivekitFailed] = useState(false);
+  const [callDegradedReason, setCallDegradedReason] = useState<string | null>(null);
+  const [incidentBusy, setIncidentBusy] = useState(false);
+  const [incidentReported, setIncidentReported] = useState(false);
+  const [reschedOpen, setReschedOpen] = useState(false);
+  const [reschedCallAt, setReschedCallAt] = useState("");
+  const [reschedCallDone, setReschedCallDone] = useState(false);
+
+  const handleRetryVideoToken = useCallback(() => {
+    evictedRef.current = false;
+    setCallDegradedReason(null);
+    setLivekitFailed(false);
+    setLivekitToken(null);
+    setReschedOpen(false);
+  }, []);
+
+  const handleReportCallIncident = useCallback(async (reasonText?: string, code?: string) => {
+    setIncidentBusy(true);
+    try {
+      const reason = reasonText || callDegradedReason || "Fallo de audio/video durante la videoconsulta";
+      await api.post(`/api/calls/${id}/incident`, {
+        reason,
+        errorCode: code || "CALL_CONNECTION_DEGRADED",
+      });
+      setIncidentReported(true);
+      setCallDegradedReason(reason);
+    } catch {
+      // Non-blocking fallback notice
+    } finally {
+      setIncidentBusy(false);
+    }
+  }, [id, callDegradedReason]);
+
+  const handleQuickRescheduleCall = useCallback(async () => {
+    if (!reschedCallAt) return;
+    try {
+      await api.patch(`/api/consultations/${id}/reschedule`, {
+        scheduledAt: new Date(reschedCallAt).toISOString(),
+        reason: "Reprogramado por falla técnica en videollamada",
+      });
+      setReschedCallDone(true);
+    } catch {
+      setReschedCallDone(false);
+    }
+  }, [id, reschedCallAt]);
 
   useEffect(() => {
-    if (consultation?.status === "ACTIVE" && !livekitToken && !livekitFailed) {
+    if (typeof window === "undefined") return;
+    const handleSessionTerminated = () => {
+      evictedRef.current = true;
+      setLivekitToken(null);
+    };
+    window.addEventListener("huellicam:session_terminated", handleSessionTerminated);
+    return () => {
+      window.removeEventListener("huellicam:session_terminated", handleSessionTerminated);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (consultation?.status === "ACTIVE" && !livekitToken && !livekitFailed && !evictedRef.current) {
       let cancelled = false;
-      api
-        .post<ApiResponse<{ token: string; wsUrl: string }>>(`/api/calls/${id}/token`)
-        .then((res) => {
-          if (!cancelled && res.data.success && res.data.data?.token) {
-            setLivekitToken(res.data.data.token);
-            if (res.data.data.wsUrl) setLivekitWsUrl(res.data.data.wsUrl);
-          }
-        })
-        .catch((err) => {
-          if (!cancelled) {
+      let retryTimer: number | undefined;
+      let attempts = 0;
+
+      const fetchToken = () => {
+        attempts += 1;
+        api
+          .post<ApiResponse<{ token: string; wsUrl: string }>>(`/api/calls/${id}/token`)
+          .then((res) => {
+            if (!cancelled && res.data.success && res.data.data?.token) {
+              setLivekitToken(res.data.data.token);
+              if (res.data.data.wsUrl) setLivekitWsUrl(res.data.data.wsUrl);
+            }
+          })
+          .catch((err: unknown) => {
+            if (cancelled) return;
+            const axiosErr = err as {
+              response?: {
+                status?: number;
+                data?: {
+                  code?: string;
+                  message?: string;
+                  error?: { code?: string; message?: string };
+                };
+              };
+            };
+            const status = axiosErr?.response?.status;
+            const errCode = axiosErr?.response?.data?.error?.code || axiosErr?.response?.data?.code;
+            const errMsg =
+              axiosErr?.response?.data?.error?.message ||
+              axiosErr?.response?.data?.message ||
+              "Retomaste esta consulta desde otro dispositivo.";
+            if (status === 409 && errCode === "DEVICE_SESSION_STALE") {
+              evictedRef.current = true;
+              setLivekitToken(null);
+              if (typeof window !== "undefined") {
+                window.dispatchEvent(
+                  new CustomEvent("huellicam:session_terminated", {
+                    detail: {
+                      reason: "SESSION_MIGRATED_NEW_DEVICE",
+                      message: errMsg,
+                    },
+                  })
+                );
+              }
+              return;
+            }
+            if ((status === 401 || status === 403) && !cancelled) {
+              setAuthErrorStatus(status);
+              return;
+            }
+            if (attempts < 2 && !cancelled) {
+              retryTimer = window.setTimeout(fetchToken, 900);
+              return;
+            }
             console.warn("LiveKit token notice:", err);
             setLivekitFailed(true);
-          }
-        });
+          });
+      };
+
+      fetchToken();
       return () => {
         cancelled = true;
+        if (retryTimer !== undefined) window.clearTimeout(retryTimer);
       };
     }
   }, [consultation?.status, id, livekitToken, livekitFailed]);
@@ -1270,9 +1460,6 @@ function Room({ id }: { id: string }) {
       setCallState("ended");
       void queryClient.invalidateQueries({ queryKey: ["consultation", id] });
       void queryClient.invalidateQueries({ queryKey: ["consultations"] });
-      if (fromClient) {
-        setShowReviewModal(true);
-      }
     };
 
     const handleConsultationSync = (payload?: {
@@ -1287,44 +1474,102 @@ function Room({ id }: { id: string }) {
       void queryClient.invalidateQueries({ queryKey: ["consultations"] });
     };
 
+    const handleCriticalResume = (payload?: { consultationId?: string }) => {
+      if (payload?.consultationId && payload.consultationId !== id) return;
+      evictedRef.current = false;
+      setLivekitToken(null);
+      setLivekitFailed(false);
+      void queryClient.invalidateQueries({ queryKey: ["consultation", id] });
+      void queryClient.invalidateQueries({ queryKey: ["consultations"] });
+    };
+
+    const handleCallDegraded = (payload?: { consultationId?: string; reason?: string; errorCode?: string }) => {
+      if (payload?.consultationId && payload.consultationId !== id) return;
+      setCallDegradedReason(payload?.reason || payload?.errorCode || "Inestabilidad detectada en la videollamada");
+      setLivekitFailed(true);
+    };
+
     socket.on?.("connect", handleConnect);
     socket.on?.("call:ended", handleCallEnded);
+    socket.on?.("call:degraded", handleCallDegraded);
     socket.on?.("consultation:assigned", handleConsultationSync);
     socket.on?.("consultation:cancelled", handleConsultationSync);
-    socket.on?.("consultation:critical_resume", handleConsultationSync);
+    socket.on?.("consultation:critical_resume", handleCriticalResume);
     socket.on?.("notification:new", handleConsultationSync);
 
     return () => {
       socket.off?.("connect", handleConnect);
       socket.off?.("call:ended", handleCallEnded);
+      socket.off?.("call:degraded", handleCallDegraded);
       socket.off?.("consultation:assigned", handleConsultationSync);
       socket.off?.("consultation:cancelled", handleConsultationSync);
-      socket.off?.("consultation:critical_resume", handleConsultationSync);
+      socket.off?.("consultation:critical_resume", handleCriticalResume);
       socket.off?.("notification:new", handleConsultationSync);
     };
   }, [socket, id, queryClient, fromClient]);
 
-  // Duration timer
+  // Waiting timer anchored strictly to consultation.createdAt (with mount-time fallback before query resolves)
+  const waitMountMsRef = useRef<number>(Date.now());
   useEffect(() => {
-    const t = window.setInterval(() => setSecs((s) => s + 1), 1000);
+    waitMountMsRef.current = Date.now();
+  }, [id]);
+
+  const computeWaitSecs = useCallback((): number => {
+    const parsedCreated = consultation?.createdAt ? new Date(consultation.createdAt).getTime() : NaN;
+    const baseMs = Number.isFinite(parsedCreated) ? parsedCreated : waitMountMsRef.current;
+    return Math.max(0, Math.floor((Date.now() - baseMs) / 1000));
+  }, [consultation?.createdAt]);
+
+  const [waitSecs, setWaitSecs] = useState<number>(() => computeWaitSecs());
+
+  useEffect(() => {
+    setWaitSecs(computeWaitSecs());
+    if (consultation?.status === "COMPLETED" || consultation?.status === "CANCELLED") {
+      return;
+    }
+    const t = window.setInterval(() => setWaitSecs(computeWaitSecs()), 1000);
     return () => window.clearInterval(t);
-  }, []);
+  }, [computeWaitSecs, consultation?.status]);
+
+  const waitClock = `${String(Math.floor(waitSecs / 60)).padStart(2, "0")}:${String(waitSecs % 60).padStart(2, "0")}`;
+
+  // Active call duration timer anchored to consultation.startedAt (0 while waiting, frozen at endedAt)
+  useEffect(() => {
+    const computeSecs = (): number => {
+      if (!consultation?.startedAt) return 0;
+      const startMs = new Date(consultation.startedAt).getTime();
+      if (!Number.isFinite(startMs)) return 0;
+      const endMs = consultation.endedAt ? new Date(consultation.endedAt).getTime() : Date.now();
+      const validEndMs = Number.isFinite(endMs) ? endMs : Date.now();
+      return Math.max(0, Math.floor((validEndMs - startMs) / 1000));
+    };
+
+    setSecs(computeSecs());
+    if (!consultation?.startedAt || consultation.endedAt || callState === "ended") {
+      return;
+    }
+    const t = window.setInterval(() => setSecs(computeSecs()), 1000);
+    return () => window.clearInterval(t);
+  }, [consultation?.startedAt, consultation?.endedAt, callState]);
 
   const clock = `${String(Math.floor(secs / 60)).padStart(2, "0")}:${String(secs % 60).padStart(2, "0")}`;
 
-  // Call completion handler
-  const handleFinalize = async () => {
+  // Call completion handler (only VET/ADMIN transition consultation to COMPLETED; CLIENT exit stays local)
+  const handleFinalize = useCallback(async () => {
     const targetId = activeIdRef.current;
     if (!isMountedRef.current || !targetId) return;
-    callEndedRef.current = true;
-    if (disconnectTimerRef.current) {
-      clearTimeout(disconnectTimerRef.current);
-      disconnectTimerRef.current = null;
-    }
     setEnding(false);
+
+    if (fromClientRef.current) {
+      postMobileBridgeMessage({ type: "wakelock:release" });
+      go("/client/dashboard");
+      return;
+    }
+
+    callEndedRef.current = true;
     try {
       await api.patch(`/api/consultations/${targetId}/complete`, {
-        diagnosisNotes: fromClient ? "Consulta finalizada por el tutor." : "Consulta telemática finalizada con éxito.",
+        diagnosisNotes: "Consulta telemática finalizada con éxito.",
       });
     } catch (err) {
       console.warn("Notice completing consultation:", err);
@@ -1338,26 +1583,102 @@ function Room({ id }: { id: string }) {
     // Inform socket room via shared singleton socket
     emitEvent("call:ended", { consultationId: targetId });
 
-    if (!fromClient) {
-      void finish(targetId);
-    }
     postMobileBridgeMessage({ type: "call:ended" });
     setCallState("ended");
-    if (fromClient) {
-      setShowReviewModal(true);
+  }, [emitEvent, queryClient]);
+
+  const handleLiveKitConnected = useCallback(() => {
+    setCallDegradedReason(null);
+    setCallState("connected");
+  }, []);
+
+  const handleLiveKitError = useCallback((err: Error) => {
+    setCallDegradedReason(err?.message || "Error de conexión en videollamada");
+    setLivekitFailed(true);
+  }, []);
+
+  const handleLiveKitMediaFailure = useCallback((failure?: unknown) => {
+    setCallDegradedReason(failure ? `Fallo de cámara/micrófono (${String(failure)})` : "Fallo de cámara/micrófono");
+    setLivekitFailed(true);
+  }, []);
+
+  const handleLiveKitDisconnected = useCallback(
+    (reason?: unknown) => {
+      if (!isMountedRef.current || evictedRef.current) return;
+      if (endingRef.current && !fromClientRef.current) {
+        void handleFinalize();
+        return;
+      }
+      console.warn("LiveKit transient disconnect notice, keeping consultation active for reconnect", reason);
+      setCallState("reconnecting");
+    },
+    [handleFinalize]
+  );
+
+  const [postFollowUpTitle, setPostFollowUpTitle] = useState("Control post consulta");
+  const [postFollowUpAt, setPostFollowUpAt] = useState(() => {
+    const d = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    d.setHours(18, 0, 0, 0);
+    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  });
+  const [postFollowUpBusy, setPostFollowUpBusy] = useState(false);
+  const [postFollowUpDone, setPostFollowUpDone] = useState(false);
+  const [postReschedAt, setPostReschedAt] = useState("");
+  const [postReschedBusy, setPostReschedBusy] = useState(false);
+  const [postReschedDone, setPostReschedDone] = useState(false);
+
+  const handlePostCallFollowUp = async () => {
+    if (!consultation?.petId || !postFollowUpTitle.trim() || !postFollowUpAt) return;
+    setPostFollowUpBusy(true);
+    try {
+      const dueAt = new Date(postFollowUpAt).toISOString();
+      await api.post("/api/scheduling/follow-ups", {
+        petId: consultation.petId,
+        consultationId: id,
+        title: postFollowUpTitle.trim(),
+        dueAt,
+      });
+      void queryClient.invalidateQueries({ queryKey: ["follow-ups"] });
+      setPostFollowUpDone(true);
+    } catch {
+      setPostFollowUpDone(false);
+    } finally {
+      setPostFollowUpBusy(false);
+    }
+  };
+
+  const handlePostCallReschedule = async () => {
+    if (!postReschedAt) return;
+    setPostReschedBusy(true);
+    try {
+      await api.patch(`/api/consultations/${id}/reschedule`, {
+        scheduledAt: new Date(postReschedAt).toISOString(),
+        reason: "Reprogramado al finalizar la llamada",
+      });
+      void queryClient.invalidateQueries({ queryKey: ["consultations"] });
+      setPostReschedDone(true);
+    } catch {
+      setPostReschedDone(false);
+    } finally {
+      setPostReschedBusy(false);
     }
   };
 
   if (callState === "ended") {
+    const isCancelled = consultation?.status === "CANCELLED";
     return (
       <main className="v-call-summary">
         <section className="v-call-summary__card">
           <span className="v-call-summary__icon">
-            <Icon name="check" size={28} />
+            <Icon name={isCancelled ? "close" : "check"} size={28} />
           </span>
           <span className="eyebrow">Videoconsulta</span>
-          <h1>Consulta finalizada</h1>
-          <p>La llamada finalizó exitosamente. Podés revisar los detalles de la atención.</p>
+          <h1>{isCancelled ? "Consulta cancelada" : "Consulta finalizada"}</h1>
+          <p>
+            {isCancelled
+              ? "La consulta fue cancelada antes de completar la atención clínica."
+              : "La llamada finalizó exitosamente. Podés revisar los detalles de la atención."}
+          </p>
           <dl>
             <div>
               <dt>{fromClient ? "Veterinario" : "Tutor"}</dt>
@@ -1380,8 +1701,44 @@ function Room({ id }: { id: string }) {
               <dd>{consultation?.diagnosisNotes || "Atención telemática realizada y registrada en el historial clínico."}</dd>
             </div>
           </dl>
+          {!fromClient && !isCancelled && (
+            <div style={{ margin: "16px 0", padding: "14px", borderRadius: 12, border: "1px solid var(--line, #e4dfd2)", background: "#faf8f5", textAlign: "left" }}>
+              <strong style={{ fontSize: 13, display: "block", marginBottom: 8 }}>Continuidad clínica y turno</strong>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 10 }}>
+                <input
+                  type="text"
+                  aria-label="Motivo del seguimiento"
+                  value={postFollowUpTitle}
+                  onChange={(e) => setPostFollowUpTitle(e.target.value)}
+                  style={{ flex: 1, minWidth: 160, height: 36, borderRadius: 8, border: "1px solid var(--line)", padding: "0 10px" }}
+                />
+                <input
+                  type="datetime-local"
+                  aria-label="Fecha y hora del seguimiento"
+                  value={postFollowUpAt}
+                  onChange={(e) => setPostFollowUpAt(e.target.value)}
+                  style={{ height: 36, borderRadius: 8, border: "1px solid var(--line)", padding: "0 10px", background: "#fff" }}
+                />
+                <Button variant="secondary" disabled={!postFollowUpAt || postFollowUpBusy || postFollowUpDone} onClick={handlePostCallFollowUp}>
+                  {postFollowUpDone ? "Propuesta enviada" : postFollowUpBusy ? "Enviando..." : "Proponer seguimiento"}
+                </Button>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                <input
+                  type="datetime-local"
+                  aria-label="Nueva fecha de turno"
+                  value={postReschedAt}
+                  onChange={(e) => setPostReschedAt(e.target.value)}
+                  style={{ height: 36, borderRadius: 8, border: "1px solid var(--line)", padding: "0 10px" }}
+                />
+                <Button variant="secondary" disabled={!postReschedAt || postReschedBusy || postReschedDone} onClick={handlePostCallReschedule}>
+                  {postReschedDone ? "Turno reprogramado" : postReschedBusy ? "Guardando..." : "Reprogramar"}
+                </Button>
+              </div>
+            </div>
+          )}
           <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
-            {fromClient && (
+            {canReview && (
               <Button variant="secondary" onClick={() => setShowReviewModal(true)}>
                 ⭐ Calificar atención
               </Button>
@@ -1395,7 +1752,7 @@ function Room({ id }: { id: string }) {
           </div>
         </section>
 
-        {fromClient && (
+        {canReview && (
           <ReviewModal
             isOpen={showReviewModal}
             consultationId={id}
@@ -1428,7 +1785,42 @@ function Room({ id }: { id: string }) {
   const cleanReason = parsedNotes.cleanNotes;
   const effectiveTriage = triage ?? (parsedNotes.priority ? TRIAGE_BY_TIER[parsedNotes.priority] : undefined);
 
-    // FEAT-07 / VET-WAIT: tutor in waiting room until active; vet in pairing room while waiting
+  if ((!authLoading && !effectiveUser) || authErrorStatus === 401 || authErrorStatus === 403) {
+    const isForbidden = authErrorStatus === 403;
+    return (
+      <main className="v-call-summary">
+        <section className="v-call-summary__card">
+          <span className="v-call-summary__icon">
+            <Icon name="shield" size={28} />
+          </span>
+          <span className="eyebrow">Acceso a videoconsulta</span>
+          <h1>{isForbidden ? "Sin acceso a esta consulta" : "Sesión requerida"}</h1>
+          <p>
+            {isForbidden
+              ? "Esta consulta pertenece a otra cuenta. Iniciá sesión con el usuario correspondiente para ingresar."
+              : "Tu sesión venció o iniciaste sesión con otra cuenta en este navegador. Volvé a iniciar sesión para conectarte."}
+          </p>
+          <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+            <Button onClick={() => go("/login")}>Iniciar sesión</Button>
+            {!isForbidden && (
+              <Button
+                variant="secondary"
+                icon="repeat"
+                onClick={() => {
+                  setAuthErrorStatus(null);
+                  void refetchConsultation();
+                }}
+              >
+                Reintentar
+              </Button>
+            )}
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  // FEAT-07 / VET-WAIT: tutor in waiting room until active; vet in pairing room while waiting
   if (fromClient && (!isConsultationActive || celebrating)) {
     const tierLabel = parsedNotes.priority
       ? { ROJO: "CRÍTICO", AMARILLO: "MODERADO", VERDE: "RUTINA" }[parsedNotes.priority]
@@ -1440,7 +1832,8 @@ function Room({ id }: { id: string }) {
         petName={petName}
         tutorName={tutorName}
         symptom={cleanReason}
-        clock={clock}
+        clock={waitClock}
+        waitSecs={waitSecs}
         tierLabel={tierLabel}
         onBack={() => go("/client/consultations")}
         onCancel={async () => {
@@ -1466,7 +1859,8 @@ function Room({ id }: { id: string }) {
         vetInitials={vetInitials}
         petName={petName}
         tutorName={tutorName}
-        clock={clock}
+        clock={waitClock}
+        waitSecs={waitSecs}
         onBack={() => go("/vet/dashboard")}
       />
     );
@@ -1478,7 +1872,10 @@ function Room({ id }: { id: string }) {
         <button className="v-call__back" onClick={() => setEnding(true)} aria-label="Salir de la videollamada">
           <Icon name="left" size={20} />
         </button>
-        <span className="v-call__brand-mark" aria-hidden="true" />
+        <div className="v-call__avatar" aria-hidden="true">
+          <span>{remoteInitials}</span>
+          <span className="v-call__avatar-dot" />
+        </div>
         <div className="v-call__identity">
           <span className="v-call__eyebrow">Videoconsulta · {petKind}</span>
           <b>{petName} · {fromClient ? vetName : tutorName}</b>
@@ -1486,9 +1883,15 @@ function Room({ id }: { id: string }) {
         </div>
         <div className="v-call__status-group">
           {effectiveTriage && <TriageBadge level={effectiveTriage} compact />}
-          <span className={`v-call__net ${callState === "reconnecting" ? "is-warning" : ""}`}>
-            <Icon name={callState === "reconnecting" ? "repeat" : "check"} size={13} />
-            <span>{callState === "reconnecting" ? "Reconectando" : "Conexión estable"}</span>
+          <span className={`v-call__net ${callState === "reconnecting" || isTutorReconnecting ? "is-warning" : ""}`}>
+            <Icon name={callState === "reconnecting" || isTutorReconnecting ? "repeat" : "check"} size={13} />
+            <span>
+              {callState === "reconnecting"
+                ? "Reconectando"
+                : isTutorReconnecting
+                  ? "Tutor reconectando"
+                  : "Conexión estable"}
+            </span>
           </span>
           <time className="v-call__time" aria-label={`Duración ${Math.floor(secs / 60)} minutos`}>
             <i className="v-call__rec-dot" aria-hidden="true" />
@@ -1500,44 +1903,18 @@ function Room({ id }: { id: string }) {
       <main className="v-call__stage">
         <div className="v-call__remote">
           {/* LiveKit WebRTC active feed if available */}
-          {livekitToken ? (
-            <LiveKitRoom
-              video={cam}
-              audio={mic}
+          {livekitToken && !livekitFailed ? (
+            <LiveKitCallCanvas
+              cam={cam}
+              mic={mic}
               token={livekitToken}
               serverUrl={livekitWsUrl}
-              connect={true}
-              options={LIVEKIT_ROOM_OPTIONS}
-              data-lk-theme="default"
-              style={{ width: "100%", height: "100%", position: "absolute", inset: 0 }}
-              onConnected={() => {
-                if (disconnectTimerRef.current) {
-                  clearTimeout(disconnectTimerRef.current);
-                  disconnectTimerRef.current = null;
-                }
-                setCallState("connected");
-              }}
-              onDisconnected={(reason) => {
-                if (!isMountedRef.current) return;
-                if (endingRef.current) {
-                  void handleFinalize();
-                  return;
-                }
-                console.warn("LiveKit transient disconnect notice, waiting 15s for reconnect...", reason);
-                setCallState("reconnecting");
-                if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
-                const scheduledId = id;
-                disconnectTimerRef.current = setTimeout(() => {
-                  disconnectTimerRef.current = null;
-                  if (!isMountedRef.current || activeIdRef.current !== scheduledId) return;
-                  void handleFinalize();
-                }, 15000);
-              }}
-            >
-              <LiveKitTrackSynchronizer mic={mic} cam={cam} />
-              <VideoConference />
-            </LiveKitRoom>
-          ) : callState !== "connected" ? (
+              onConnected={handleLiveKitConnected}
+              onError={handleLiveKitError}
+              onMediaDeviceFailure={handleLiveKitMediaFailure}
+              onDisconnected={handleLiveKitDisconnected}
+            />
+          ) : callState !== "connected" && !livekitFailed ? (
             !fromClient ? (
               <WaitingRoomExperience
                 isVet={true}
@@ -1545,7 +1922,8 @@ function Room({ id }: { id: string }) {
                 vetInitials={vetInitials}
                 petName={petName}
                 tutorName={tutorName}
-                clock={clock}
+                clock={waitClock}
+                waitSecs={waitSecs}
                 onBack={() => go("/vet/dashboard")}
               />
             ) : (
@@ -1570,30 +1948,128 @@ function Room({ id }: { id: string }) {
             )
           ) : (
             <div className="v-call__professional" role="img" aria-label={`Video de ${remoteName}`}>
-              <div className="v-call__pro-rings" aria-hidden="true">
-                <i />
-                <i />
-              </div>
-              <span className="avatar">{remoteInitials}</span>
-              <small>{remoteName}</small>
-              <span className="v-call__pro-sub">
-                {livekitFailed
-                  ? "No pudimos conectar el video en vivo. Podés usar el chat o reintentar."
-                  : `Canal telemático HD activo · ${petName}`}
-              </span>
-              {livekitFailed && (
-                <Button variant="secondary" icon="repeat" onClick={() => setLivekitFailed(false)}>
-                  Reintentar video
-                </Button>
+              {livekitFailed ? (
+                <div className="v-call__recovery">
+                  <div className="v-call__pro-rings" aria-hidden="true">
+                    <i />
+                    <i />
+                    <span className="avatar">{remoteInitials}</span>
+                  </div>
+                  <small>{remoteName}</small>
+                  <span className="v-call__pro-sub">
+                    {callDegradedReason || "No pudimos conectar el video en vivo. Podés reintentar o continuar por chat."}
+                  </span>
+                  <div className="v-call__recovery-actions">
+                    <button
+                      type="button"
+                      className="v-call__recovery-btn v-call__recovery-btn--primary"
+                      onClick={handleRetryVideoToken}
+                    >
+                      <Icon name="repeat" size={15} />
+                      <span>Reintentar video</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="v-call__recovery-btn"
+                      onClick={() => setPanel("Chat")}
+                    >
+                      <Icon name="message" size={15} />
+                      <span>Continuar por chat</span>
+                    </button>
+                  </div>
+                  <div className="v-call__recovery-divider" aria-hidden="true" />
+                  <div className="v-call__recovery-quiet">
+                    <button
+                      type="button"
+                      className="v-call__recovery-link"
+                      disabled={incidentBusy || incidentReported}
+                      onClick={() => void handleReportCallIncident()}
+                    >
+                      <Icon name="alert" size={14} />
+                      <span>
+                        {incidentReported ? "Fallo reportado" : incidentBusy ? "Reportando..." : "Reportar fallo técnico"}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="v-call__recovery-link"
+                      aria-expanded={reschedOpen}
+                      onClick={() => setReschedOpen((prev) => !prev)}
+                    >
+                      <Icon name="calendar" size={14} />
+                      <span>{reschedCallDone ? "Turno reprogramado" : "Reprogramar turno"}</span>
+                    </button>
+                  </div>
+                  {reschedOpen && (
+                    <div className="v-call__recovery-resched hc-reveal">
+                      <input
+                        type="datetime-local"
+                        aria-label="Reprogramar consulta por falla"
+                        value={reschedCallAt}
+                        onChange={(e) => setReschedCallAt(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="v-call__recovery-btn v-call__recovery-btn--primary"
+                        disabled={!reschedCallAt || reschedCallDone}
+                        onClick={() => void handleQuickRescheduleCall()}
+                      >
+                        {reschedCallDone ? "Reprogramado" : "Confirmar"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <div className="v-call__pro-rings" aria-hidden="true">
+                    <i />
+                    <i />
+                    <span className="avatar">{remoteInitials}</span>
+                  </div>
+                  <small>{remoteName}</small>
+                  <span className="v-call__pro-sub">{`Canal telemático HD activo · ${petName}`}</span>
+                </>
               )}
             </div>
           )}
 
-          {/* Clinical identification tag */}
-          <span className="v-call__tag">
-            <b className="v-call__tag-ini" aria-hidden="true">{remoteInitials}</b>
-            <span>{callState === "waiting" ? "Sala de espera · Guardia HuelliCam" : remoteName}</span>
-          </span>
+          {isTutorReconnecting && (
+            <div
+              data-testid="tutor-reconnecting-banner"
+              role="status"
+              aria-live="polite"
+              className="v-call__reconnect-banner"
+              style={{
+                position: "absolute",
+                top: "14px",
+                left: "50%",
+                transform: "translateX(-50%)",
+                zIndex: 15,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "8px",
+                padding: "8px 14px",
+                borderRadius: "999px",
+                backgroundColor: "rgba(255, 251, 239, 0.96)",
+                border: "1px solid #e98b70",
+                color: "#8b2615",
+                fontWeight: 700,
+                fontSize: "13px",
+                boxShadow: "0 4px 14px rgba(24, 60, 58, 0.16)",
+              }}
+            >
+              <Icon name="repeat" size={14} />
+              <span>El tutor está reconectando…</span>
+            </div>
+          )}
+
+          {/* Clinical identification tag (shown only when LiveKit tile chrome is absent) */}
+          {(!livekitToken || livekitFailed) && (
+            <span className="v-call__tag">
+              <b className="v-call__tag-ini" aria-hidden="true">{remoteInitials}</b>
+              <span>{callState === "waiting" ? "Sala de espera · Guardia HuelliCam" : remoteName}</span>
+            </span>
+          )}
 
           {/* Legal compliance badge */}
           <span className="v-call__tag v-call__hud-pill--secure">
@@ -1606,16 +2082,19 @@ function Room({ id }: { id: string }) {
         {!livekitToken && (
           <div className={`v-call__self ${cam ? "" : "is-off"} ${callState === "waiting" ? "v-call__self--waiting" : "v-call__self--active"}`}>
             {cam ? (
-              <video
-                ref={localVideoRef}
-                autoPlay
-                playsInline
-                muted
-                style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "inherit" }}
-              />
+              <>
+                <span className="v-call__self-avatar" aria-hidden="true">{selfInitials}</span>
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", borderRadius: "inherit", zIndex: 1 }}
+                />
+              </>
             ) : (
               <>
-                <Icon name="video" size={20} />
+                <span className="v-call__self-avatar" aria-hidden="true">{selfInitials}</span>
                 <small>Cámara apagada</small>
               </>
             )}
@@ -1649,6 +2128,7 @@ function Room({ id }: { id: string }) {
             <Icon name={cam ? "video" : "micoff"} size={20} />
             <span>{cam ? "Apagar cámara" : "Encender"}</span>
           </button>
+          <span className="v-call__dock-sep" aria-hidden="true" />
           <button
             className={`v-ctl ${panel === "Chat" ? "is-on" : ""}`}
             aria-pressed={panel === "Chat"}
@@ -1680,61 +2160,128 @@ function Room({ id }: { id: string }) {
               <span>Evolución</span>
             </button>
           )}
+          <span className="v-call__dock-sep" aria-hidden="true" />
           <button className="v-ctl v-ctl--end" onClick={() => setEnding(true)}>
             <Icon name="phone" size={20} />
-            <span>Finalizar</span>
+            <span>{fromClient ? "Salir" : "Finalizar"}</span>
           </button>
         </div>
       </nav>
 
-      <aside
-        className={`v-call__panel ${panel ? "is-open" : "is-closed"}`}
-        style={{ display: panel ? "flex" : "none" }}
-        aria-label={
-          panel === "Chat"
-            ? `Chat con ${chatOtherName}`
-            : panel === "Ficha"
-            ? "Ficha clínica"
-            : "Evolución clínica"
-        }
-      >
-        {panel !== "Chat" && (
-          <header className="v-call__panel-header">
-            <div>
-              <span className="v-call__panel-eyebrow">Expediente en vivo</span>
-              <b>{panel === "Ficha" ? "Ficha clínica" : "Evolución clínica"}</b>
+      {isMobileCallViewport ? (
+        <Drawer.Root open={Boolean(panel)} onOpenChange={(open) => { if (!open) setPanel(""); }}>
+          <Drawer.Portal>
+            <Drawer.Overlay className="v-avail__scrim" style={{ position: "fixed", inset: 0, zIndex: 99 }} />
+            <Drawer.Content
+              className="v-call__panel is-open"
+              aria-describedby={undefined}
+              style={{
+                display: "flex",
+                zIndex: 100,
+                ...(callKeyboardInset > 0
+                  ? {
+                      bottom: callKeyboardInset,
+                      maxHeight: Math.max(240, (callViewportHeight ?? window.innerHeight) - 16),
+                    }
+                  : undefined),
+              }}
+            >
+              <Drawer.Title className="sr-only">
+                {panel === "Chat"
+                  ? `Chat con ${chatOtherName}`
+                  : panel === "Ficha"
+                  ? "Ficha clínica"
+                  : "Evolución clínica"}
+              </Drawer.Title>
+              <span className="v-sheet__grip" aria-hidden="true" style={{ marginTop: 10 }} />
+              {panel !== "Chat" && (
+                <header className="v-call__panel-header">
+                  <div>
+                    <span className="v-call__panel-eyebrow">Expediente en vivo</span>
+                    <b>{panel === "Ficha" ? "Ficha clínica" : "Evolución clínica"}</b>
+                  </div>
+                  <button className="wa-icon-btn" onClick={() => setPanel("")} aria-label="Cerrar panel">
+                    <Icon name="close" size={17} />
+                  </button>
+                </header>
+              )}
+              <div className="v-call__panel-body" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+                <div style={{ display: panel === "Chat" ? "flex" : "none", flex: 1, flexDirection: "column", height: "100%", minHeight: 0 }}>
+                  <CallChatPanel
+                    consultationId={id}
+                    otherName={chatOtherName}
+                    otherInitials={remoteInitials}
+                    otherSubtitle={`${petName} · ${petKind}`}
+                    isVet={!fromClient}
+                    user={user}
+                    onNewIncomingMessage={handleNewIncomingMessage}
+                    onClosePanel={() => setPanel("")}
+                  />
+                </div>
+                {panel === "Ficha" && <FichaClinica p={p} />}
+                <div style={{ display: panel === "Evolución" ? "block" : "none" }}>
+                  <EvolutionEditor p={p} consultationId={id} />
+                </div>
+              </div>
+            </Drawer.Content>
+          </Drawer.Portal>
+        </Drawer.Root>
+      ) : (
+        <aside
+          className={`v-call__panel ${panel ? "is-open" : "is-closed"}`}
+          style={{
+            display: panel ? "flex" : "none",
+          }}
+          aria-label={
+            panel === "Chat"
+              ? `Chat con ${chatOtherName}`
+              : panel === "Ficha"
+              ? "Ficha clínica"
+              : "Evolución clínica"
+          }
+        >
+          {panel !== "Chat" && (
+            <header className="v-call__panel-header">
+              <div>
+                <span className="v-call__panel-eyebrow">Expediente en vivo</span>
+                <b>{panel === "Ficha" ? "Ficha clínica" : "Evolución clínica"}</b>
+              </div>
+              <button className="wa-icon-btn" onClick={() => setPanel("")} aria-label="Cerrar panel">
+                <Icon name="close" size={17} />
+              </button>
+            </header>
+          )}
+          <div className="v-call__panel-body" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+            <div style={{ display: panel === "Chat" ? "flex" : "none", flex: 1, flexDirection: "column", height: "100%", minHeight: 0 }}>
+              <CallChatPanel
+                consultationId={id}
+                otherName={chatOtherName}
+                otherInitials={remoteInitials}
+                otherSubtitle={`${petName} · ${petKind}`}
+                isVet={!fromClient}
+                user={user}
+                onNewIncomingMessage={handleNewIncomingMessage}
+                onClosePanel={() => setPanel("")}
+              />
             </div>
-            <button className="wa-icon-btn" onClick={() => setPanel("")} aria-label="Cerrar panel">
-              <Icon name="close" size={17} />
-            </button>
-          </header>
-        )}
-        <div className="v-call__panel-body" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-          <div style={{ display: panel === "Chat" ? "flex" : "none", flex: 1, flexDirection: "column", height: "100%", minHeight: 0 }}>
-            <CallChatPanel
-              consultationId={id}
-              otherName={chatOtherName}
-              otherInitials={remoteInitials}
-              otherSubtitle={`${petName} · ${petKind}`}
-              isVet={!fromClient}
-              user={user}
-              onNewIncomingMessage={handleNewIncomingMessage}
-              onClosePanel={() => setPanel("")}
-            />
+            {panel === "Ficha" && <FichaClinica p={p} />}
+            <div style={{ display: panel === "Evolución" ? "block" : "none" }}>
+              <EvolutionEditor p={p} consultationId={id} />
+            </div>
           </div>
-          {panel === "Ficha" && <FichaClinica p={p} />}
-          <div style={{ display: panel === "Evolución" ? "block" : "none" }}>
-            <EvolutionEditor p={p} />
-          </div>
-        </div>
-      </aside>
+        </aside>
+      )}
 
       {ending && (
         <Modal
-          title="Finalizar videollamada"
-          text="La llamada terminará para todas las personas. Vas a poder revisar el resumen de la consulta."
+          title={fromClient ? "Salir de la videollamada" : "Finalizar videollamada"}
+          text={
+            fromClient
+              ? "Vas a salir de la sala. Si necesitás volver, podés retomar la consulta mientras siga activa."
+              : "La llamada terminará para todas las personas. Vas a poder revisar el resumen de la consulta."
+          }
           cancel="Seguir en la llamada"
-          confirm="Finalizar llamada"
+          confirm={fromClient ? "Salir de la sala" : "Finalizar llamada"}
           destructive
           onClose={() => setEnding(false)}
           onConfirm={handleFinalize}

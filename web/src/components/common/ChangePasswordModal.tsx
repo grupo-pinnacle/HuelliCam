@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
 import api, { setAccessToken } from "../../services/api";
 import { Alert, Button, Icon } from "../../shared";
+import { useFocusTrap } from "./DialogOverlay";
 
 type PasswordModalStatus =
   | { kind: "idle" }
@@ -34,6 +35,9 @@ export function ChangePasswordModal({ open, onClose, onSuccess }: ChangePassword
   const [status, setStatus] = useState<PasswordModalStatus>({ kind: "idle" });
 
   const currentInputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useFocusTrap(open, dialogRef, { onEscape: onClose, initialFocusRef: currentInputRef });
 
   useEffect(() => {
     if (!open) return;
@@ -44,23 +48,7 @@ export function ChangePasswordModal({ open, onClose, onSuccess }: ChangePassword
     setShowCurrent(false);
     setShowNew(false);
     setStatus({ kind: "idle" });
-
-    const focusTimer = window.setTimeout(() => {
-      currentInputRef.current?.focus();
-    }, 10);
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-
-    return () => {
-      window.clearTimeout(focusTimer);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
@@ -107,6 +95,7 @@ export function ChangePasswordModal({ open, onClose, onSuccess }: ChangePassword
     <div className="modal-layer" role="presentation">
       <button type="button" className="modal-scrim" onClick={onClose} aria-label="Cerrar modal" />
       <div
+        ref={dialogRef}
         className="modal"
         role="dialog"
         aria-modal="true"

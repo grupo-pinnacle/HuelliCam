@@ -3,6 +3,25 @@ export function WhatsAppCheck({
 }: {
   state?: "sending" | "sent" | "delivered" | "read" | "failed";
 }) {
+  if (state === "failed") {
+    return (
+      <span
+        role="img"
+        aria-label="Error al enviar"
+        title="No se pudo enviar. Reintentando cuando vuelva la conexión."
+        style={{
+          color: "#ae4d45",
+          fontWeight: 800,
+          fontSize: 12,
+          lineHeight: 1,
+          display: "inline-block",
+          verticalAlign: "middle",
+        }}
+      >
+        !
+      </span>
+    );
+  }
   if (state === "sending") {
     return (
       <svg

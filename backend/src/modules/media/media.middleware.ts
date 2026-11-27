@@ -4,8 +4,9 @@ import multer from 'multer';
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../../middlewares/errorHandler';
 
-// Multer storage in `./uploads/tmp/`
-const uploadTmpDir = path.resolve(process.cwd(), 'uploads/tmp');
+// Multer storage resolved against backend package root (`backend/uploads/tmp`)
+const BACKEND_ROOT = path.resolve(__dirname, '..', '..', '..');
+const uploadTmpDir = path.resolve(BACKEND_ROOT, 'uploads', 'tmp');
 if (!fs.existsSync(uploadTmpDir)) {
   fs.mkdirSync(uploadTmpDir, { recursive: true });
 }
@@ -45,11 +46,13 @@ export const verifyMagicBytes = async (req: Request, res: Response, next: NextFu
 
   const filePath = req.file.path;
 
+  let fd: number | null = null;
   try {
     const buffer = Buffer.alloc(32);
-    const fd = fs.openSync(filePath, 'r');
+    fd = fs.openSync(filePath, 'r');
     fs.readSync(fd, buffer, 0, 32, 0);
     fs.closeSync(fd);
+    fd = null;
 
     const hex = buffer.toString('hex', 0, 8).toUpperCase();
 
@@ -70,6 +73,13 @@ export const verifyMagicBytes = async (req: Request, res: Response, next: NextFu
 
     next();
   } catch (error) {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // Best-effort fd close
+      }
+    }
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }

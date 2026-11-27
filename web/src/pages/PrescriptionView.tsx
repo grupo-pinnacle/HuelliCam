@@ -11,6 +11,7 @@ export const PrescriptionView: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   const targetId = id || searchParams.get('code') || searchParams.get('id');
+  const sig = searchParams.get('sig');
   const navigate = useNavigate();
   const [prescription, setPrescription] = useState<Prescription | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -24,7 +25,9 @@ export const PrescriptionView: React.FC = () => {
           setLoading(false);
           return;
         }
-        const res = await api.get<ApiResponse<Prescription>>(`/api/prescriptions/${targetId}`);
+        const res = await api.get<ApiResponse<Prescription>>(`/api/prescriptions/${targetId}`, {
+          params: sig ? { sig } : undefined,
+        });
         if (res.data.success && res.data.data) {
           setPrescription(res.data.data);
         } else {
@@ -38,7 +41,7 @@ export const PrescriptionView: React.FC = () => {
     };
 
     fetchPrescription();
-  }, [targetId]);
+  }, [targetId, sig]);
 
   const handlePrint = () => {
     const docElement =
@@ -62,7 +65,7 @@ export const PrescriptionView: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#fffbef] flex items-center justify-center p-6 font-['Manrope',sans-serif]" data-testid="prescription-loading">
+      <div className="min-h-dvh bg-[#fffbef] flex items-center justify-center p-6 font-['Manrope',sans-serif]" data-testid="prescription-loading">
         <PrescriptionDocSkeleton />
       </div>
     );
@@ -70,19 +73,19 @@ export const PrescriptionView: React.FC = () => {
 
   if (error || !prescription) {
     return (
-      <div className="min-h-screen bg-[#fffbef] flex flex-col items-center justify-center p-6 font-['Manrope',sans-serif]" data-testid="prescription-error">
+      <div className="min-h-dvh bg-[#fffbef] flex flex-col items-center justify-center p-6 font-['Manrope',sans-serif]" data-testid="prescription-error">
         <div className="bg-white p-8 rounded-3xl border border-[#e4dfd2] max-w-md w-full shadow-sm text-center">
           <div className="w-12 h-12 rounded-full bg-[#fbeee9] text-[#ae4d45] flex items-center justify-center mx-auto mb-4 border border-[#e98b70]/40">
             <AlertCircle className="w-6 h-6" />
           </div>
           <h2 className="text-lg font-extrabold text-[#183c3a] mb-1">Verificación Fallida</h2>
-          <p className="text-[#607674] text-sm mb-6 leading-relaxed">
+          <p className="text-[#4a6866] text-sm mb-6 leading-relaxed">
             {error || 'Receta médica no encontrada o código de verificación inválido en los registros de SENASA.'}
           </p>
           <button
             type="button"
             onClick={() => navigate('/')}
-            className="w-full py-3 px-6 bg-[#609f9c] hover:bg-[#4d8d89] text-white rounded-full text-sm font-bold shadow-sm transition-colors cursor-pointer"
+            className="w-full py-3 px-6 bg-[#315f5d] hover:bg-[#183c3a] text-white rounded-full text-sm font-bold shadow-sm transition-colors cursor-pointer"
           >
             Volver al Inicio
           </button>
@@ -92,7 +95,7 @@ export const PrescriptionView: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#fffbef] text-[#183c3a] p-4 sm:p-6 flex flex-col items-center font-['Manrope',sans-serif]" data-testid="prescription-view-page">
+    <div className="min-h-dvh bg-[#fffbef] text-[#183c3a] p-4 sm:p-6 flex flex-col items-center font-['Manrope',sans-serif]" data-testid="prescription-view-page">
       {/* Top Navigation & Status (Hidden on print) */}
       <div className="w-full max-w-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-5 print:hidden">
         <div className="flex items-center gap-3">
@@ -126,6 +129,7 @@ export const PrescriptionView: React.FC = () => {
       {/* Reusable Official Prescription Document Component */}
       <PrescriptionDoc
         prescription={prescription}
+        pet={prescription.consultation?.pet}
         onPrint={handlePrint}
       />
     </div>

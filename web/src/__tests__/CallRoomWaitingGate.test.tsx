@@ -20,14 +20,27 @@ vi.mock('../services/api', () => ({
   getAccessToken: () => 'tok',
   getDeviceId: () => 'dev',
 }));
-const { mockAuthState } = vi.hoisted(() => ({
+const { mockAuthState, mockSocketState } = vi.hoisted(() => ({
   mockAuthState: {
     user: { id: 'u1', role: 'CLIENT', firstName: 'Tobias', lastName: 'Vera' } as any,
+  },
+  mockSocketState: {
+    reconnectingConsultations: {} as Record<string, string>,
   },
 }));
 
 vi.mock('../context/AuthContext', () => ({
   useAuth: () => ({ user: mockAuthState.user }),
+}));
+vi.mock('../context/SocketContext', () => ({
+  useSocket: () => ({
+    socket: null,
+    isConnected: false,
+    reconnectingConsultations: mockSocketState.reconnectingConsultations,
+    joinConsultation: vi.fn(),
+    leaveConsultation: vi.fn(),
+    emitEvent: vi.fn(),
+  }),
 }));
 vi.mock('socket.io-client', () => ({
   io: () => ({ on: vi.fn(), off: vi.fn(), emit: vi.fn(), disconnect: vi.fn() }),
@@ -66,6 +79,7 @@ function renderRoom() {
 describe('CallRoom WAITING vs ACTIVE gate (FEAT-07 / BUG-08)', () => {
   beforeEach(() => {
     mockAuthState.user = { id: 'u1', role: 'CLIENT', firstName: 'Tobias', lastName: 'Vera' };
+    mockSocketState.reconnectingConsultations = {};
     Element.prototype.scrollIntoView = vi.fn();
     postMock.mockClear();
     window.history.pushState({}, '', '/call/c1?from=client');
@@ -109,10 +123,10 @@ describe('CallRoom WAITING vs ACTIVE gate (FEAT-07 / BUG-08)', () => {
     expect(screen.getByText('Conexión estable')).toBeTruthy();
   });
 
-  it('TRIAGE_CRITICAL_QUEUED renders the vet pairing room with Dr name and checklist', async () => {
+  it('WAITING with null vetId renders the vet pairing room with Dr name and checklist', async () => {
     mockAuthState.user = { id: 'v1', role: 'VET', firstName: 'Diego', lastName: 'Suárez' };
     window.history.pushState({}, '', '/call/c1');
-    consultationData = { ...base, status: 'TRIAGE_CRITICAL_QUEUED', vetId: null, vet: null };
+    consultationData = { ...base, status: 'WAITING', vetId: null, vet: null };
     renderRoom();
     expect(await screen.findByTestId('waiting-room-experience')).toBeTruthy();
     expect(screen.getByText('Salir de guardia')).toBeTruthy();
@@ -122,5 +136,21 @@ describe('CallRoom WAITING vs ACTIVE gate (FEAT-07 / BUG-08)', () => {
     expect(screen.getByText('Cámara lista')).toBeTruthy();
     expect(screen.getByText('Micrófono listo')).toBeTruthy();
     expect(screen.getByText('Conexión estable')).toBeTruthy();
+  });
+
+  it('ACTIVE renders tutor-reconnecting-banner for VET when consultation id is in reconnectingConsultations', async () => {
+    mockAuthState.user = { id: 'v1', role: 'VET', firstName: 'Diego', lastName: 'Suárez' };
+    mockSocketState.reconnectingConsultations = { c1: '2026-11-26T10:00:00Z' };
+    window.history.pushState({}, '', '/call/c1');
+    consultationData = {
+      ...base,
+      status: 'ACTIVE',
+      vetId: 'v1',
+      vet: { firstName: 'Diego', lastName: 'Suárez' },
+    };
+    renderRoom();
+    expect(await screen.findByTestId('tutor-reconnecting-banner')).toBeTruthy();
+    expect(screen.getByText('El tutor está reconectando…')).toBeTruthy();
+    expect(screen.getByText('Tutor reconectando')).toBeTruthy();
   });
 });

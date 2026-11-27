@@ -1,15 +1,5 @@
-@theme {
-  --font-sans: "Manrope", sans-serif;
-  --color-brand: #609f9c;
-  --color-brand-dark: #315f5d;
-  --color-ink: #183c3a;
-  --color-cream: #fffbef;
-  --color-sand: #f2eddd;
-  --color-coral: #e98b70;
-  --color-lilac: #c9c1df;
-}
-
 :root {
+  --font-sans: "Manrope", system-ui, -apple-system, sans-serif;
   --brand: #609f9c;
   --brand-dark: #315f5d;
   --brand-deep: #183c3a;
@@ -20,7 +10,7 @@
   --coral-soft: #f6d6ca;
   --lilac: #c9c1df;
   --ink: #183c3a;
-  --muted: #607674;
+  --muted: #4a6866;
   --white: #ffffff;
   --line: rgba(24, 60, 58, 0.14);
   --shadow-sm: 0 10px 30px rgba(32, 73, 70, 0.08);
@@ -44,7 +34,7 @@ body {
   min-width: 320px;
   background: var(--cream);
   color: var(--ink);
-  font-family: "Manrope", sans-serif;
+  font-family: var(--font-sans);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
@@ -167,14 +157,18 @@ img {
   transform: translateX(3px);
 }
 
+.button:active {
+  transform: scale(0.97);
+}
+
 .button--primary {
-  background: var(--brand);
+  background: var(--brand-dark);
   color: var(--white);
-  box-shadow: 0 8px 22px rgba(67, 128, 125, 0.2);
+  box-shadow: 0 8px 22px rgba(49, 95, 93, 0.24);
 }
 
 .button--primary:hover {
-  background: var(--brand-dark);
+  background: var(--brand-deep);
 }
 
 .button--secondary {
@@ -319,8 +313,8 @@ img {
   border: 0;
   border-radius: 999px;
   color: #fff;
-  background: #609f9c;
-  box-shadow: 0 8px 11px rgb(67 128 125 / 20%);
+  background: var(--brand-dark);
+  box-shadow: 0 8px 11px rgb(49 95 93 / 22%);
   font-size: 13px;
   font-weight: 700;
   white-space: nowrap;
@@ -328,8 +322,12 @@ img {
 }
 
 .hc-landing .access-button:hover {
-  background: #4d8d89;
+  background: var(--brand-deep);
   transform: translateY(-1px);
+}
+
+.hc-landing .access-button:active {
+  transform: scale(0.97);
 }
 
 .hc-landing .access-button--ghost {
@@ -369,7 +367,7 @@ img {
 .hc-landing .eyebrow {
   display: block;
   margin: 0;
-  color: #607674;
+  color: var(--muted);
   font-size: 17px;
   font-weight: 800;
   letter-spacing: 2.55px;
@@ -413,16 +411,20 @@ img {
   padding: 0 32px;
   border-radius: 999px;
   color: #fff;
-  background: #609f9c;
-  box-shadow: 0 8px 22px rgb(67 128 125 / 20%);
+  background: var(--brand-dark);
+  box-shadow: 0 8px 22px rgb(49 95 93 / 24%);
   font-size: 22px;
   font-weight: 700;
   transition: transform 180ms ease, background 180ms ease;
 }
 
 .hc-landing .primary-button:hover {
-  background: #4d8d89;
+  background: var(--brand-deep);
   transform: translateY(-2px);
+}
+
+.hc-landing .primary-button:active {
+  transform: scale(0.97);
 }
 
 .hc-landing .pet-collage {
@@ -452,9 +454,8 @@ img {
   cursor: pointer;
   box-shadow: 0 14px 28px rgb(24 60 58 / 11%);
   transition:
-    transform 900ms cubic-bezier(0.32, 0.72, 0, 1),
-    opacity 680ms cubic-bezier(0.32, 0.72, 0, 1),
-    box-shadow 680ms cubic-bezier(0.32, 0.72, 0, 1);
+    transform 280ms cubic-bezier(0.23, 1, 0.32, 1),
+    opacity 240ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .hc-landing .pet-photo:focus-visible {
@@ -748,7 +749,7 @@ img {
   transform-origin: center top;
   transform: scaleY(0);
   opacity: 0;
-  transition: transform 640ms cubic-bezier(0.22, 1, 0.36, 1), opacity 420ms ease;
+  transition: transform 240ms cubic-bezier(0.23, 1, 0.32, 1), opacity 200ms ease;
   pointer-events: none;
 }
 
@@ -791,24 +792,24 @@ img {
   place-items: center;
   border-radius: 50%;
   color: #fff;
-  background: #609f9c;
+  background: var(--brand-dark);
   font-size: 48px;
   font-weight: 700;
 }
 
 .hc-landing .question-mark {
-  transition: transform 640ms cubic-bezier(0.22, 1, 0.36, 1), background-color 480ms ease;
+  transition: transform 220ms cubic-bezier(0.23, 1, 0.32, 1), background-color 200ms ease;
 }
 
 .hc-landing .faq-item-open .question-mark {
   background-color: #215451;
-  transform: rotate(360deg) scale(1.06);
+  transform: scale(1.04);
 }
 
 .hc-landing .faq-item button > img {
   width: 43px;
   height: 43px;
-  transition: transform 600ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform 240ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .hc-landing .faq-item-open button > img {
@@ -819,13 +820,13 @@ img {
   display: grid;
   grid-template-rows: 0fr;
   visibility: hidden;
-  transition: grid-template-rows 660ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s linear 660ms;
+  transition: grid-template-rows 240ms cubic-bezier(0.23, 1, 0.32, 1), visibility 0s linear 240ms;
 }
 
 .hc-landing .faq-item-open .faq-answer-wrap {
   grid-template-rows: 1fr;
   visibility: visible;
-  transition: grid-template-rows 680ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s linear 0s;
+  transition: grid-template-rows 260ms cubic-bezier(0.23, 1, 0.32, 1), visibility 0s linear 0s;
 }
 
 .hc-landing .faq-answer-clip {
@@ -839,14 +840,14 @@ img {
   font-size: 18px;
   line-height: 1.65;
   opacity: 0;
-  transform: translate3d(0, 14px, 0);
-  transition: opacity 400ms ease, transform 520ms cubic-bezier(0.22, 1, 0.36, 1);
+  transform: translate3d(0, 8px, 0);
+  transition: opacity 200ms ease, transform 240ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .hc-landing .faq-item-open .faq-answer-clip > p {
   opacity: 1;
   transform: translate3d(0, 0, 0);
-  transition: opacity 540ms ease 140ms, transform 640ms cubic-bezier(0.22, 1, 0.36, 1) 100ms;
+  transition: opacity 220ms ease 40ms, transform 240ms cubic-bezier(0.23, 1, 0.32, 1) 30ms;
 }
 
 .hc-landing .download {
@@ -1631,17 +1632,17 @@ img {
 
 .hc-landing.hc-reveal-ready .hc-reveal {
   opacity: 0;
-  transform: translate3d(0, 34px, 0) scale(0.96);
+  transform: translate3d(0, 18px, 0) scale(0.975);
   transition:
-    opacity 600ms cubic-bezier(0.22, 1, 0.36, 1) var(--hc-delay, 0ms),
-    transform 680ms cubic-bezier(0.22, 1, 0.36, 1) var(--hc-delay, 0ms);
+    opacity 260ms cubic-bezier(0.23, 1, 0.32, 1) var(--hc-delay, 0ms),
+    transform 280ms cubic-bezier(0.23, 1, 0.32, 1) var(--hc-delay, 0ms);
 }
 
 .hc-landing.hc-reveal-ready .faq-item-slot.hc-reveal {
-  transform: translate3d(0, 26px, 0) scale(0.975);
+  transform: translate3d(0, 14px, 0) scale(0.985);
   transition:
-    opacity 540ms cubic-bezier(0.22, 1, 0.36, 1) var(--hc-delay, 0ms),
-    transform 620ms cubic-bezier(0.22, 1, 0.36, 1) var(--hc-delay, 0ms);
+    opacity 240ms cubic-bezier(0.23, 1, 0.32, 1) var(--hc-delay, 0ms),
+    transform 260ms cubic-bezier(0.23, 1, 0.32, 1) var(--hc-delay, 0ms);
 }
 
 .hc-landing.hc-reveal-ready .hc-reveal.is-visible {

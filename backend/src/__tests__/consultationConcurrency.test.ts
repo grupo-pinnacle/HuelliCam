@@ -1,29 +1,26 @@
-import {
-  consultationConcurrencyService,
-  PostCommitEvictionParams,
-  setConcurrencySchemaSupportForTest,
-} from '../modules/consultations/consultationConcurrency.service';
 import prisma from '../lib/prisma';
+import { ConsultationsService } from '../modules/consultations/consultations.service';
 import { callsService } from '../modules/calls/calls.service';
 import { io } from '../realtime/socket.server';
+import { evictUserRealtimeAndCall } from '../realtime/sessionEviction.helper';
 
-// Mock dependencies
 jest.mock('../lib/prisma', () => {
-  const auditLogs: any[] = [];
+  const auditLogs: Array<Record<string, unknown>> = [];
   return {
     __esModule: true,
     default: {
-      $transaction: jest.fn(async (cb: (tx: any) => Promise<any>) => cb(prisma)),
-      $executeRawUnsafe: jest.fn().mockResolvedValue(1),
-      $queryRawUnsafe: jest.fn(),
+      $transaction: jest.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb(prisma)),
+      $executeRaw: jest.fn().mockResolvedValue(1),
       consultation: {
         findUnique: jest.fn(),
         findFirst: jest.fn(),
+        findMany: jest.fn(),
+        create: jest.fn(),
         update: jest.fn(),
         updateMany: jest.fn(),
       },
       consultationAuditLog: {
-        create: jest.fn(async ({ data }: any) => {
+        create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
           auditLogs.push(data);
           return { id: BigInt(auditLogs.length), ...data, createdAt: new Date() };
         }),
@@ -42,17 +39,25 @@ jest.mock('../modules/calls/calls.service', () => ({
 }));
 
 jest.mock('../realtime/socket.server', () => {
-  const emittedEvents: { room: string; event: string; data: any }[] = [];
-  const mockSockets = [{ disconnect: jest.fn() }];
-
-  const mockTo = jest.fn((room: string) => ({
-    emit: jest.fn((event: string, data: any) => {
-      emittedEvents.push({ room, event, data });
+  const emittedEvents: { room: string | string[]; event: string; data: unknown }[] = [];
+  const exceptMock = jest.fn(() => ({
+    emit: jest.fn((event: string, data: unknown) => {
+      emittedEvents.push({ room: 'except', event, data });
     }),
   }));
 
-  const mockIn = jest.fn((_room: string) => ({
+  const mockTo = jest.fn((room: string | string[]) => ({
+    emit: jest.fn((event: string, data: unknown) => {
+      emittedEvents.push({ room, event, data });
+    }),
+    except: exceptMock,
+  }));
+
+  const mockSockets = [{ data: { user: { id: 'tutor-1' } }, disconnect: jest.fn() }];
+  const mockIn = jest.fn(() => ({
     fetchSockets: jest.fn().mockResolvedValue(mockSockets),
+    disconnectSockets: jest.fn(),
+    except: jest.fn(() => ({ disconnectSockets: jest.fn() })),
   }));
 
   return {
@@ -62,14 +67,20 @@ jest.mock('../realtime/socket.server', () => {
       _emittedEvents: emittedEvents,
       _mockSockets: mockSockets,
     },
-    evictRevokedSessionAndResume: jest.fn(),
   };
 });
 
-describe('Resilient Concurrency & Session Handoff for Telemedicine Triage', () => {
-  const mockPrisma = prisma as any;
-  const mockCallsService = callsService as jest.Mocked<typeof callsService>;
-  const mockIo = io as any;
+describe('4-State Consultation Concurrency, Device Handoff & SFU Eviction', () => {
+  const service = new ConsultationsService();
+  const mockPrisma = prisma as unknown as {
+    consultation: Record<string, jest.Mock>;
+    consultationAuditLog: Record<string, jest.Mock>;
+    _auditLogs: Array<Record<string, unknown>>;
+  };
+  const mockIo = io as unknown as {
+    _emittedEvents: Array<{ room: string | string[]; event: string; data: unknown }>;
+    _mockSockets: Array<{ disconnect: jest.Mock }>;
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -77,741 +88,155 @@ describe('Resilient Concurrency & Session Handoff for Telemedicine Triage', () =
     mockIo._emittedEvents.length = 0;
   });
 
-  describe('1. Veterinarian Claim Transaction (claimConsultationByVet)', () => {
-    it('should transition to CLAIM_PENDING_SYNC when tutor is OFFLINE', async () => {
-      const initialConsultation = {
-        id: 'cons-claim-1',
-        clientId: 'tutor-100',
-        vetId: null,
-        status: 'TRIAGE_CRITICAL_QUEUED',
-        transportStatus: 'OFFLINE',
-        activeDeviceId: 'device-A',
-        stateVersion: 1,
-        claimedAt: null,
-      };
+  it('returns hasActiveConsultation=false when tutor has no WAITING/ACTIVE consultation', async () => {
+    mockPrisma.consultation.findFirst.mockResolvedValue(null);
 
-      mockPrisma.consultation.findUnique.mockResolvedValue({ ...initialConsultation });
-      mockPrisma.consultation.updateMany.mockResolvedValue({ count: 1 });
+    const res = await service.handoffTutorDevice('tutor-idle', 'device-new-1');
 
-      const result = await consultationConcurrencyService.claimConsultationByVet(
-        'cons-claim-1',
-        'vet-999'
-      );
-
-      expect(result.status).toBe('CLAIM_PENDING_SYNC');
-      expect(result.stateVersion).toBe(2);
-      expect(result.tutorId).toBe('tutor-100');
-      expect(result.transportStatus).toBe('OFFLINE');
-
-      expect(mockPrisma.consultation.updateMany).toHaveBeenCalledWith({
-        where: expect.objectContaining({
-          id: 'cons-claim-1',
-          stateVersion: 1,
-          status: 'TRIAGE_CRITICAL_QUEUED',
-        }),
-        data: expect.objectContaining({
-          vetId: 'vet-999',
-          status: 'CLAIM_PENDING_SYNC',
-          stateVersion: 2,
-        }),
-      });
-      expect(mockPrisma.$queryRawUnsafe).not.toHaveBeenCalled();
-      expect(mockPrisma.$executeRawUnsafe).not.toHaveBeenCalled();
-
-      // Verify audit log creation
-      expect(mockPrisma.consultationAuditLog.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          consultationId: 'cons-claim-1',
-          eventType: 'VET_CLAIM',
-          previousState: 'TRIAGE_CRITICAL_QUEUED',
-          newState: 'CLAIM_PENDING_SYNC',
-          actorId: 'vet-999',
-          deviceId: 'device-A',
-        }),
-      });
-    });
-
-    it('should transition directly to LIVEKIT_CONNECTING when tutor is ONLINE', async () => {
-      const initialConsultation = {
-        id: 'cons-claim-2',
-        clientId: 'tutor-101',
-        vetId: null,
-        status: 'TRIAGE_CRITICAL_QUEUED',
-        transportStatus: 'ONLINE',
-        activeDeviceId: 'device-B',
-        stateVersion: 2,
-        claimedAt: null,
-      };
-
-      mockPrisma.consultation.findUnique.mockResolvedValue({ ...initialConsultation });
-      mockPrisma.consultation.updateMany.mockResolvedValue({ count: 1 });
-
-      const result = await consultationConcurrencyService.claimConsultationByVet(
-        'cons-claim-2',
-        'vet-999'
-      );
-
-      expect(result.status).toBe('LIVEKIT_CONNECTING');
-      expect(result.stateVersion).toBe(3);
-      expect(result.transportStatus).toBe('ONLINE');
-
-      expect(mockPrisma.consultation.updateMany).toHaveBeenCalledWith({
-        where: expect.objectContaining({
-          id: 'cons-claim-2',
-          stateVersion: 2,
-          status: 'TRIAGE_CRITICAL_QUEUED',
-        }),
-        data: expect.objectContaining({
-          vetId: 'vet-999',
-          status: 'LIVEKIT_CONNECTING',
-          stateVersion: 3,
-        }),
-      });
-    });
-
-    it('should throw 409 CONFLICT and skip audit log when optimistic CAS fails while still claimable', async () => {
-      mockPrisma.consultation.findUnique
-        .mockResolvedValueOnce({
-          id: 'cons-cas-conflict',
-          clientId: 'tutor-100',
-          vetId: null,
-          status: 'TRIAGE_CRITICAL_QUEUED',
-          transportStatus: 'OFFLINE',
-          activeDeviceId: 'device-A',
-          stateVersion: 1,
-          claimedAt: null,
-        })
-        .mockResolvedValueOnce({
-          id: 'cons-cas-conflict',
-          clientId: 'tutor-100',
-          vetId: null,
-          status: 'TRIAGE_CRITICAL_QUEUED',
-          transportStatus: 'ONLINE',
-          activeDeviceId: 'device-B',
-          stateVersion: 2,
-          claimedAt: null,
-        });
-      mockPrisma.consultation.updateMany.mockResolvedValue({ count: 0 });
-
-      await expect(
-        consultationConcurrencyService.claimConsultationByVet('cons-cas-conflict', 'vet-999')
-      ).rejects.toMatchObject({
-        statusCode: 409,
-        code: 'CONFLICT',
-      });
-      expect(mockPrisma.consultationAuditLog.create).not.toHaveBeenCalled();
-    });
-
-    it('should throw 409 CONSULTATION_ALREADY_CLAIMED when CAS loses to a rival vet', async () => {
-      mockPrisma.consultation.findUnique
-        .mockResolvedValueOnce({
-          id: 'cons-cas-rival',
-          clientId: 'tutor-100',
-          vetId: null,
-          status: 'WAITING',
-          transportStatus: 'OFFLINE',
-          activeDeviceId: null,
-          stateVersion: 1,
-          claimedAt: null,
-        })
-        .mockResolvedValueOnce({
-          id: 'cons-cas-rival',
-          clientId: 'tutor-100',
-          vetId: 'vet-rival',
-          status: 'CLAIM_PENDING_SYNC',
-          transportStatus: 'OFFLINE',
-          activeDeviceId: null,
-          stateVersion: 2,
-          claimedAt: new Date(),
-        });
-      mockPrisma.consultation.updateMany.mockResolvedValue({ count: 0 });
-
-      await expect(
-        consultationConcurrencyService.claimConsultationByVet('cons-cas-rival', 'vet-999')
-      ).rejects.toMatchObject({
-        statusCode: 409,
-        code: 'CONSULTATION_ALREADY_CLAIMED',
-      });
-      expect(mockPrisma.consultationAuditLog.create).not.toHaveBeenCalled();
-    });
-
-    it('should throw 400 INVALID_STATE_FOR_CLAIM when CAS loses to a completed consultation', async () => {
-      mockPrisma.consultation.findUnique
-        .mockResolvedValueOnce({
-          id: 'cons-cas-done',
-          clientId: 'tutor-100',
-          vetId: null,
-          status: 'WAITING',
-          transportStatus: 'OFFLINE',
-          activeDeviceId: null,
-          stateVersion: 1,
-          claimedAt: null,
-        })
-        .mockResolvedValueOnce({
-          id: 'cons-cas-done',
-          clientId: 'tutor-100',
-          vetId: null,
-          status: 'COMPLETED',
-          transportStatus: 'OFFLINE',
-          activeDeviceId: null,
-          stateVersion: 2,
-          claimedAt: null,
-        });
-      mockPrisma.consultation.updateMany.mockResolvedValue({ count: 0 });
-
-      await expect(
-        consultationConcurrencyService.claimConsultationByVet('cons-cas-done', 'vet-999')
-      ).rejects.toMatchObject({
-        statusCode: 400,
-        code: 'INVALID_STATE_FOR_CLAIM',
-      });
-      expect(mockPrisma.consultationAuditLog.create).not.toHaveBeenCalled();
-    });
-
-    it('should throw 404 CONSULTATION_NOT_FOUND when CAS finds consultation deleted', async () => {
-      mockPrisma.consultation.findUnique
-        .mockResolvedValueOnce({
-          id: 'cons-cas-deleted',
-          clientId: 'tutor-100',
-          vetId: null,
-          status: 'WAITING',
-          transportStatus: 'OFFLINE',
-          activeDeviceId: null,
-          stateVersion: 1,
-          claimedAt: null,
-        })
-        .mockResolvedValueOnce(null);
-      mockPrisma.consultation.updateMany.mockResolvedValue({ count: 0 });
-
-      await expect(
-        consultationConcurrencyService.claimConsultationByVet('cons-cas-deleted', 'vet-999')
-      ).rejects.toMatchObject({
-        statusCode: 404,
-        code: 'CONSULTATION_NOT_FOUND',
-      });
-      expect(mockPrisma.consultationAuditLog.create).not.toHaveBeenCalled();
-    });
-
-    it('should throw 404 CONSULTATION_NOT_FOUND if consultation does not exist', async () => {
-      mockPrisma.consultation.findUnique.mockResolvedValue(null);
-
-      await expect(
-        consultationConcurrencyService.claimConsultationByVet('non-existent', 'vet-999')
-      ).rejects.toMatchObject({
-        statusCode: 404,
-        code: 'CONSULTATION_NOT_FOUND',
-      });
-    });
-
-    it('should throw 409 CONSULTATION_ALREADY_CLAIMED if already claimed by another vet', async () => {
-      mockPrisma.consultation.findUnique.mockResolvedValue({
-        id: 'cons-claimed',
-        clientId: 'tutor-100',
-        vetId: 'vet-original',
-        status: 'CLAIM_PENDING_SYNC',
-        transportStatus: 'ONLINE',
-        activeDeviceId: 'device-A',
-        stateVersion: 2,
-      });
-
-      await expect(
-        consultationConcurrencyService.claimConsultationByVet('cons-claimed', 'vet-rival')
-      ).rejects.toMatchObject({
-        statusCode: 409,
-        code: 'CONSULTATION_ALREADY_CLAIMED',
-      });
-    });
-
-    it('should throw 400 INVALID_STATE_FOR_CLAIM if consultation is COMPLETED or CANCELLED', async () => {
-      mockPrisma.consultation.findUnique.mockResolvedValue({
-        id: 'cons-finished',
-        clientId: 'tutor-100',
-        vetId: null,
-        status: 'COMPLETED',
-        transportStatus: 'OFFLINE',
-        activeDeviceId: null,
-        stateVersion: 5,
-      });
-
-      await expect(
-        consultationConcurrencyService.claimConsultationByVet('cons-finished', 'vet-999')
-      ).rejects.toMatchObject({
-        statusCode: 400,
-        code: 'INVALID_STATE_FOR_CLAIM',
-      });
-    });
+    expect(res).toEqual({ hasActiveConsultation: false });
+    expect(mockPrisma.consultation.updateMany).not.toHaveBeenCalled();
   });
 
-  describe('2. Tutor Session Migration Transaction (migrateTutorSession)', () => {
-    it('should return hasActiveConsultation=false when tutor has no active consultations', async () => {
-      mockPrisma.consultation.findFirst.mockResolvedValue(null);
-
-      const result = await consultationConcurrencyService.migrateTutorSession('tutor-idle', 'device-new');
-      expect(result.hasActiveConsultation).toBe(false);
+  it('treats same-device reconnect as a no-op with 0 stateVersion bumps and 0 audit rows', async () => {
+    mockPrisma.consultation.findFirst.mockResolvedValue({
+      id: 'cons-same-1',
+      clientId: 'tutor-1',
+      vetId: 'vet-1',
+      status: 'ACTIVE',
+      activeDeviceId: 'device-A',
+      stateVersion: 3,
     });
 
-    it('should migrate session to TRIAGE_CRITICAL_QUEUED if no vet is assigned yet', async () => {
-      const activeConsultation = {
+    const res = await service.handoffTutorDevice('tutor-1', 'device-A');
+
+    expect(res).toEqual({
+      hasActiveConsultation: true,
+      didSwapDevice: false,
+      consultationId: 'cons-same-1',
+      vetId: 'vet-1',
+      revokedDeviceId: null,
+      status: 'ACTIVE',
+      stateVersion: 3,
+    });
+    expect(mockPrisma.consultation.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.consultationAuditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('swaps activeDeviceId via guarded CAS preserving WAITING/ACTIVE status and writes DEVICE_HANDOFF audit log', async () => {
+    mockPrisma.consultation.findFirst.mockResolvedValue({
+      id: 'cons-active-1',
+      clientId: 'tutor-1',
+      vetId: 'vet-1',
+      status: 'ACTIVE',
+      activeDeviceId: 'device-A',
+      stateVersion: 2,
+    });
+    mockPrisma.consultation.updateMany.mockResolvedValue({ count: 1 });
+
+    const res = await service.handoffTutorDevice('tutor-1', 'device-B');
+
+    expect(res).toEqual({
+      hasActiveConsultation: true,
+      didSwapDevice: true,
+      consultationId: 'cons-active-1',
+      vetId: 'vet-1',
+      revokedDeviceId: 'device-A',
+      status: 'ACTIVE',
+      stateVersion: 3,
+    });
+    expect(mockPrisma.consultation.updateMany).toHaveBeenCalledWith({
+      where: {
         id: 'cons-active-1',
-        clientId: 'tutor-200',
-        vetId: null,
-        status: 'TRIAGE_CRITICAL_QUEUED',
-        transportStatus: 'OFFLINE',
-        activeDeviceId: 'device-old',
-        stateVersion: 1,
-      };
-
-      mockPrisma.consultation.findFirst.mockResolvedValue({ ...activeConsultation });
-      mockPrisma.consultation.updateMany.mockResolvedValue({ count: 1 });
-
-      const result = await consultationConcurrencyService.migrateTutorSession(
-        'tutor-200',
-        'device-new'
-      );
-
-      expect(result.hasActiveConsultation).toBe(true);
-      expect(result.ok).toBe(true);
-      expect(result.consultationId).toBe('cons-active-1');
-      expect(result.vetId).toBeNull();
-      expect(result.revokedDeviceId).toBe('device-old');
-      expect(result.status).toBe('TRIAGE_CRITICAL_QUEUED');
-      expect(result.stateVersion).toBe(2);
-
-      expect(mockPrisma.consultation.updateMany).toHaveBeenCalledWith({
-        where: expect.objectContaining({
-          id: 'cons-active-1',
-          clientId: 'tutor-200',
-          stateVersion: 1,
-          status: 'TRIAGE_CRITICAL_QUEUED',
-        }),
-        data: expect.objectContaining({
-          activeDeviceId: 'device-new',
-          transportStatus: 'ONLINE',
-          status: 'TRIAGE_CRITICAL_QUEUED',
-          stateVersion: 2,
-        }),
-      });
-      expect(mockPrisma.$queryRawUnsafe).not.toHaveBeenCalled();
-      expect(mockPrisma.$executeRawUnsafe).not.toHaveBeenCalled();
-
-      expect(mockPrisma.consultationAuditLog.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          consultationId: 'cons-active-1',
-          eventType: 'DEVICE_HANDOFF',
-          actorId: 'tutor-200',
-          deviceId: 'device-new',
-          previousState: 'TRIAGE_CRITICAL_QUEUED',
-          newState: 'TRIAGE_CRITICAL_QUEUED',
-        }),
-      });
-    });
-
-    it('should migrate session to LIVEKIT_CONNECTING if vet is already assigned', async () => {
-      const activeConsultation = {
-        id: 'cons-active-2',
-        clientId: 'tutor-200',
-        vetId: 'vet-assigned',
-        status: 'CLAIM_PENDING_SYNC',
-        transportStatus: 'OFFLINE',
-        activeDeviceId: 'device-old',
+        clientId: 'tutor-1',
+        status: 'ACTIVE',
         stateVersion: 2,
-      };
-
-      mockPrisma.consultation.findFirst.mockResolvedValue({ ...activeConsultation });
-      mockPrisma.consultation.updateMany.mockResolvedValue({ count: 1 });
-
-      const result = await consultationConcurrencyService.migrateTutorSession(
-        'tutor-200',
-        'device-new'
-      );
-
-      expect(result.hasActiveConsultation).toBe(true);
-      expect(result.ok).toBe(true);
-      expect(result.vetId).toBe('vet-assigned');
-      expect(result.status).toBe('LIVEKIT_CONNECTING');
-      expect(result.stateVersion).toBe(3);
-      expect(result.revokedDeviceId).toBe('device-old');
-    });
-
-    it('should return ok=false reason=CONFLICT and skip audit log on stateVersion mismatch', async () => {
-      mockPrisma.consultation.findFirst.mockResolvedValue({
-        id: 'cons-mig-conflict',
-        clientId: 'tutor-200',
-        vetId: null,
-        status: 'TRIAGE_CRITICAL_QUEUED',
-        transportStatus: 'OFFLINE',
-        activeDeviceId: 'device-old',
-        stateVersion: 1,
-      });
-      mockPrisma.consultation.updateMany.mockResolvedValue({ count: 0 });
-      mockPrisma.consultation.findUnique.mockResolvedValue({
-        id: 'cons-mig-conflict',
-        clientId: 'tutor-200',
-        vetId: 'vet-1',
-        status: 'CLAIM_PENDING_SYNC',
-        transportStatus: 'OFFLINE',
-        activeDeviceId: 'device-old',
-        stateVersion: 2,
-      });
-
-      const result = await consultationConcurrencyService.migrateTutorSession('tutor-200', 'device-new');
-
-      expect(result).toEqual({
-        hasActiveConsultation: false,
-        ok: false,
-        reason: 'CONFLICT',
-        consultationId: 'cons-mig-conflict',
-      });
-      expect(mockPrisma.consultationAuditLog.create).not.toHaveBeenCalled();
-    });
-
-    it('should return ok=false reason=INVALID_STATE when consultation completes concurrently', async () => {
-      mockPrisma.consultation.findFirst.mockResolvedValue({
-        id: 'cons-mig-done',
-        clientId: 'tutor-200',
-        vetId: 'vet-1',
-        status: 'IN_CALL_ACTIVE',
-        transportStatus: 'ONLINE',
-        activeDeviceId: 'device-old',
-        stateVersion: 3,
-      });
-      mockPrisma.consultation.updateMany.mockResolvedValue({ count: 0 });
-      mockPrisma.consultation.findUnique.mockResolvedValue({
-        id: 'cons-mig-done',
-        clientId: 'tutor-200',
-        vetId: 'vet-1',
-        status: 'COMPLETED',
-        transportStatus: 'ONLINE',
-        activeDeviceId: 'device-old',
-        stateVersion: 4,
-      });
-
-      const result = await consultationConcurrencyService.migrateTutorSession('tutor-200', 'device-new');
-
-      expect(result).toEqual({
-        hasActiveConsultation: false,
-        ok: false,
-        reason: 'INVALID_STATE',
-        consultationId: 'cons-mig-done',
-      });
-      expect(mockPrisma.consultationAuditLog.create).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('3. Commutative Convergence (T_claim -> T_handoff vs. T_handoff -> T_claim)', () => {
-    it('should converge to the exact same state regardless of request arrival order', async () => {
-      // Sequence 1: Claim arrives first, then Tutor Handoff arrives
-      const dbStateSeq1 = {
-        id: 'cons-seq-1',
-        clientId: 'tutor-comm',
-        vetId: null as string | null,
-        status: 'TRIAGE_CRITICAL_QUEUED',
-        transportStatus: 'OFFLINE',
-        activeDeviceId: 'device-A' as string | null,
-        stateVersion: 1,
-        claimedAt: null as Date | null,
-      };
-
-      // Set up mocks for Sequence 1
-      mockPrisma.consultation.findUnique.mockImplementation(async () => ({ ...dbStateSeq1 }));
-      mockPrisma.consultation.findFirst.mockImplementation(async () => ({ ...dbStateSeq1 }));
-      mockPrisma.consultation.updateMany.mockImplementation(async ({ data }: any) => {
-        Object.assign(dbStateSeq1, data);
-        return { count: 1 };
-      });
-
-      // 1a. Vet claim executes
-      const claimResult1 = await consultationConcurrencyService.claimConsultationByVet(
-        'cons-seq-1',
-        'vet-comm'
-      );
-      expect(claimResult1.status).toBe('CLAIM_PENDING_SYNC');
-      expect(claimResult1.stateVersion).toBe(2);
-
-      // 1b. Tutor migration executes
-      const handoffResult1 = await consultationConcurrencyService.migrateTutorSession(
-        'tutor-comm',
-        'device-B'
-      );
-      expect(handoffResult1.status).toBe('LIVEKIT_CONNECTING');
-      expect(handoffResult1.stateVersion).toBe(3);
-
-      const finalStateSeq1 = {
-        status: dbStateSeq1.status,
-        transportStatus: dbStateSeq1.transportStatus,
-        activeDeviceId: dbStateSeq1.activeDeviceId,
-        vetId: dbStateSeq1.vetId,
-        stateVersion: dbStateSeq1.stateVersion,
-      };
-
-      // Sequence 2: Tutor Handoff arrives first, then Claim arrives
-      const dbStateSeq2 = {
-        id: 'cons-seq-2',
-        clientId: 'tutor-comm',
-        vetId: null as string | null,
-        status: 'TRIAGE_CRITICAL_QUEUED',
-        transportStatus: 'OFFLINE',
-        activeDeviceId: 'device-A' as string | null,
-        stateVersion: 1,
-        claimedAt: null as Date | null,
-      };
-
-      mockPrisma.consultation.findUnique.mockImplementation(async () => ({ ...dbStateSeq2 }));
-      mockPrisma.consultation.findFirst.mockImplementation(async () => ({ ...dbStateSeq2 }));
-      mockPrisma.consultation.updateMany.mockImplementation(async ({ data }: any) => {
-        Object.assign(dbStateSeq2, data);
-        return { count: 1 };
-      });
-
-      // 2a. Tutor migration executes first
-      const handoffResult2 = await consultationConcurrencyService.migrateTutorSession(
-        'tutor-comm',
-        'device-B'
-      );
-      expect(handoffResult2.status).toBe('TRIAGE_CRITICAL_QUEUED');
-      expect(handoffResult2.stateVersion).toBe(2);
-
-      // 2b. Vet claim executes second
-      const claimResult2 = await consultationConcurrencyService.claimConsultationByVet(
-        'cons-seq-2',
-        'vet-comm'
-      );
-      expect(claimResult2.status).toBe('LIVEKIT_CONNECTING');
-      expect(claimResult2.stateVersion).toBe(3);
-
-      const finalStateSeq2 = {
-        status: dbStateSeq2.status,
-        transportStatus: dbStateSeq2.transportStatus,
-        activeDeviceId: dbStateSeq2.activeDeviceId,
-        vetId: dbStateSeq2.vetId,
-        stateVersion: dbStateSeq2.stateVersion,
-      };
-
-      // Mathematical Commutativity Check: Both final states are identical
-      expect(finalStateSeq1).toEqual(finalStateSeq2);
-      expect(finalStateSeq1).toEqual({
-        status: 'LIVEKIT_CONNECTING',
-        transportStatus: 'ONLINE',
+        deletedAt: null,
+      },
+      data: {
         activeDeviceId: 'device-B',
-        vetId: 'vet-comm',
         stateVersion: 3,
-      });
+      },
     });
-  });
-
-  describe('4. Guarded Socket Disconnect (markSocketDisconnect)', () => {
-    it('should transition transportStatus to GRACE_DISCONNECTED when disconnecting device is active', async () => {
-      const activeConsultation = {
-        id: 'cons-disc-1',
-        clientId: 'tutor-300',
-        activeDeviceId: 'device-active',
-        status: 'LIVEKIT_CONNECTING',
-        transportStatus: 'ONLINE',
-        stateVersion: 3,
-      };
-
-      mockPrisma.consultation.findFirst.mockResolvedValue({ ...activeConsultation });
-      mockPrisma.consultation.updateMany.mockResolvedValue({ count: 1 });
-
-      const result = await consultationConcurrencyService.markSocketDisconnect(
-        'tutor-300',
-        'device-active'
-      );
-
-      expect(result.updated).toBe(true);
-      expect(result.ok).toBe(true);
-      expect(result.rowCount).toBe(1);
-      expect(result.stateVersion).toBe(4);
-
-      expect(mockPrisma.consultation.updateMany).toHaveBeenCalledWith({
-        where: expect.objectContaining({
-          id: 'cons-disc-1',
-          clientId: 'tutor-300',
-          activeDeviceId: 'device-active',
+    expect(mockPrisma.consultationAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        consultationId: 'cons-active-1',
+        eventType: 'DEVICE_HANDOFF',
+        previousState: 'ACTIVE',
+        newState: 'ACTIVE',
+        actorId: 'tutor-1',
+        deviceId: 'device-B',
+        metadata: {
+          revokedDeviceId: 'device-A',
           stateVersion: 3,
-          status: 'LIVEKIT_CONNECTING',
-        }),
-        data: {
-          transportStatus: 'GRACE_DISCONNECTED',
-          stateVersion: 4,
         },
-      });
-      expect(mockPrisma.$queryRawUnsafe).not.toHaveBeenCalled();
-      expect(mockPrisma.$executeRawUnsafe).not.toHaveBeenCalled();
-
-      expect(mockPrisma.consultationAuditLog.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          consultationId: 'cons-disc-1',
-          eventType: 'SOCKET_DISCONNECT',
-          previousState: 'ONLINE',
-          newState: 'GRACE_DISCONNECTED',
-          actorId: 'tutor-300',
-          deviceId: 'device-active',
-        }),
-      });
-    });
-
-    it('should NOT update transportStatus when an obsolete device disconnects after handoff', async () => {
-      // Consultation currently active on device-B; delayed disconnect arrives for obsolete device-A
-      mockPrisma.consultation.findFirst.mockResolvedValue(null); // No match for tutor + device-A
-
-      const result = await consultationConcurrencyService.markSocketDisconnect(
-        'tutor-300',
-        'device-A-obsolete'
-      );
-
-      expect(result.updated).toBe(false);
-      expect(result.rowCount).toBe(0);
-
-      // Verify no database update was executed
-      expect(mockPrisma.consultation.updateMany).not.toHaveBeenCalled();
-      expect(mockPrisma.consultationAuditLog.create).not.toHaveBeenCalled();
-    });
-
-    it('should return ok=false reason=CONFLICT when optimistic CAS fails due to concurrent device handoff', async () => {
-      mockPrisma.consultation.findFirst.mockResolvedValue({
-        id: 'cons-disc-cas',
-        clientId: 'tutor-300',
-        activeDeviceId: 'device-old',
-        status: 'LIVEKIT_CONNECTING',
-        transportStatus: 'ONLINE',
-        stateVersion: 3,
-      });
-      mockPrisma.consultation.updateMany.mockResolvedValue({ count: 0 });
-      mockPrisma.consultation.findUnique.mockResolvedValue({
-        id: 'cons-disc-cas',
-        clientId: 'tutor-300',
-        activeDeviceId: 'device-new',
-        status: 'LIVEKIT_CONNECTING',
-        transportStatus: 'ONLINE',
-        stateVersion: 4,
-      });
-
-      const result = await consultationConcurrencyService.markSocketDisconnect(
-        'tutor-300',
-        'device-old'
-      );
-
-      expect(result).toEqual({
-        updated: false,
-        rowCount: 0,
-        ok: false,
-        reason: 'CONFLICT',
-        consultationId: 'cons-disc-cas',
-      });
-      expect(mockPrisma.consultationAuditLog.create).not.toHaveBeenCalled();
+      }),
     });
   });
 
-  describe('5. Out-of-Band Post-Commit Eviction & Session Resume Helper', () => {
-    it('should emit session:invalidated, evict LiveKit participant, and emit consultation:critical_resume', async () => {
-      const params: PostCommitEvictionParams = {
-        consultationId: 'cons-evict-1',
-        tutorId: 'tutor-400',
-        revokedDeviceId: 'device-old',
-        newDeviceId: 'device-new',
-        status: 'LIVEKIT_CONNECTING',
-        stateVersion: 3,
-        vetId: 'vet-777',
-      };
-
-      await consultationConcurrencyService.handlePostCommitEvictionAndResume(params);
-
-      // a. Check session:invalidated sent to revoked device
-      expect(mockIo._emittedEvents).toContainEqual({
-        room: 'device:device-old',
-        event: 'session:invalidated',
-        data: {
-          reason: 'SESSION_MIGRATED_NEW_DEVICE',
-          consultationId: 'cons-evict-1',
-        },
-      });
-
-      // b. Check LiveKit participant removal
-      expect(mockCallsService.removeParticipant).toHaveBeenCalledWith(
-        'cons-evict-1',
-        'tutor_tutor-400:device-old'
-      );
-
-      // c. Check vet reconnect notification
-      expect(mockIo._emittedEvents).toContainEqual({
-        room: 'user:vet-777',
-        event: 'consultation:tutor_reconnecting',
-        data: {
-          consultationId: 'cons-evict-1',
-          message: 'Tutor reconnecting from new device...',
-        },
-      });
-
-      // d. Check consultation:critical_resume sent to new device
-      expect(mockIo._emittedEvents).toContainEqual({
-        room: 'device:device-new',
-        event: 'consultation:critical_resume',
-        data: {
-          consultationId: 'cons-evict-1',
-          status: 'LIVEKIT_CONNECTING',
-          stateVersion: 3,
-          vetId: 'vet-777',
-        },
-      });
-    });
-  });
-
-  describe('6. Graceful Schema Resilience on Unmigrated Database', () => {
-    afterEach(() => {
-      setConcurrencySchemaSupportForTest(true);
-    });
-
-    it('should safely return updated: false on markSocketDisconnect when columns do not exist', async () => {
-      setConcurrencySchemaSupportForTest(false);
-      const txSpy = jest.spyOn(prisma, '$transaction');
-
-      const result = await consultationConcurrencyService.markSocketDisconnect('tutor-1', 'device-1');
-
-      expect(result).toEqual({ updated: false, rowCount: 0 });
-      expect(txSpy).not.toHaveBeenCalled();
-      txSpy.mockRestore();
-    });
-
-    it('should safely return hasActiveConsultation: false on migrateTutorSession when columns do not exist', async () => {
-      setConcurrencySchemaSupportForTest(false);
-      const txSpy = jest.spyOn(prisma, '$transaction');
-
-      const result = await consultationConcurrencyService.migrateTutorSession('tutor-1', 'device-2');
-
-      expect(result).toEqual({ hasActiveConsultation: false });
-      expect(txSpy).not.toHaveBeenCalled();
-      txSpy.mockRestore();
-    });
-
-    it('should gracefully fallback to standard claim without concurrency columns when unmigrated', async () => {
-      setConcurrencySchemaSupportForTest(false);
-      const mockFindUnique = prisma.consultation.findUnique as jest.Mock;
-      const mockUpdate = prisma.consultation.update as jest.Mock;
-
-      mockFindUnique.mockResolvedValueOnce({
-        id: 'cons-legacy-1',
-        clientId: 'client-leg-1',
+  it('retries stateVersion CAS conflict cleanly (e.g. concurrent vet assignConsultation)', async () => {
+    mockPrisma.consultation.findFirst
+      .mockResolvedValueOnce({
+        id: 'cons-comm-1',
+        clientId: 'tutor-1',
         vetId: null,
         status: 'WAITING',
-      });
-      mockUpdate.mockResolvedValueOnce({
-        id: 'cons-legacy-1',
-        clientId: 'client-leg-1',
-        vetId: 'vet-leg-1',
-        status: 'IN_CALL_ACTIVE',
-      });
-
-      const result = await consultationConcurrencyService.claimConsultationByVet('cons-legacy-1', 'vet-leg-1');
-
-      expect(result).toEqual({
-        consultationId: 'cons-legacy-1',
-        status: 'IN_CALL_ACTIVE',
-        tutorId: 'client-leg-1',
-        activeDeviceId: null,
-        transportStatus: 'ONLINE',
+        activeDeviceId: 'device-A',
         stateVersion: 1,
+      })
+      .mockResolvedValueOnce({
+        id: 'cons-comm-1',
+        clientId: 'tutor-1',
+        vetId: 'vet-1',
+        status: 'ACTIVE',
+        activeDeviceId: 'device-A',
+        stateVersion: 2,
       });
-    });
+
+    mockPrisma.consultation.updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    const res = await service.handoffTutorDevice('tutor-1', 'device-B');
+
+    expect(res.hasActiveConsultation).toBe(true);
+    expect(res.status).toBe('ACTIVE');
+    expect(res.vetId).toBe('vet-1');
+    expect(res.stateVersion).toBe(3);
+    expect(mockPrisma.consultation.updateMany).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.consultationAuditLog.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('evictUserRealtimeAndCall emits auth:session_terminated and removes LiveKit participant', async () => {
+    jest.useFakeTimers();
+    try {
+      await evictUserRealtimeAndCall({
+        userId: 'tutor-1',
+        role: 'CLIENT',
+        reason: 'SESSION_MIGRATED_NEW_DEVICE',
+        message: 'Tu consulta activa fue transferida a otro dispositivo.',
+        consultationId: 'cons-evict-1',
+        revokedDeviceId: 'device-A',
+      });
+
+      expect(mockIo._emittedEvents).toContainEqual({
+        room: 'device:device-A',
+        event: 'auth:session_terminated',
+        data: {
+          reason: 'SESSION_MIGRATED_NEW_DEVICE',
+          message: 'Tu consulta activa fue transferida a otro dispositivo.',
+          consultationId: 'cons-evict-1',
+        },
+      });
+      expect(callsService.removeParticipant).toHaveBeenCalledWith(
+        'cons-evict-1',
+        'tutor_tutor-1:device-A'
+      );
+
+      jest.advanceTimersByTime(60);
+      await Promise.resolve();
+      expect(mockIo._mockSockets[0].disconnect).toHaveBeenCalledWith(true);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

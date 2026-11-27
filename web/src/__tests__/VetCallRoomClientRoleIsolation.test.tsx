@@ -200,10 +200,42 @@ describe('vet/CallRoom CLIENT role isolation & handleFinalize singleton socket e
     });
   });
 
-  it('emits call:ended via useSocket().emitEvent on handleFinalize without creating an ephemeral io() socket', async () => {
+  it('keeps CLIENT manual exit local without calling PATCH /complete or emitting call:ended', async () => {
     render(
       <QueryClientProvider client={queryClient}>
         <CallRoom id="consult-client-1" />
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Salir')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText('Salir'));
+    const confirmBtn = await screen.findByText('Salir de la sala');
+    fireEvent.click(confirmBtn);
+
+    await waitFor(() => {
+      expect(screen.queryByText('Salir de la sala')).toBeNull();
+    });
+
+    expect(apiPatchMock).not.toHaveBeenCalled();
+    expect(mockState.emitEvent).not.toHaveBeenCalledWith('call:ended', expect.anything());
+    expect(ioMock).not.toHaveBeenCalled();
+  });
+
+  it('emits call:ended via useSocket().emitEvent when VET confirms handleFinalize without creating an ephemeral io() socket', async () => {
+    mockState.user = {
+      id: 'vet-1',
+      firstName: 'Ana',
+      lastName: 'Vet',
+      role: 'VET',
+    };
+    window.history.pushState({}, '', '/call/consult-vet-1');
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <CallRoom id="consult-vet-1" />
       </QueryClientProvider>
     );
 
@@ -216,13 +248,13 @@ describe('vet/CallRoom CLIENT role isolation & handleFinalize singleton socket e
     fireEvent.click(confirmBtn);
 
     await waitFor(() => {
-      expect(apiPatchMock).toHaveBeenCalledWith('/api/consultations/consult-client-1/complete', {
-        diagnosisNotes: 'Consulta finalizada por el tutor.',
+      expect(apiPatchMock).toHaveBeenCalledWith('/api/consultations/consult-vet-1/complete', {
+        diagnosisNotes: 'Consulta telemática finalizada con éxito.',
       });
     });
 
     expect(mockState.emitEvent).toHaveBeenCalledWith('call:ended', {
-      consultationId: 'consult-client-1',
+      consultationId: 'consult-vet-1',
     });
     expect(ioMock).not.toHaveBeenCalled();
   });
@@ -334,13 +366,13 @@ describe('vet/CallRoom CLIENT role isolation & handleFinalize singleton socket e
     });
   });
 
-  it('clears 15s disconnectTimerRef on unmount/id-switch so old consultation never fires PATCH /complete', async () => {
+  it('does not auto-finalize with PATCH /complete after LiveKit onDisconnected even past 16s', async () => {
     const sock = createMockSocket();
     sock.connected = true;
     mockState.socket = sock;
     mockState.consultationStatus = 'ACTIVE';
 
-    const { rerender } = render(
+    render(
       <QueryClientProvider client={queryClient}>
         <CallRoom id="c-timer-1" />
       </QueryClientProvider>
@@ -357,13 +389,6 @@ describe('vet/CallRoom CLIENT role isolation & handleFinalize singleton socket e
         mockState.lastOnDisconnected?.('transient_network_drop');
       });
 
-      // Switch CallRoom id before the 15s timer fires
-      rerender(
-        <QueryClientProvider client={queryClient}>
-          <CallRoom id="c-timer-2" />
-        </QueryClientProvider>
-      );
-
       await act(async () => {
         vi.advanceTimersByTime(16000);
         await Promise.resolve();
@@ -374,8 +399,94 @@ describe('vet/CallRoom CLIENT role isolation & handleFinalize singleton socket e
         ([url]) => url === '/api/consultations/c-timer-1/complete'
       );
       expect(c1CompleteCalls).toHaveLength(0);
+      expect(screen.getByText('Reconectando')).toBeTruthy();
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it('unmounts LiveKitRoom when huellicam:session_terminated is dispatched', async () => {
+    const sock = createMockSocket();
+    sock.connected = true;
+    mockState.socket = sock;
+    mockState.consultationStatus = 'ACTIVE';
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <CallRoom id="c-evict-1" />
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('lk-room')).toBeTruthy();
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('huellicam:session_terminated', {
+          detail: { reason: 'SESSION_MIGRATED_NEW_DEVICE', message: 'Transferida' },
+        })
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('lk-room')).toBeNull();
+    });
+    expect(apiPatchMock).not.toHaveBeenCalled();
+  });
+
+  it('dispatches huellicam:session_terminated when POST /api/calls/:id/token returns 409 DEVICE_SESSION_STALE', async () => {
+    const defaultPostImpl = apiPostMock.getMockImplementation();
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+    mockState.consultationStatus = 'ACTIVE';
+
+    apiPostMock.mockImplementation(async (url: string) => {
+      if (url.endsWith('/token')) {
+        const err = new Error('Conflict') as Error & {
+          response?: {
+            status: number;
+            data: { success: boolean; error: { code: string; message: string } };
+          };
+        };
+        err.response = {
+          status: 409,
+          data: {
+            success: false,
+            error: {
+              code: 'DEVICE_SESSION_STALE',
+              message: 'Tu consulta activa fue migrada a otro dispositivo.',
+            },
+          },
+        };
+        throw err;
+      }
+      return { data: { success: true } };
+    });
+
+    try {
+      render(
+        <QueryClientProvider client={queryClient}>
+          <CallRoom id="c-stale-1" />
+        </QueryClientProvider>
+      );
+
+      await waitFor(() => {
+        const terminated = dispatchSpy.mock.calls
+          .map(([evt]) => evt)
+          .filter(
+            (evt): evt is CustomEvent =>
+              evt instanceof CustomEvent && evt.type === 'huellicam:session_terminated'
+          );
+        expect(terminated).toHaveLength(1);
+        expect(terminated[0].detail.reason).toBe('SESSION_MIGRATED_NEW_DEVICE');
+      });
+
+      expect(screen.queryByTestId('lk-room')).toBeNull();
+    } finally {
+      dispatchSpy.mockRestore();
+      if (defaultPostImpl) {
+        apiPostMock.mockImplementation(defaultPostImpl);
+      }
     }
   });
 

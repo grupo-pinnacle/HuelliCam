@@ -14,8 +14,10 @@ router.get('/:id', controller.getById);
 router.patch('/:id/assign', controller.assign);
 router.patch('/:id/complete', controller.complete);
 router.patch('/:id/cancel', controller.cancel);
+router.patch('/:id/reschedule', controller.reschedule);
 router.post('/:id/review', controller.review);
 router.get('/:id/messages', controller.getMessages);
 router.post('/:id/messages', controller.sendMessage);
+router.delete('/:id/messages', controller.deleteMessages);
 
 export default router;

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { DollarSign, TrendingUp, AlertOctagon, Percent, RefreshCw, Settings2, Check, X } from 'lucide-react';
 import api from '../../services/api';
+import { formatCurrencyAR } from '../../lib/formatters';
 
 export type SupportedCurrency = 'ARS' | 'USD' | 'BRL' | 'MXN' | 'EUR';
 
@@ -98,14 +99,11 @@ export function AdminExecutiveMetrics({
     }
   }, [metrics?.pricing]);
 
-  const formatCurrency = (val?: number) => {
-    if (typeof val !== 'number') return '$0';
-    return `$${val.toLocaleString('es-AR')}`;
-  };
-
   const activeFee = metrics?.pricing?.baseConsultationFee ?? 15000;
   const activeRate = Math.round((metrics?.pricing?.platformTakeRate ?? 0.2) * 100);
   const activeCurrency = metrics?.pricing?.currency ?? 'ARS';
+
+  const formatCurrency = (val?: number) => formatCurrencyAR(val ?? 0, activeCurrency);
 
   const handleSavePricing = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -477,7 +475,7 @@ export function AdminExecutiveMetrics({
               <DollarSign size={18} />
             </span>
           </div>
-          <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#183c3a' }}>
+          <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#183c3a', fontVariantNumeric: 'tabular-nums' }}>
             {formatCurrency(metrics?.gmvTotal)}
           </div>
           <div style={{ fontSize: '0.75rem', color: '#607674', marginTop: '4px' }}>
@@ -503,7 +501,7 @@ export function AdminExecutiveMetrics({
               <TrendingUp size={18} />
             </span>
           </div>
-          <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#315f5d' }}>
+          <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#315f5d', fontVariantNumeric: 'tabular-nums' }}>
             {formatCurrency(metrics?.netCommission)}
           </div>
           <div style={{ fontSize: '0.75rem', color: '#607674', marginTop: '4px' }}>
@@ -527,7 +525,7 @@ export function AdminExecutiveMetrics({
               <AlertOctagon size={18} />
             </span>
           </div>
-          <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#ae4d45' }}>
+          <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#ae4d45', fontVariantNumeric: 'tabular-nums' }}>
             {formatCurrency(metrics?.noShowLostRevenue)}
           </div>
           <div style={{ fontSize: '0.75rem', color: '#8f3f38', marginTop: '4px' }}>
@@ -551,9 +549,9 @@ export function AdminExecutiveMetrics({
               <Percent size={18} />
             </span>
           </div>
-          <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#183c3a' }}>
-            {typeof metrics?.triageToPaidConversionRate === 'number'
-              ? `${metrics.triageToPaidConversionRate}%`
+          <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#183c3a', fontVariantNumeric: 'tabular-nums' }}>
+            {Number.isFinite(metrics?.triageToPaidConversionRate)
+              ? `${metrics?.triageToPaidConversionRate}%`
               : '0%'}
           </div>
           <div style={{ fontSize: '0.75rem', color: '#607674', marginTop: '4px' }}>

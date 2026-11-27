@@ -23,6 +23,12 @@ jest.mock('../lib/prisma', () => ({
       update: jest.fn(),
       updateMany: jest.fn(),
     },
+    call: {
+      findFirst: jest.fn(),
+    },
+    consultationAuditLog: {
+      create: jest.fn().mockResolvedValue({ id: BigInt(1) }),
+    },
     review: {
       create: jest.fn(),
       findMany: jest.fn(),
@@ -354,25 +360,27 @@ describe('Consultations Module (/api/consultations)', () => {
 
     it('should ALLOW assigned VET to complete consultation with diagnosis notes', async () => {
       mockPrismaUser.findUnique.mockResolvedValue(mockVet);
-      mockPrismaConsultation.findUnique.mockResolvedValue({
-        id: 'consultation-uuid-active-1',
-        clientId: mockClient.id,
-        vetId: mockVet.id,
-        status: 'ACTIVE',
-        deletedAt: null,
-      } as any);
-
-      mockPrismaConsultation.update.mockResolvedValue({
-        id: 'consultation-uuid-active-1',
-        clientId: mockClient.id,
-        vetId: mockVet.id,
-        status: 'COMPLETED',
-        diagnosisNotes: 'Paciente estable. Tratamiento antibiótico por 7 días.',
-        endedAt: new Date(),
-        pet: {} as any,
-        client: mockClient as any,
-        vet: mockVet as any,
-      } as any);
+      mockPrismaConsultation.findUnique
+        .mockResolvedValueOnce({
+          id: 'consultation-uuid-active-1',
+          clientId: mockClient.id,
+          vetId: mockVet.id,
+          status: 'ACTIVE',
+          stateVersion: 1,
+          deletedAt: null,
+        } as any)
+        .mockResolvedValueOnce({
+          id: 'consultation-uuid-active-1',
+          clientId: mockClient.id,
+          vetId: mockVet.id,
+          status: 'COMPLETED',
+          diagnosisNotes: 'Paciente estable. Tratamiento antibiótico por 7 días.',
+          endedAt: new Date(),
+          pet: {} as any,
+          client: mockClient as any,
+          vet: mockVet as any,
+        } as any);
+      (mockPrismaConsultation.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
 
       const res = await request(app)
         .patch('/api/consultations/consultation-uuid-active-1/complete')
@@ -383,19 +391,48 @@ describe('Consultations Module (/api/consultations)', () => {
       expect(res.body.success).toBe(true);
       expect(res.body.data.status).toBe('COMPLETED');
       expect(res.body.data.diagnosisNotes).toBe('Paciente estable. Tratamiento antibiótico por 7 días.');
+      expect(mockPrismaConsultation.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            id: 'consultation-uuid-active-1',
+            status: 'ACTIVE',
+            deletedAt: null,
+          },
+        })
+      );
     });
   });
 
   describe('GET /api/consultations/mine (Resilient Batch Triage Timeout)', () => {
-    it('should return consultations without error and batch-expire timed out triage sessions', async () => {
+    it('should return consultations without error and expire timed out triage sessions', async () => {
+      const sixteenMinutesAgo = new Date(Date.now() - 16 * 60 * 1000);
       mockPrismaUser.findUnique.mockResolvedValue(mockVet);
-      (mockPrismaConsultation.updateMany as jest.Mock).mockResolvedValue({ count: 2 });
+      (mockPrismaConsultation.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+      mockPrismaConsultation.findUnique.mockResolvedValueOnce({
+        id: 'consultation-uuid-expired-1',
+        clientId: mockClient.id,
+        vetId: null,
+        status: 'CANCELLED',
+        endedAt: new Date(),
+        notes: '[CANCELLED_TIMEOUT_NO_VET_AVAILABLE]',
+      } as any);
       mockPrismaConsultation.findMany.mockResolvedValue([
         {
           id: 'consultation-uuid-mine-1',
           clientId: mockClient.id,
           vetId: mockVet.id,
           status: 'ACTIVE',
+          createdAt: new Date(),
+          pet: {} as any,
+          client: mockClient as any,
+          review: null,
+        } as any,
+        {
+          id: 'consultation-uuid-expired-1',
+          clientId: mockClient.id,
+          vetId: null,
+          status: 'WAITING',
+          createdAt: sixteenMinutesAgo,
           pet: {} as any,
           client: mockClient as any,
           review: null,
@@ -409,20 +446,20 @@ describe('Consultations Module (/api/consultations)', () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(Array.isArray(res.body.data)).toBe(true);
+      expect(res.body.data).toHaveLength(1);
       expect(mockPrismaConsultation.updateMany).toHaveBeenCalled();
     });
 
-    it('should gracefully return 200 with empty array if database query throws schema or connection error', async () => {
+    it('should propagate database errors cleanly instead of returning empty array', async () => {
       mockPrismaUser.findUnique.mockResolvedValue(mockClient);
-      mockPrismaConsultation.findMany.mockRejectedValue(new Error('column "transport_status" does not exist'));
+      mockPrismaConsultation.findMany.mockRejectedValueOnce(new Error('column "transport_status" does not exist'));
 
       const res = await request(app)
         .get('/api/consultations/mine')
         .set('Authorization', `Bearer ${clientToken}`);
 
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data).toEqual([]);
+      expect(res.status).toBe(500);
+      expect(res.body.success).toBe(false);
     });
 
     it('should redact client phone and email for WAITING consultations (VULN-06 PII Protection)', async () => {
@@ -458,51 +495,52 @@ describe('Consultations Module (/api/consultations)', () => {
 
     it('checkTriageTimeout: should transition WAITING consultation created >15 min ago to CANCELLED', async () => {
       const sixteenMinutesAgo = new Date(Date.now() - 16 * 60 * 1000);
-      mockPrismaConsultation.findUnique.mockResolvedValue({
-        id: 'consultation-uuid-waiting',
-        clientId: mockClient.id,
-        vetId: null,
-        petId: 'pet-uuid-1',
-        status: 'WAITING',
-        notes: 'Dolor de oido',
-        diagnosisNotes: null,
-        startedAt: null,
-        endedAt: null,
-        activeDeviceId: null,
-        transportStatus: 'OFFLINE',
-        stateVersion: 1,
-        claimedAt: null,
-        livekitRoomSid: null,
-        createdAt: sixteenMinutesAgo,
-        updatedAt: sixteenMinutesAgo,
-        deletedAt: null,
-      });
-
-      mockPrismaConsultation.update.mockResolvedValue({
-        id: 'consultation-uuid-waiting',
-        clientId: mockClient.id,
-        vetId: null,
-        petId: 'pet-uuid-1',
-        status: 'CANCELLED',
-        notes: 'Dolor de oido [CANCELLED_TIMEOUT_NO_VET_AVAILABLE]',
-        diagnosisNotes: null,
-        startedAt: null,
-        endedAt: new Date(),
-        activeDeviceId: null,
-        transportStatus: 'OFFLINE',
-        stateVersion: 1,
-        claimedAt: null,
-        livekitRoomSid: null,
-        createdAt: sixteenMinutesAgo,
-        updatedAt: new Date(),
-        deletedAt: null,
-      });
+      mockPrismaConsultation.findUnique
+        .mockResolvedValueOnce({
+          id: 'consultation-uuid-waiting',
+          clientId: mockClient.id,
+          vetId: null,
+          petId: 'pet-uuid-1',
+          status: 'WAITING',
+          notes: 'Dolor de oido',
+          diagnosisNotes: null,
+          startedAt: null,
+          endedAt: null,
+          activeDeviceId: null,
+          transportStatus: 'OFFLINE',
+          stateVersion: 1,
+          claimedAt: null,
+          livekitRoomSid: null,
+          createdAt: sixteenMinutesAgo,
+          updatedAt: sixteenMinutesAgo,
+          deletedAt: null,
+        })
+        .mockResolvedValueOnce({
+          id: 'consultation-uuid-waiting',
+          clientId: mockClient.id,
+          vetId: null,
+          petId: 'pet-uuid-1',
+          status: 'CANCELLED',
+          notes: 'Dolor de oido [CANCELLED_TIMEOUT_NO_VET_AVAILABLE]',
+          diagnosisNotes: null,
+          startedAt: null,
+          endedAt: new Date(),
+          activeDeviceId: null,
+          transportStatus: 'OFFLINE',
+          stateVersion: 2,
+          claimedAt: null,
+          livekitRoomSid: null,
+          createdAt: sixteenMinutesAgo,
+          updatedAt: new Date(),
+          deletedAt: null,
+        });
+      (mockPrismaConsultation.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
 
       const result = await consultationsService.checkTriageTimeout('consultation-uuid-waiting');
 
       expect(result?.status).toBe('CANCELLED');
-      expect(mockPrismaConsultation.update).toHaveBeenCalledWith({
-        where: { id: 'consultation-uuid-waiting' },
+      expect(mockPrismaConsultation.updateMany).toHaveBeenCalledWith({
+        where: { id: 'consultation-uuid-waiting', status: 'WAITING', deletedAt: null },
         data: expect.objectContaining({
           status: 'CANCELLED',
           notes: expect.stringContaining('CANCELLED_TIMEOUT_NO_VET_AVAILABLE'),
@@ -510,47 +548,49 @@ describe('Consultations Module (/api/consultations)', () => {
       });
     });
 
-    it('checkVetDisconnectTimeout: should transition ACTIVE consultation to CANCELLED if vet disconnected >3 min', async () => {
+    it('checkVetDisconnectTimeout: should transition ACTIVE consultation to CANCELLED if vet disconnected >3 min and no bounded ended call', async () => {
       const fourMinutesAgo = new Date(Date.now() - 4 * 60 * 1000);
-      mockPrismaConsultation.findUnique.mockResolvedValue({
-        id: 'consultation-uuid-active',
-        clientId: mockClient.id,
-        vetId: mockVet.id,
-        petId: 'pet-uuid-1',
-        status: 'ACTIVE',
-        notes: 'Consulta activa',
-        diagnosisNotes: null,
-        startedAt: new Date(),
-        endedAt: null,
-        activeDeviceId: null,
-        transportStatus: 'OFFLINE',
-        stateVersion: 1,
-        claimedAt: null,
-        livekitRoomSid: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        deletedAt: null,
-      });
-
-      mockPrismaConsultation.update.mockResolvedValue({
-        id: 'consultation-uuid-active',
-        clientId: mockClient.id,
-        vetId: mockVet.id,
-        petId: 'pet-uuid-1',
-        status: 'CANCELLED',
-        notes: 'Consulta activa [VET_DISCONNECTED_TIMEOUT]',
-        diagnosisNotes: null,
-        startedAt: new Date(),
-        endedAt: new Date(),
-        activeDeviceId: null,
-        transportStatus: 'OFFLINE',
-        stateVersion: 1,
-        claimedAt: null,
-        livekitRoomSid: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        deletedAt: null,
-      });
+      mockPrismaConsultation.findUnique
+        .mockResolvedValueOnce({
+          id: 'consultation-uuid-active',
+          clientId: mockClient.id,
+          vetId: mockVet.id,
+          petId: 'pet-uuid-1',
+          status: 'ACTIVE',
+          notes: 'Consulta activa',
+          diagnosisNotes: null,
+          startedAt: new Date(),
+          endedAt: null,
+          activeDeviceId: null,
+          transportStatus: 'OFFLINE',
+          stateVersion: 1,
+          claimedAt: null,
+          livekitRoomSid: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          deletedAt: null,
+        })
+        .mockResolvedValueOnce({
+          id: 'consultation-uuid-active',
+          clientId: mockClient.id,
+          vetId: mockVet.id,
+          petId: 'pet-uuid-1',
+          status: 'CANCELLED',
+          notes: 'Consulta activa [VET_DISCONNECTED_TIMEOUT]',
+          diagnosisNotes: null,
+          startedAt: new Date(),
+          endedAt: new Date(),
+          activeDeviceId: null,
+          transportStatus: 'OFFLINE',
+          stateVersion: 2,
+          claimedAt: null,
+          livekitRoomSid: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          deletedAt: null,
+        });
+      (prisma.call.findFirst as jest.Mock).mockResolvedValueOnce(null);
+      (mockPrismaConsultation.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
 
       const result = await consultationsService.checkVetDisconnectTimeout(
         'consultation-uuid-active',
@@ -558,13 +598,69 @@ describe('Consultations Module (/api/consultations)', () => {
       );
 
       expect(result?.status).toBe('CANCELLED');
-      expect(mockPrismaConsultation.update).toHaveBeenCalledWith({
-        where: { id: 'consultation-uuid-active' },
+      expect(mockPrismaConsultation.updateMany).toHaveBeenCalledWith({
+        where: { id: 'consultation-uuid-active', status: 'ACTIVE', deletedAt: null },
         data: expect.objectContaining({
           status: 'CANCELLED',
           notes: expect.stringContaining('VET_DISCONNECTED_TIMEOUT'),
         }),
       });
+    });
+
+    it('checkVetDisconnectTimeout: skips cancellation within 30m after clean ended call (>=10s) and cancels after short <10s or expired post-call', async () => {
+      const fourMinutesAgo = new Date(Date.now() - 4 * 60 * 1000);
+      mockPrismaConsultation.findUnique.mockResolvedValueOnce({
+        id: 'cons-post-call-ok',
+        clientId: mockClient.id,
+        vetId: mockVet.id,
+        status: 'ACTIVE',
+        deletedAt: null,
+      } as any);
+      (prisma.call.findFirst as jest.Mock).mockResolvedValueOnce({
+        id: 'call-clean-1',
+        status: 'ENDED',
+        durationSeconds: 180,
+        endedAt: new Date(Date.now() - 5 * 60 * 1000),
+      });
+
+      const kept = await consultationsService.checkVetDisconnectTimeout(
+        'cons-post-call-ok',
+        fourMinutesAgo
+      );
+      expect(kept?.status).toBe('ACTIVE');
+      expect(mockPrismaConsultation.updateMany).not.toHaveBeenCalled();
+
+      // Short <10s call (empty room after vet crash) MUST NOT grant post-call immunity
+      mockPrismaConsultation.findUnique
+        .mockResolvedValueOnce({
+          id: 'cons-short-ended',
+          clientId: mockClient.id,
+          vetId: mockVet.id,
+          status: 'ACTIVE',
+          notes: null,
+          deletedAt: null,
+          stateVersion: 1,
+        } as any)
+        .mockResolvedValueOnce({
+          id: 'cons-short-ended',
+          clientId: mockClient.id,
+          vetId: mockVet.id,
+          status: 'CANCELLED',
+          deletedAt: null,
+        } as any);
+      (prisma.call.findFirst as jest.Mock).mockResolvedValueOnce({
+        id: 'call-short-1',
+        status: 'ENDED',
+        durationSeconds: 3,
+        endedAt: new Date(Date.now() - 60 * 1000),
+      });
+      (mockPrismaConsultation.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+
+      const cancelledShort = await consultationsService.checkVetDisconnectTimeout(
+        'cons-short-ended',
+        fourMinutesAgo
+      );
+      expect(cancelledShort?.status).toBe('CANCELLED');
     });
   });
 

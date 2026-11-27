@@ -3,27 +3,52 @@
 @tailwind utilities;
 
 :root {
+  --font-sans: "Manrope", system-ui, -apple-system, sans-serif;
   --brand: #609f9c;
   --brand-dark: #315f5d;
   --brand-deep: #183c3a;
   --brand-soft: #d9e8e4;
+  --teal: var(--brand);
+  --teal-dark: var(--brand-dark);
+  --teal-deep: var(--brand-deep);
+  --teal-pale: #edf6f4;
   --cream: #fffbef;
   --sand: #f2eddd;
+  --paper: #ffffff;
   --coral: #e98b70;
   --coral-soft: #f6d6ca;
   --lilac: #c9c1df;
+  --amber: #d4933f;
+  --amber-pale: #fff3d8;
+  --danger: #ae4d45;
+  --danger-pale: #f9e8e5;
   --ink: #183c3a;
-  --muted: #607674;
+  --ink-soft: #4a6866;
+  --muted: #4a6866;
   --white: #ffffff;
+  --line: rgba(24, 60, 58, 0.12);
+  --shadow: 0 14px 38px rgba(24, 60, 58, 0.08);
+  --shadow-sm: 0 8px 24px rgba(24, 60, 58, 0.07);
+  --radius: 24px;
+  --radius-sm: 16px;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 html {
   scroll-behavior: smooth;
+  -webkit-tap-highlight-color: transparent;
 }
 
 html,
 body {
-  overscroll-behavior-y: contain;
+  overscroll-behavior: none;
+}
+
+:focus-visible {
+  outline: 3px solid rgba(96, 159, 156, 0.45);
+  outline-offset: 2px;
 }
 
 picture {
@@ -32,18 +57,10 @@ picture {
 
 body {
   margin: 0;
-  background-color: #fffbef;
-  color: #183c3a;
-  font-family: "Manrope", system-ui, -apple-system, sans-serif;
+  background-color: var(--cream);
+  color: var(--ink);
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
-}
-
-a,
-button,
-input,
-select,
-textarea {
-  -webkit-tap-highlight-color: transparent;
 }
 
 @keyframes fadeIn {
@@ -59,6 +76,96 @@ textarea {
 
 .animate-fadeIn {
   animation: fadeIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.hc-dialog-backdrop {
+  opacity: 1;
+  transition: opacity 180ms var(--ease-out);
+}
+@starting-style {
+  .hc-dialog-backdrop {
+    opacity: 0;
+  }
+}
+
+.hc-dialog-panel {
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out);
+}
+@starting-style {
+  .hc-dialog-panel {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+
+.hc-drawer-right {
+  transform: translateX(0);
+  transition: transform 280ms var(--ease-drawer);
+}
+@starting-style {
+  .hc-drawer-right {
+    transform: translateX(100%);
+  }
+}
+
+.hc-popover {
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity 160ms var(--ease-out), transform 160ms var(--ease-out);
+}
+@starting-style {
+  .hc-popover {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+
+.hc-reveal {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out);
+}
+@starting-style {
+  .hc-reveal {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+}
+
+@keyframes hcStageEnter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+.hc-tab-stage {
+  animation: hcStageEnter 220ms var(--ease-out) backwards;
+}
+
+@keyframes hcPageEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.994);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+.hc-page-stage {
+  animation: hcPageEnter 240ms var(--ease-out) backwards;
 }
 
 .route-loading {
@@ -89,12 +196,22 @@ textarea {
   input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
   select,
   textarea {
-    font-size: max(16px, 1em);
+    font-size: max(16px, 1em) !important;
   }
 
+  a,
   button,
   [role="button"] {
     touch-action: manipulation;
+  }
+
+  button,
+  [role="button"],
+  .tab,
+  .wa-chip {
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
   }
 }
 
@@ -103,7 +220,23 @@ textarea {
     scroll-behavior: auto;
   }
   .animate-fadeIn,
+  .animate-bounce,
+  .animate-ping,
+  .animate-spin,
   [class*="animate-pulse"] {
     animation: none !important;
+  }
+  .hc-dialog-backdrop,
+  .hc-dialog-panel,
+  .hc-drawer-right,
+  .hc-popover,
+  .hc-reveal,
+  .hc-tab-stage,
+  .hc-page-stage,
+  .tabs__indicator {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+    transform: none !important;
+    filter: none !important;
   }
 }

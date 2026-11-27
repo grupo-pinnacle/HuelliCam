@@ -41,7 +41,7 @@ const TRIAGE_OPTIONS: TriageOption[] = [
     colorBorder: 'border-[#ae4d45]/50',
     colorBg: 'bg-[#fbeee9]',
     colorText: 'text-[#ae4d45]',
-    colorActive: 'ring-2 ring-[#ae4d45] border-[#ae4d45] bg-[#fbeee9]/80 animate-pulse',
+    colorActive: 'ring-2 ring-[#ae4d45] border-[#ae4d45] bg-[#fbeee9]/80',
   },
 ];
 
@@ -70,7 +70,7 @@ export const TriageSelector: React.FC<TriageSelectorProps> = ({
             disabled={disabled}
             data-testid={`triage-option-${opt.value.toLowerCase()}`}
             onClick={() => onChange(opt.value)}
-            className={`p-4 rounded-2xl border text-left transition-all flex flex-col justify-between ${
+            className={`p-4 rounded-2xl border text-left transition-[transform,background-color,border-color,box-shadow] duration-150 active:scale-[0.985] flex flex-col justify-between ${
               isSelected
                 ? opt.colorActive
                 : `border-[#e4dfd2] bg-white hover:bg-[#fffbef] ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`

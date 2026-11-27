@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
+import { useFocusTrap } from '../common/DialogOverlay';
 
 interface PreJoinModalProps {
   onJoin: (audioEnabled: boolean, videoEnabled: boolean) => void;
@@ -8,11 +9,19 @@ interface PreJoinModalProps {
 export const PreJoinModal: React.FC<PreJoinModalProps> = ({ onJoin, onCancel }) => {
   const [audioEnabled, setAudioEnabled] = useState<boolean>(true);
   const [videoEnabled, setVideoEnabled] = useState<boolean>(true);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useFocusTrap(true, dialogRef, { onEscape: onCancel });
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-2xl">
-        <h2 className="text-xl font-bold text-slate-800 mb-2">
+    <div
+      className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 hc-dialog-backdrop"
+      onMouseDown={(event) => {
+        if (onCancel && event.target === event.currentTarget) onCancel();
+      }}
+    >
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="prejoin-title" className="bg-white rounded-xl max-w-md w-full p-6 shadow-2xl hc-dialog-panel">
+        <h2 id="prejoin-title" className="text-xl font-bold text-slate-800 mb-2">
           Verificacion Previa de Camara y Microfono
         </h2>
         <p className="text-sm text-slate-600 mb-6">
@@ -46,7 +55,7 @@ export const PreJoinModal: React.FC<PreJoinModalProps> = ({ onJoin, onCancel }) 
             <button
               type="button"
               onClick={onCancel}
-              className="flex-1 py-2.5 px-4 border border-slate-300 rounded-lg text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              className="flex-1 py-2.5 px-4 border border-slate-300 rounded-lg text-sm font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.97] transition-[transform,background-color] duration-150"
             >
               Cancelar
             </button>
@@ -54,7 +63,7 @@ export const PreJoinModal: React.FC<PreJoinModalProps> = ({ onJoin, onCancel }) 
           <button
             type="button"
             onClick={() => onJoin(audioEnabled, videoEnabled)}
-            className="flex-1 py-2.5 px-4 bg-sky-600 rounded-lg text-sm font-semibold text-white hover:bg-sky-700 shadow-md"
+            className="flex-1 py-2.5 px-4 bg-sky-600 rounded-lg text-sm font-semibold text-white hover:bg-sky-700 active:scale-[0.97] transition-[transform,background-color] duration-150 shadow-md"
           >
             Ingresar a la Consulta
           </button>

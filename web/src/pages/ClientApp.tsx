@@ -1,16 +1,78 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button, EmptyState, Field, Icon, Logo, MessageBubble, Modal, PageHeader, Status, Tabs, Toast, go, photos, type IconName, type MessageState } from "../shared";
+import { Button, EmptyState, Field, Icon, Logo, MessageBubble, Modal, PageHeader, SectionStage, Status, Tabs, Toast, go, photos, type IconName, type MessageState } from "../shared";
 import { useAuth } from "../context/AuthContext";
 import { useSocket } from "../context/SocketContext";
 import api from "../services/api";
 import ClientScopedStyle from "../styles/ClientScopedStyle";
-import type { ApiResponse, Pet as BackendPet, Consultation as BackendConsultation, Prescription as BackendPrescription } from "../types";
-import { parseConsultationNotes, formatConsultationNotes } from "../lib/consultationNotes";
+import type {
+  ApiResponse,
+  Pet as BackendPet,
+  Consultation as BackendConsultation,
+  Prescription as BackendPrescription,
+  PetDossierDTO,
+  PetDocumentCategoryDTO,
+} from "../types";
+import { parseConsultationNotes } from "../lib/consultationNotes";
+import {
+  AuthenticatedMediaImage,
+  downloadAuthenticatedMedia,
+  normalizeMediaUrl,
+  useAuthenticatedMediaUrl,
+} from "../lib/authenticatedMedia";
+import { ClinicalMediaViewer } from "../components/common/ClinicalMediaViewer";
+import PetDossierModal from "../components/dashboard/PetDossierModal";
+import { getNotificationPermissionState, isWebPushSupported, subscribeToWebPush } from "../lib/webPush";
+import { addDeletedChatId, clearChatLocalCache, readDeletedChatIds, saveDeletedChatIds } from "../lib/archivedChats";
+
+function dataUrlToFile(dataUrl: string, fileName: string): File {
+  const [header, base64] = dataUrl.split(",");
+  const mimeMatch = /data:([^;]+);/.exec(header || "");
+  const mime = mimeMatch ? mimeMatch[1] : "image/jpeg";
+  const binary = atob(base64 || "");
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new File([bytes], fileName, { type: mime });
+}
 import { SPECIES_LIST, getBreedsForSpecies, getWeightAssessment, compressImageFile } from "../data/petBreeds";
 import { HamsterMascot } from "../components/ui/HamsterMascot";
 import { ChangePasswordModal } from "../components/common/ChangePasswordModal";
+import { useFocusTrap } from "../components/common/DialogOverlay";
+import { formatBadgeCount, formatDateAR, getInitials } from "../lib/formatters";
+
+function TrappedModalLayer({
+  open = true,
+  onClose,
+  width,
+  children,
+}: {
+  open?: boolean;
+  onClose: () => void;
+  width?: string;
+  children: React.ReactNode;
+}) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(open, dialogRef, { onEscape: onClose });
+  if (!open) return null;
+  return (
+    <div className="modal-layer" role="presentation">
+      <button type="button" className="modal-scrim" onClick={onClose} aria-label="Cerrar modal" />
+      <div
+        ref={dialogRef}
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        style={{ textAlign: "left", width }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
 import { isReactNativeWebView } from "../lib/mobileBridge";
+import { useVisualViewport } from "../lib/useVisualViewport";
 
 const VetApp = lazy(() => import("../vet/VetApp"));
 const CallRoom = lazy(() => import("../vet/CallRoom"));
@@ -75,14 +137,15 @@ export interface ClientViewConsultation {
 }
 
 function mapBackendPet(p: BackendPet): ClientViewPet {
-  const customPhoto = typeof window !== "undefined" ? localStorage.getItem(`huellicam_pet_photo_${p.id}`) : null;
+  const backendPhoto = (p as BackendPet & { photoUrl?: string | null }).photoUrl;
+  const legacyPhoto = typeof window !== "undefined" ? localStorage.getItem(`huellicam_pet_photo_${p.id}`) : null;
   const defaultPhoto = p.species.toLowerCase().includes("cone") ? photos.luna
     : p.species.toLowerCase().includes("gat") || p.species.toLowerCase().includes("fel") ? photos.nube
     : p.species.toLowerCase().includes("ave") || p.species.toLowerCase().includes("loro") ? photos.kiwi
     : p.species.toLowerCase().includes("hur") ? photos.toby
     : photos.milo;
 
-  const photo = customPhoto || defaultPhoto;
+  const photo = backendPhoto || legacyPhoto || defaultPhoto;
 
   return {
     id: p.id,
@@ -106,9 +169,15 @@ function mapBackendConsultation(c: BackendConsultation): ClientViewConsultation 
   const parsed = parseConsultationNotes(c.notes);
   const vetName = c.vet ? `Dr. ${c.vet.firstName || ""} ${c.vet.lastName || ""}`.trim() : "Veterinario de guardia";
   const petName = c.pet?.name || "Mascota";
-  const dateStr = c.startedAt ? new Date(c.startedAt).toLocaleDateString("es-AR", { day: "2-digit", month: "short" }) : "Hoy";
-  const timeStr = c.startedAt ? new Date(c.startedAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }) : "En cola";
-  const displayStatus = c.status === "ACTIVE" ? "Confirmada" : c.status === "WAITING" ? "Pendiente" : c.status === "COMPLETED" ? "Finalizada" : "Cancelada";
+  const targetTimestamp = c.scheduledAt || c.startedAt;
+  const dateStr = targetTimestamp ? new Date(targetTimestamp).toLocaleDateString("es-AR", { day: "2-digit", month: "short" }) : "Hoy";
+  const timeStr = targetTimestamp ? new Date(targetTimestamp).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }) : "En cola";
+  const displayStatus =
+    c.status === "ACTIVE" ? "Confirmada" :
+    c.status === "WAITING" ? "Pendiente" :
+    c.status === "COMPLETED" ? "Finalizada" :
+    c.status === "CANCELLED" ? "Cancelada" :
+    (c.vetId ? "Confirmada" : "Pendiente");
 
   return {
     id: c.id,
@@ -121,15 +190,158 @@ function mapBackendConsultation(c: BackendConsultation): ClientViewConsultation 
     status: displayStatus,
     mode: "Videoconsulta",
     rawStatus: c.status,
-    rawDate: c.startedAt || c.createdAt || undefined,
+    rawDate: c.scheduledAt || c.startedAt || c.createdAt || undefined,
   };
 }
 
+
+export function VerifyEmailBanner() {
+  const { user, refreshSession } = useAuth();
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [dismissed, setDismissed] = useState(false);
+
+  if (!user || user.emailVerified !== false || dismissed) return null;
+
+  const handleVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!code.trim()) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      await api.post("/api/auth/verify-email", { code: code.trim() });
+      await refreshSession?.();
+      setDismissed(true);
+    } catch {
+      setMsg("Código inválido o expirado. Revisá tu correo o reenviá uno nuevo.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleResend = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      await api.post("/api/auth/resend-verification");
+      setMsg("Te enviamos un nuevo código a tu correo.");
+    } catch {
+      setMsg("No pudimos reenviar el código en este momento.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="panel"
+      role="status"
+      style={{
+        marginBottom: 14,
+        background: "#fffbeb",
+        border: "1px solid #f59e0b",
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 10,
+      }}
+    >
+      <div>
+        <strong style={{ fontSize: 13 }}>Verificá tu correo electrónico ({user.email})</strong>
+        <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--ink-soft)" }}>
+          Ingresá el código de 6 dígitos que te enviamos al registrarte.
+        </p>
+        {msg && <small style={{ display: "block", color: "#92400e", marginTop: 2 }}>{msg}</small>}
+      </div>
+      <form onSubmit={handleVerify} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+        <input
+          type="text"
+          maxLength={6}
+          inputMode="numeric"
+          placeholder="Código de 6 dígitos"
+          value={code}
+          onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+          style={{ width: 150, height: 36, borderRadius: 8, border: "1px solid var(--line)", padding: "0 10px", background: "#fff" }}
+        />
+        <Button type="submit" disabled={busy || code.length < 6}>
+          Verificar correo
+        </Button>
+        <Button variant="secondary" disabled={busy} onClick={handleResend}>
+          Reenviar
+        </Button>
+      </form>
+    </div>
+  );
+}
+
+export function TelemedicineConsentModal({
+  open,
+  onClose,
+  onAccepted,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onAccepted: () => void;
+}) {
+  const [checked, setChecked] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleAccept = async () => {
+    if (!checked) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post("/api/users/telemedicine-consent", { version: "1.0" });
+      onAccepted();
+    } catch {
+      setError("No pudimos registrar tu consentimiento. Intentá nuevamente.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <TrappedModalLayer open={open} onClose={onClose} width="min(500px, calc(100% - 32px))">
+      <button className="button button--icon modal__close" onClick={onClose} aria-label="Cerrar">
+        <Icon name="close" size={18} />
+      </button>
+      <span className="modal__icon">
+        <Icon name="shield" />
+      </span>
+      <h2 style={{ textAlign: "center" }}>Consentimiento de Telemedicina Veterinaria</h2>
+      <p style={{ fontSize: 13, color: "var(--ink-soft)", lineHeight: 1.5, margin: "12px 0" }}>
+        La teleconsulta veterinaria brinda orientación clínica remota conforme a la normativa vigente (Ley 25.326 y lineamientos de telemedicina). No reemplaza la atención presencial ante emergencias graves o cirugías.
+      </p>
+      <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, cursor: "pointer", margin: "12px 0" }}>
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => setChecked(e.target.checked)}
+          style={{ marginTop: 3 }}
+        />
+        <span>Leí y acepto los términos del servicio de telemedicina veterinaria (v1.0).</span>
+      </label>
+      {error && <p style={{ color: "#ae4d45", fontSize: 12 }}>{error}</p>}
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
+        <Button variant="secondary" onClick={onClose}>
+          Cancelar
+        </Button>
+        <Button disabled={!checked || busy} onClick={handleAccept}>
+          {busy ? "Registrando..." : "Aceptar y continuar"}
+        </Button>
+      </div>
+    </TrappedModalLayer>
+  );
+}
 
 export function AppShell({ children, path }: { children: ReactNode; path: string }) {
   const isMessagesPage = path.startsWith("/client/messages");
   const [menu, setMenu] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const { viewportHeight, isKeyboardOpen } = useVisualViewport();
 
   useEffect(() => {
     const handleOpenMenu = () => setMenu(true);
@@ -161,14 +373,27 @@ export function AppShell({ children, path }: { children: ReactNode; path: string
   const lastName = user?.lastName || "";
   const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(" ");
   const displayName = fullName || (user?.firstName ? user.firstName : (user?.email ? firstName : "Tutor"));
-  const initials = user
-    ? `${user.firstName?.[0] || firstName[0] || "T"}${user.lastName?.[0] || ""}`.toUpperCase()
-    : "TU";
+  const sidebarTouchRef = useRef<{ x: number; y: number } | null>(null);
+  const initials = getInitials(displayName, firstName[0] || "T");
   const roleName = user?.role === "VET" ? "Veterinario" : user?.role === "ADMIN" ? "Administrador" : "Tutor";
 
-  return <div className={`app-shell ${isMessagesPage ? "app-shell--messages" : ""}`}>
+  return <div className={`app-shell ${isMessagesPage ? "app-shell--messages" : ""} ${isKeyboardOpen ? "is-keyboard-open" : ""}`}>
 
-    <aside className={`sidebar ${menu ? "is-open" : ""}`}>
+    <aside
+      className={`sidebar ${menu ? "is-open" : ""}`}
+      onTouchStart={(e) => {
+        if (!menu || e.touches.length !== 1) return;
+        sidebarTouchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      }}
+      onTouchEnd={(e) => {
+        const start = sidebarTouchRef.current;
+        sidebarTouchRef.current = null;
+        if (!menu || !start || e.changedTouches.length !== 1) return;
+        const dx = e.changedTouches[0].clientX - start.x;
+        const dy = e.changedTouches[0].clientY - start.y;
+        if (dx < -56 && Math.abs(dx) > Math.abs(dy)) setMenu(false);
+      }}
+    >
       <div className="sidebar__head"><Logo/><Button variant="icon" icon="close" onClick={() => setMenu(false)} ariaLabel="Cerrar menú" className="sidebar__close"/></div>
       <button
         type="button"
@@ -221,19 +446,33 @@ export function AppShell({ children, path }: { children: ReactNode; path: string
       )}
     </aside>
     {menu && <button className="scrim" onClick={() => setMenu(false)} aria-label="Cerrar menú"/>}
-    <div className={`app-main ${isMessagesPage ? "app-main--messages" : ""}`}>
+    <div
+      className={`app-main ${isMessagesPage ? "app-main--messages" : ""}`}
+      style={
+        isMessagesPage && isKeyboardOpen && viewportHeight
+          ? ({ "--app-vv-height": `${viewportHeight}px` } as React.CSSProperties)
+          : undefined
+      }
+    >
       <style>{`
         .app-main--messages {
           display: flex !important;
           flex-direction: column !important;
-          height: 100vh !important;
-          max-height: 100vh !important;
+          height: 100dvh !important;
+          max-height: 100dvh !important;
           overflow: hidden !important;
         }
         @media (max-width: 820px) {
           .app-main--messages {
-            height: calc(100dvh - 68px - env(safe-area-inset-bottom)) !important;
-            max-height: calc(100dvh - 68px - env(safe-area-inset-bottom)) !important;
+            height: calc(100dvh - 68px - env(safe-area-inset-bottom, 0px)) !important;
+            max-height: calc(100dvh - 68px - env(safe-area-inset-bottom, 0px)) !important;
+          }
+          .app-shell.is-keyboard-open .app-main--messages {
+            height: var(--app-vv-height, 100dvh) !important;
+            max-height: var(--app-vv-height, 100dvh) !important;
+          }
+          .app-shell.is-keyboard-open .mobile-nav {
+            display: none !important;
           }
         }
         @media (max-width: 820px) and (max-height: 520px) {
@@ -319,7 +558,10 @@ export function AppShell({ children, path }: { children: ReactNode; path: string
           )}
         </div>
       </header>
-      <main className={`content${isMessagesPage ? " content--messages" : ""}`}>{children}</main>
+      <main className={`content${isMessagesPage ? " content--messages" : ""}`}>
+        {!isMessagesPage && <VerifyEmailBanner />}
+        {children}
+      </main>
     </div>
     <nav className={`mobile-nav ${isMessagesPage ? "mobile-nav--messages" : ""}`} aria-label="Navegación móvil" data-testid="mobile-bottom-nav">
       {mobileRoutes.map((item) => {
@@ -345,9 +587,29 @@ export function AppShell({ children, path }: { children: ReactNode; path: string
 }
 
 
+function SafePetImg({ src, alt, className, style, onErrorFallback }: { src?: string | null; alt: string; className?: string; style?: React.CSSProperties; onErrorFallback?: () => void }) {
+  const resolved = useAuthenticatedMediaUrl(src);
+  if (!resolved) return null;
+  return <img src={resolved} alt={alt} className={className} style={style} onError={() => onErrorFallback?.()} />;
+}
+
 function PetCard({ pet, compact = false }: { pet: ClientViewPet; compact?: boolean }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const resolvedPhoto = useAuthenticatedMediaUrl(pet.photo);
+  useEffect(() => {
+    setImgFailed(false);
+  }, [pet.photo, resolvedPhoto]);
   return <article className={`pet-card ${compact ? "pet-card--compact" : ""}`}>
-    <div className="pet-card__photo"><img src={pet.photo} alt={`${pet.name}, ${pet.kind.toLowerCase()}`}/><Status tone={pet.state.includes("pendiente") ? "amber" : "teal"}>{pet.state}</Status></div>
+    <div className="pet-card__photo">
+      {pet.photo && resolvedPhoto && !imgFailed ? (
+        <img src={resolvedPhoto} alt={`${pet.name}, ${pet.kind.toLowerCase()}`} onError={() => setImgFailed(true)} />
+      ) : (
+        <div style={{ width: "100%", height: "100%", display: "grid", placeItems: "center", background: "#d9e8e4", color: "#183c3a", fontWeight: 800, fontSize: 28 }}>
+          {getInitials(pet.name, "M")}
+        </div>
+      )}
+      <Status tone={pet.state.includes("pendiente") ? "amber" : "teal"}>{pet.state}</Status>
+    </div>
     <div className="pet-card__body"><div><h3>{pet.name}</h3><p>{pet.kind} · {pet.breed}</p></div><div className="pet-card__facts"><span><b>{pet.age}</b>Edad</span><span><b>{pet.weight}</b>Peso</span></div>{!compact && <div className="pet-card__dates"><span>Última consulta <b>{pet.last}</b></span><span>Próxima consulta <b>{pet.next}</b></span></div>}<Button variant="secondary" onClick={() => go(`/client/pets/${pet.id}`)}>Ver ficha <Icon name="arrow" size={16}/></Button></div>
   </article>;
 }
@@ -357,8 +619,11 @@ function ConsultationCard({ item }: { item: ClientViewConsultation }) {
   return <article className="consultation-card"><div className="date-block"><strong>{item.date}</strong><span>{item.time}</span></div><div className="consultation-card__body"><div className="row-between"><div><h3>{item.title}</h3><p>{item.vet}</p></div><Status tone={tone}>{item.status}</Status></div><div className="consultation-meta"><span><Icon name="paw" size={17}/>{item.pet}</span><span><Icon name="video" size={17}/>{item.mode}</span><span><Icon name="file" size={17}/>{item.reason}</span></div></div><Button variant="secondary" onClick={() => go(`/client/consultations/${item.id}`)}>Ver consulta</Button></article>;
 }
 
-function useClientData() {
+function useClientData(options?: { includeConsultations?: boolean; includePrescriptions?: boolean }) {
   const { user } = useAuth();
+  const includeConsultations = options?.includeConsultations ?? true;
+  const includePrescriptions = options?.includePrescriptions ?? false;
+
   const petsQuery = useQuery({
     queryKey: ['pets', user?.id],
     queryFn: async () => {
@@ -374,7 +639,7 @@ function useClientData() {
       const res = await api.get<ApiResponse<BackendConsultation[]>>('/api/consultations/mine');
       return (res.data.success && res.data.data) ? res.data.data.map(mapBackendConsultation) : [];
     },
-    enabled: !!user,
+    enabled: !!user && includeConsultations,
   });
 
   const prescriptionsQuery = useQuery({
@@ -383,7 +648,7 @@ function useClientData() {
       const res = await api.get<ApiResponse<any[]>>('/api/prescriptions');
       return (res.data?.success && res.data?.data) ? res.data.data : (Array.isArray(res.data) ? res.data : []);
     },
-    enabled: !!user,
+    enabled: !!user && includePrescriptions,
     staleTime: 1000 * 60 * 5,
   });
 
@@ -408,13 +673,19 @@ function useClientData() {
   return {
     pets: syncedPets,
     petsLoading: petsQuery.isLoading,
+    petsError: petsQuery.isError,
+    refetchPets: petsQuery.refetch,
     hasRealPets: petsList.length > 0,
     consultations: consultationsList,
     consultationsLoading: consultationsQuery.isLoading,
+    consultationsError: consultationsQuery.isError,
+    refetchConsultations: consultationsQuery.refetch,
     hasRealConsultations: consultationsList.length > 0,
     rawPetsData: petsQuery.data,
     prescriptions: prescriptionsQuery.data ?? [],
     prescriptionsLoading: prescriptionsQuery.isLoading,
+    prescriptionsError: prescriptionsQuery.isError,
+    refetchPrescriptions: prescriptionsQuery.refetch,
     rawConsultationsData: consultationsQuery.data,
   };
 }
@@ -549,14 +820,29 @@ export function NewPetModal({
       const res = await api.post<ApiResponse<BackendPet>>('/api/pets', payload);
       return res.data;
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       isClosingRef.current = true;
-      queryClient.invalidateQueries({ queryKey: ['pets'] });
       if (data?.data?.id && photoPreview) {
         try {
-          localStorage.setItem(`huellicam_pet_photo_${data.data.id}`, photoPreview);
-        } catch {}
+          const file = dataUrlToFile(photoPreview, `pet-${data.data.id}.jpg`);
+          const formData = new FormData();
+          formData.append("file", file);
+          formData.append("petId", data.data.id);
+          const mediaRes = await api.post<ApiResponse<{ id: string; url?: string }>>("/api/media", formData, {
+            headers: { "Content-Type": "multipart/form-data" },
+          });
+          const uploadedId = mediaRes.data?.data?.id;
+          if (uploadedId) {
+            const photoUrl = mediaRes.data?.data?.url || `/api/media/${uploadedId}`;
+            await api.post(`/api/pets/${data.data.id}/photo`, { mediaFileId: uploadedId, url: photoUrl });
+          }
+        } catch {
+          try {
+            localStorage.setItem(`huellicam_pet_photo_${data.data.id}`, photoPreview);
+          } catch {}
+        }
       }
+      queryClient.invalidateQueries({ queryKey: ['pets'] });
       try {
         localStorage.removeItem("huellicam_new_pet_draft");
       } catch {}
@@ -624,9 +910,7 @@ export function NewPetModal({
   };
 
   return (
-    <div className="modal-layer" role="presentation">
-      <button className="modal-scrim" onClick={handleVoluntaryClose} aria-label="Cerrar modal"/>
-      <div className="modal" role="dialog" aria-modal="true" style={{ textAlign: "left", width: "min(500px, calc(100% - 32px))" }}>
+    <TrappedModalLayer open={open} onClose={handleVoluntaryClose} width="min(500px, calc(100% - 32px))">
         <button className="button button--icon modal__close" onClick={handleVoluntaryClose} aria-label="Cerrar"><Icon name="close" size={18}/></button>
         <span className="modal__icon"><Icon name="paw"/></span>
         <h2 style={{ textAlign: "center" }}>Nueva mascota</h2>
@@ -799,8 +1083,7 @@ export function NewPetModal({
             <Button type="submit" variant="primary" disabled={createPetMutation.isPending}>{createPetMutation.isPending ? "Guardando..." : "Guardar mascota"}</Button>
           </div>
         </form>
-      </div>
-    </div>
+    </TrappedModalLayer>
   );
 }
 
@@ -808,7 +1091,7 @@ function Dashboard() {
   const { user } = useAuth();
   const rawFirstName = user?.firstName || (user?.email ? user.email.split("@")[0] : "");
   const firstName = rawFirstName ? (rawFirstName.charAt(0).toUpperCase() + rawFirstName.slice(1)) : "Tutor";
-  const { pets, consultations, petsLoading, consultationsLoading } = useClientData();
+  const { pets, consultations, petsLoading, petsError, refetchPets, consultationsLoading, consultationsError, refetchConsultations } = useClientData();
   const [modalOpen, setModalOpen] = useState(() => {
     try {
       const saved = typeof window !== "undefined" ? localStorage.getItem("huellicam_new_pet_draft") : null;
@@ -847,6 +1130,8 @@ function Dashboard() {
         <div className="section-heading"><div><span className="eyebrow">Tu agenda</span><h2>Próxima consulta</h2></div><button onClick={() => go("/client/consultations")}>Ver todas <Icon name="arrow" size={16}/></button></div>
         {consultationsLoading ? (
           <div className="skeleton skeleton--hero" style={{ height: 110 }}/>
+        ) : consultationsError ? (
+          <ErrorState onRetry={() => void refetchConsultations()} />
         ) : nextConsultation ? (
           <ConsultationCard item={nextConsultation}/>
         ) : (
@@ -890,6 +1175,8 @@ function Dashboard() {
         <div className="pet-grid pet-grid--dashboard">
           <div className="skeleton skeleton--card"/>
         </div>
+      ) : petsError ? (
+        <ErrorState onRetry={() => void refetchPets()} />
       ) : pets.length > 0 ? (
         <div className="pet-grid pet-grid--dashboard">{pets.slice(0, 3).map((pet) => <PetCard pet={pet} compact key={pet.id}/>)}</div>
       ) : (
@@ -917,7 +1204,7 @@ function Dashboard() {
 }
 
 function PetsPage() {
-  const { pets } = useClientData();
+  const { pets, petsLoading, petsError, refetchPets } = useClientData();
   const [modalOpen, setModalOpen] = useState(() => {
     try {
       const saved = typeof window !== "undefined" ? localStorage.getItem("huellicam_new_pet_draft") : null;
@@ -929,6 +1216,13 @@ function PetsPage() {
     return false;
   });
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  if (petsLoading && pets.length === 0) {
+    return <SkeletonPage type="cards" />;
+  }
+  if (petsError && pets.length === 0) {
+    return <ErrorState onRetry={() => { void refetchPets(); }} />;
+  }
 
   const isActuallyEmpty = pets.length === 0;
 
@@ -954,9 +1248,9 @@ function PetsPage() {
 }
 
 function PetDetail({ id }: { id: string }) {
-  const { pets } = useClientData();
+  const { pets, petsLoading } = useClientData({ includeConsultations: false });
   const queryClient = useQueryClient();
-  const pet = pets.find((item) => item.id === id) || pets[0];
+  const pet = pets.find((item) => item.id === id);
   const [tab, setTab] = useState("Información general");
   const [deleteDocId, setDeleteDocId] = useState<string | null>(null);
   const [editModal, setEditModal] = useState(false);
@@ -971,17 +1265,27 @@ function PetDetail({ id }: { id: string }) {
   const [editCustomBreed, setEditCustomBreed] = useState("");
   const [editWeight, setEditWeight] = useState(pet?.weight && !pet.weight.includes("Sin especificar") && !pet.weight.includes("No informado") ? pet.weight.replace(" kg", "").replace(" g", "").trim() : "");
   const [editUnknownWeight, setEditUnknownWeight] = useState(!pet?.weight || pet.weight.includes("Sin especificar") || pet.weight.includes("No informado"));
-  const [editSex, setEditSex] = useState("Macho");
+  const [editSex, setEditSex] = useState(pet?.sex || "Macho");
   const [editMicrochip, setEditMicrochip] = useState(pet?.microchip && pet.microchip !== "No informado" ? pet.microchip : "");
   const [editAllergies, setEditAllergies] = useState(pet?.allergies && pet.allergies !== "Sin alergias conocidas" ? pet.allergies : "");
 
-  const [heroPhoto, setHeroPhoto] = useState<string>(() => {
-    if (typeof window !== "undefined" && pet?.id) {
-      const saved = localStorage.getItem(`huellicam_pet_photo_${pet.id}`);
-      if (saved) return saved;
-    }
-    return pet?.photo || photos.milo;
+  const [heroPhoto, setHeroPhoto] = useState<string>(() => pet?.photo || photos.milo);
+  const resolvedHeroPhoto = useAuthenticatedMediaUrl(heroPhoto);
+
+  const dossierQuery = useQuery({
+    queryKey: ["pet-dossier", pet?.id],
+    enabled: Boolean(pet?.id),
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<PetDossierDTO>>(`/api/pets/${pet!.id}/dossier`);
+      return res.data.success && res.data.data ? res.data.data : null;
+    },
   });
+  const dossier = dossierQuery.data ?? null;
+
+  const [viewerDoc, setViewerDoc] = useState<{ url: string; title: string; mimeType?: string; subtitle?: string } | null>(null);
+  const [dossierOpen, setDossierOpen] = useState(false);
+  const [coOwnerEmail, setCoOwnerEmail] = useState("");
+  const [coOwnerBusy, setCoOwnerBusy] = useState(false);
 
   const editBreeds = useMemo(() => getBreedsForSpecies(editKind), [editKind]);
 
@@ -990,9 +1294,23 @@ function PetDetail({ id }: { id: string }) {
     if (!file || !pet?.id) return;
     try {
       const compressed = await compressImageFile(file);
-      setHeroPhoto(compressed);
-      localStorage.setItem(`huellicam_pet_photo_${pet.id}`, compressed);
-      queryClient.invalidateQueries({ queryKey: ['pets'] });
+      const uploadFile = dataUrlToFile(compressed, `pet-${pet.id}.jpg`);
+      const formData = new FormData();
+      formData.append("file", uploadFile);
+      formData.append("petId", pet.id);
+      const mediaRes = await api.post<ApiResponse<{ id: string; url?: string }>>("/api/media", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      const uploadedId = mediaRes.data?.data?.id;
+      const photoUrl = mediaRes.data?.data?.url || (uploadedId ? `/api/media/${uploadedId}` : undefined);
+      if (!photoUrl) throw new Error("Media upload failed");
+      await api.post(`/api/pets/${pet.id}/photo`, {
+        mediaFileId: uploadedId,
+        url: photoUrl,
+      });
+      setHeroPhoto(photoUrl);
+      queryClient.invalidateQueries({ queryKey: ["pets"] });
+      queryClient.invalidateQueries({ queryKey: ["pet-dossier", pet.id] });
       setToastMsg("Foto de mascota actualizada");
       setTimeout(() => setToastMsg(null), 3500);
     } catch {
@@ -1008,30 +1326,31 @@ function PetDetail({ id }: { id: string }) {
     setEditCustomBreed("");
   };
 
-  // Vaccines local storage / state per pet
-  const [vaccines, setVaccines] = useState<{ id: string; name: string; date: string; nextDate: string; status: "Al día" | "Próxima" | "Vencida" }[]>(() => {
-    try {
-      const stored = localStorage.getItem(`huellicam_vaccines_${pet?.id}`);
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
-  });
+  const mapVaccineStatusLabel = (status: string): "Al día" | "Próxima" | "Vencida" =>
+    status === "VENCIDA" ? "Vencida" : status === "PROXIMA" ? "Próxima" : "Al día";
+
+  const vaccines = (dossier?.vaccines || []).map((v) => ({
+    id: v.id,
+    name: v.name,
+    date: formatDateAR(v.appliedAt),
+    nextDate: v.nextDueAt ? formatDateAR(v.nextDueAt) : "A definir",
+    status: mapVaccineStatusLabel(v.status),
+  }));
 
   const [vacName, setVacName] = useState("");
   const [vacDate, setVacDate] = useState("");
   const [vacNext, setVacNext] = useState("");
   const [vacStatus, setVacStatus] = useState<"Al día" | "Próxima" | "Vencida">("Al día");
 
-  // Documents state per pet
-  const [docs, setDocs] = useState<{ id: string; name: string; type: string; date: string; size: string }[]>(() => {
-    try {
-      const stored = localStorage.getItem(`huellicam_docs_${pet?.id}`);
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
-  });
+  const docs = (dossier?.documents || []).map((d) => ({
+    id: d.id,
+    name: d.title,
+    type: d.category,
+    date: formatDateAR(d.createdAt),
+    size: d.sizeBytes >= 1024 * 1024 ? `${(d.sizeBytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(d.sizeBytes / 1024))} KB`,
+    url: normalizeMediaUrl(d.url) || d.url,
+    mimeType: d.mimeType,
+  }));
   const [docName, setDocName] = useState("");
   const [docType, setDocType] = useState("Estudio médico");
   const [docFile, setDocFile] = useState<File | null>(null);
@@ -1041,31 +1360,25 @@ function PetDetail({ id }: { id: string }) {
       setEditName(pet.name);
       setEditKind(pet.kind);
       setEditBreed(pet.breed);
+      setEditSex(pet.sex || "Macho");
       const hasNoWeight = !pet.weight || pet.weight.includes("Sin especificar") || pet.weight.includes("No informado");
       setEditUnknownWeight(hasNoWeight);
       setEditWeight(hasNoWeight ? "" : pet.weight.replace(" kg", "").replace(" g", "").trim());
       setEditMicrochip(pet.microchip && pet.microchip !== "No informado" ? pet.microchip : "");
       setEditAllergies(pet.allergies && pet.allergies !== "Sin alergias conocidas" ? pet.allergies : "");
-      try {
-        const savedPhoto = localStorage.getItem(`huellicam_pet_photo_${pet.id}`);
-        setHeroPhoto(savedPhoto || pet.photo);
-        const storedV = localStorage.getItem(`huellicam_vaccines_${pet.id}`);
-        setVaccines(storedV ? JSON.parse(storedV) : []);
-        const storedD = localStorage.getItem(`huellicam_docs_${pet.id}`);
-        setDocs(storedD ? JSON.parse(storedD) : []);
-      } catch {
-        // noop
-      }
+      setHeroPhoto(dossier?.pet?.photoUrl || pet.photo);
     }
-  }, [pet?.id]);
+  }, [pet, dossier?.pet?.photoUrl]);
 
   const updatePetMutation = useMutation({
     mutationFn: async (payload: { name: string; species: string; breed: string; weightKg?: number; sex?: string; microchip?: string; allergies?: string }) => {
+      if (!pet) throw new Error("Mascota no encontrada");
       const res = await api.patch<ApiResponse<BackendPet>>(`/api/pets/${pet.id}`, payload);
       return res.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['pets'] });
+      if (pet?.id) queryClient.invalidateQueries({ queryKey: ['pet-dossier', pet.id] });
       setEditModal(false);
       setToastMsg("Ficha actualizada con éxito");
       setTimeout(() => setToastMsg(null), 3500);
@@ -1105,81 +1418,146 @@ function PetDetail({ id }: { id: string }) {
     });
   };
 
-  const handleAddVaccine = (e: React.FormEvent) => {
+  const toIsoOrUndefined = (raw: string): string | undefined => {
+    const trimmed = raw.trim();
+    if (!trimmed) return undefined;
+    const parsed = new Date(trimmed);
+    return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : undefined;
+  };
+
+  const handleAddVaccine = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!vacName.trim()) return;
-    const newVac = {
-      id: `vac-${Date.now()}`,
-      name: vacName.trim(),
-      date: vacDate || new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "short", year: "numeric" }),
-      nextDate: vacNext || "A definir",
-      status: vacStatus,
-    };
-    const updated = [...vaccines, newVac];
-    setVaccines(updated);
-    if (pet?.id) localStorage.setItem(`huellicam_vaccines_${pet.id}`, JSON.stringify(updated));
-    setVaccineModal(false);
-    setVacName("");
-    setVacDate("");
-    setVacNext("");
-    setToastMsg("Vacuna registrada exitosamente");
-    setTimeout(() => setToastMsg(null), 3500);
+    if (!pet?.id || !vacName.trim()) return;
+    const apiStatus = vacStatus === "Vencida" ? "VENCIDA" : vacStatus === "Próxima" ? "PROXIMA" : "AL_DIA";
+    try {
+      await api.post(`/api/pets/${pet.id}/vaccines`, {
+        name: vacName.trim(),
+        appliedAt: toIsoOrUndefined(vacDate) || new Date().toISOString(),
+        nextDueAt: toIsoOrUndefined(vacNext),
+        status: apiStatus,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["pet-dossier", pet.id] });
+      setVaccineModal(false);
+      setVacName("");
+      setVacDate("");
+      setVacNext("");
+      setToastMsg("Vacuna registrada exitosamente");
+      setTimeout(() => setToastMsg(null), 3500);
+    } catch {
+      setToastMsg("Error al registrar la vacuna");
+      setTimeout(() => setToastMsg(null), 3500);
+    }
+  };
+
+  const handleDeleteVaccine = async (vaccineId: string) => {
+    if (!pet?.id) return;
+    try {
+      await api.delete(`/api/pets/${pet.id}/vaccines/${vaccineId}`);
+      await queryClient.invalidateQueries({ queryKey: ["pet-dossier", pet.id] });
+      setToastMsg("Vacuna eliminada");
+      setTimeout(() => setToastMsg(null), 3500);
+    } catch {
+      setToastMsg("Error al eliminar la vacuna");
+      setTimeout(() => setToastMsg(null), 3500);
+    }
+  };
+
+  const mapDocCategory = (label: string): PetDocumentCategoryDTO => {
+    if (label === "Certificado") return "VACUNA";
+    if (label === "Receta veterinaria") return "RECETA";
+    if (label === "Estudio médico" || label === "Análisis de sangre") return "ESTUDIO";
+    return "OTRO";
   };
 
   const handleAddDoc = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!docName.trim()) return;
+    if (!pet || !docName.trim()) return;
     if (!docFile) {
       setToastMsg("Por favor seleccioná un archivo para adjuntar");
       return;
     }
 
     try {
-      let fileUrl = "";
-      if (docFile) {
-        fileUrl = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve((reader.result as string) || "");
-          reader.readAsDataURL(docFile);
-        });
-      }
+      const formData = new FormData();
+      formData.append("file", docFile);
+      formData.append("petId", pet.id);
+      const mediaRes = await api.post<ApiResponse<{ id: string; url?: string; mimeType?: string; sizeBytes?: number }>>("/api/media", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      const uploaded = mediaRes.data?.data;
+      if (!uploaded?.id) throw new Error("Upload failed");
 
       await api.post(`/api/pets/${pet.id}/documents`, {
-        name: docName.trim(),
-        type: docType,
-        fileUrl,
+        title: docName.trim(),
+        category: mapDocCategory(docType),
+        mediaFileId: uploaded.id,
+        url: uploaded.url || `/api/media/${uploaded.id}`,
+        mimeType: docFile.type || uploaded.mimeType || "application/octet-stream",
+        sizeBytes: docFile.size || uploaded.sizeBytes || 1,
       });
+
+      await queryClient.invalidateQueries({ queryKey: ["pet-dossier", pet.id] });
+      setDocumentModal(false);
+      setDocName("");
+      setDocFile(null);
+      setToastMsg("Documento adjuntado exitosamente");
+      setTimeout(() => setToastMsg(null), 3500);
     } catch {
-      // Fallback
+      setToastMsg("Error al adjuntar el documento");
+      setTimeout(() => setToastMsg(null), 3500);
     }
-
-    const ext = docFile?.name?.split(".").pop()?.toUpperCase() || "PDF";
-    const fileSize = docFile ? `${(docFile.size / (1024 * 1024)).toFixed(1)} MB` : "1,2 MB";
-    const newDoc = {
-      id: `doc-${Date.now()}`,
-      name: docName.trim(),
-      type: `${docType} · ${ext}`,
-      date: new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "short", year: "numeric" }),
-      size: fileSize,
-    };
-    const updated = [...docs, newDoc];
-    setDocs(updated);
-    if (pet?.id) localStorage.setItem(`huellicam_docs_${pet.id}`, JSON.stringify(updated));
-    setDocumentModal(false);
-    setDocName("");
-    setDocFile(null);
-    setToastMsg("Documento adjuntado exitosamente");
-    setTimeout(() => setToastMsg(null), 3500);
   };
 
-  const handleDeleteDoc = (docId: string) => {
-    const updated = docs.filter(d => d.id !== docId);
-    setDocs(updated);
-    if (pet?.id) localStorage.setItem(`huellicam_docs_${pet.id}`, JSON.stringify(updated));
-    setDeleteDocId(null);
-    setToastMsg("Documento eliminado");
-    setTimeout(() => setToastMsg(null), 3500);
+  const handleDeleteDoc = async (docId: string) => {
+    if (!pet?.id) return;
+    try {
+      await api.delete(`/api/pets/${pet.id}/documents/${docId}`);
+      await queryClient.invalidateQueries({ queryKey: ["pet-dossier", pet.id] });
+      setDeleteDocId(null);
+      setToastMsg("Documento eliminado");
+      setTimeout(() => setToastMsg(null), 3500);
+    } catch {
+      setDeleteDocId(null);
+      setToastMsg("Error al eliminar el documento");
+      setTimeout(() => setToastMsg(null), 3500);
+    }
   };
+
+  const handleAddCoOwner = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pet?.id || !coOwnerEmail.trim()) return;
+    setCoOwnerBusy(true);
+    try {
+      await api.post(`/api/pets/${pet.id}/co-owners`, { email: coOwnerEmail.trim() });
+      setCoOwnerEmail("");
+      await queryClient.invalidateQueries({ queryKey: ["pet-dossier", pet.id] });
+      setToastMsg("Co-tutor agregado a la mascota");
+      setTimeout(() => setToastMsg(null), 3500);
+    } catch (err: unknown) {
+      const apiErr = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message;
+      setToastMsg(apiErr ? `Error: ${apiErr}` : "Error al agregar co-tutor");
+      setTimeout(() => setToastMsg(null), 3500);
+    } finally {
+      setCoOwnerBusy(false);
+    }
+  };
+
+  const handleRemoveCoOwner = async (coOwnerId: string) => {
+    if (!pet?.id) return;
+    try {
+      await api.delete(`/api/pets/${pet.id}/co-owners/${coOwnerId}`);
+      await queryClient.invalidateQueries({ queryKey: ["pet-dossier", pet.id] });
+      setToastMsg("Co-tutor removido");
+      setTimeout(() => setToastMsg(null), 3500);
+    } catch {
+      setToastMsg("Error al remover co-tutor");
+      setTimeout(() => setToastMsg(null), 3500);
+    }
+  };
+
+  if (petsLoading && !pet) {
+    return <SkeletonPage type="list" />;
+  }
 
   if (!pet) {
     return <section className="panel"><EmptyState icon="paw" title="Mascota no encontrada" text="No pudimos encontrar la información de esta mascota." action="Volver al inicio" onAction={() => go("/client/pets")}/></section>;
@@ -1187,12 +1565,32 @@ function PetDetail({ id }: { id: string }) {
 
   const tabs = ["Información general", "Vacunación", "Antecedentes", "Documentos", "Consultas", "Recetas", "Evolución"];
 
+  const dossierPetForModal: BackendPet = dossier?.pet ?? {
+    id: pet.id,
+    ownerId: "",
+    name: pet.name,
+    species: pet.kind,
+    breed: pet.breed,
+    sex: editSex,
+    weightKg: editUnknownWeight || !editWeight ? undefined : parseFloat(editWeight),
+    microchip: pet.microchip !== "No informado" ? pet.microchip : undefined,
+    allergies: pet.allergies !== "Sin alergias conocidas" ? pet.allergies : undefined,
+    chronicConditions: pet.chronicConditions,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
   return <>
     <button className="back-link" onClick={() => go("/client/pets")}><Icon name="arrow" size={17}/> Volver a mis mascotas</button>
     <section className="pet-hero">
       <div style={{ position: "relative", width: 96, height: 96, flexShrink: 0 }}>
-        <img src={heroPhoto} alt={pet.name} style={{ width: 96, height: 96, borderRadius: 16, objectFit: "cover" }}/>
-        <label title="Cambiar foto de la mascota" style={{ position: "absolute", bottom: -4, right: -4, background: "#fff", border: "1px solid var(--line, #e4dfd2)", borderRadius: "50%", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 2px 6px rgba(0,0,0,0.15)" }}>
+        <img
+          src={resolvedHeroPhoto || heroPhoto}
+          alt={pet.name}
+          onError={(e) => { e.currentTarget.style.opacity = "0.25"; }}
+          style={{ width: 96, height: 96, borderRadius: 16, objectFit: "cover", background: "#d9e8e4" }}
+        />
+        <label title="Cambiar foto de la mascota" aria-label="Cambiar foto de la mascota" style={{ position: "absolute", bottom: -8, right: -8, background: "#fff", border: "1px solid var(--line, #e4dfd2)", borderRadius: "50%", minWidth: 44, minHeight: 44, width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 2px 6px rgba(0,0,0,0.15)" }}>
           <Icon name="edit" size={14}/>
           <input type="file" accept="image/*" onChange={handleHeroPhotoChange} style={{ display: "none" }}/>
         </label>
@@ -1210,12 +1608,14 @@ function PetDetail({ id }: { id: string }) {
         <span><small>Microchip</small><strong>{pet.microchip || "No informado"}</strong></span>
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <Button variant="secondary" icon="file" onClick={() => setDossierOpen(true)}>Exportar PDF</Button>
         <Button variant="secondary" icon="edit" onClick={() => setEditModal(true)}>Editar ficha</Button>
       </div>
     </section>
 
     <Tabs tabs={tabs} active={tab} onChange={setTab}/>
 
+    <SectionStage stageKey={tab}>
     {tab === "Información general" && <div className="detail-grid">
       <section className="panel">
         <div className="panel__heading">
@@ -1239,14 +1639,50 @@ function PetDetail({ id }: { id: string }) {
           <div><span className="medical-icon"><Icon name="shield"/></span><div><strong>Última consulta</strong><p>{pet.last}</p></div></div>
         </div>
       </section>
+      <section className="panel">
+        <div className="panel__heading">
+          <div><span className="eyebrow">Acceso compartido</span><h2>Co-tutores</h2></div>
+        </div>
+        <form onSubmit={handleAddCoOwner} style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <input
+            type="email"
+            placeholder="Email del co-tutor registrado"
+            value={coOwnerEmail}
+            onChange={(e) => setCoOwnerEmail(e.target.value)}
+            style={{ flex: 1, height: 38, borderRadius: 10, border: "1px solid var(--line)", padding: "0 12px" }}
+            required
+          />
+          <Button type="submit" variant="secondary" disabled={coOwnerBusy}>{coOwnerBusy ? "Agregando..." : "Compartir"}</Button>
+        </form>
+        {(dossier?.coOwners?.length ?? 0) > 0 ? (
+          <div className="table-list">
+            {dossier!.coOwners.map((co) => (
+              <div className="table-row" key={co.id}>
+                <div><strong>{co.name}</strong><small style={{ display: "block", color: "var(--ink-soft)" }}>{co.email}</small></div>
+                <Button variant="icon" icon="trash" ariaLabel={`Quitar acceso a ${co.name}`} onClick={() => handleRemoveCoOwner(co.id)} />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p style={{ fontSize: 13, color: "var(--ink-soft)" }}>Todavía no compartiste el expediente de {pet.name} con otro tutor.</p>
+        )}
+      </section>
       <section className="panel panel--wide">
         <div className="panel__heading">
           <div><span className="eyebrow">Últimos registros</span><h2>Evolución</h2></div>
           <Button variant="soft" icon="plus" onClick={() => go("/client/triage")}>Nueva consulta</Button>
         </div>
-        <div className="timeline">
-          <div><span/><div><b>{pet.last}</b><strong>Atención registrada en sistema</strong><p>Expediente sincronizado con la red veterinaria Huellicam.</p></div></div>
-        </div>
+        {(dossier?.evolutions?.length ?? 0) > 0 ? (
+          <div className="timeline">
+            {dossier!.evolutions.slice(0, 3).map((evo) => (
+              <div key={evo.id}><span/><div><b>{formatDateAR(evo.createdAt)}</b><strong>{evo.vetName || "Profesional Veterinario"}</strong><p>{evo.summary}</p></div></div>
+            ))}
+          </div>
+        ) : (
+          <div className="timeline">
+            <div><span/><div><b>{pet.last}</b><strong>Atención registrada en sistema</strong><p>Expediente sincronizado con la red veterinaria Huellicam.</p></div></div>
+          </div>
+        )}
       </section>
     </div>}
 
@@ -1268,12 +1704,27 @@ function PetDetail({ id }: { id: string }) {
                 <div><small>Aplicación</small><span>{v.date}</span></div>
                 <div><small>Próxima dosis</small><span>{v.nextDate}</span></div>
                 <div><Status tone={v.status === "Al día" ? "teal" : v.status === "Próxima" ? "amber" : "red"}>{v.status}</Status></div>
+                <Button variant="icon" icon="trash" ariaLabel={`Eliminar ${v.name}`} onClick={() => handleDeleteVaccine(v.id)} />
               </div>
             ))}
           </div>
         ) : (
           <EmptyState icon="shield" title="Sin vacunas registradas aún" text={`Registrá la libreta sanitaria o certificados de vacunación de ${pet.name}.`} action="Agregar vacuna" onAction={() => setVaccineModal(true)}/>
         )}
+      </section>
+    )}
+
+    {tab === "Antecedentes" && (
+      <section className="panel">
+        <div className="panel__heading">
+          <div><span className="eyebrow">Historial médico</span><h2>Antecedentes de {pet.name}</h2></div>
+          <Button variant="soft" icon="edit" onClick={() => setEditModal(true)}>Actualizar</Button>
+        </div>
+        <div className="medical-items">
+          <div><span className="medical-icon"><Icon name="heart"/></span><div><strong>Alergias declaradas</strong><p>{pet.allergies || "Sin alergias conocidas"}</p></div></div>
+          <div><span className="medical-icon"><Icon name="file"/></span><div><strong>Condiciones preexistentes</strong><p>{pet.chronicConditions || "Ninguna registrada"}</p></div></div>
+          <div><span className="medical-icon"><Icon name="shield"/></span><div><strong>Microchip ISO</strong><p>{pet.microchip || "No informado"}</p></div></div>
+        </div>
       </section>
     )}
 
@@ -1298,8 +1749,23 @@ function PetDetail({ id }: { id: string }) {
                   <small>Expediente clínico</small>
                 </div>
                 <div className="document-card__actions">
-                  <Button variant="soft" onClick={() => setToastMsg(`Visualizando ${doc.name}`)}>Ver</Button>
-                  <Button variant="icon" icon="download" ariaLabel={`Descargar ${doc.name}`} onClick={() => setToastMsg(`Descargando ${doc.name}`)}/>
+                  <Button
+                    variant="soft"
+                    onClick={() => setViewerDoc({ url: doc.url, title: doc.name, mimeType: doc.mimeType, subtitle: `${doc.type} · ${doc.date}` })}
+                  >
+                    Ver
+                  </Button>
+                  <Button
+                    variant="icon"
+                    icon="download"
+                    ariaLabel={`Descargar ${doc.name}`}
+                    onClick={() => {
+                      downloadAuthenticatedMedia(doc.url, doc.name).catch(() => {
+                        setToastMsg("No pudimos descargar el archivo");
+                        setTimeout(() => setToastMsg(null), 3500);
+                      });
+                    }}
+                  />
                   <Button variant="icon" icon="trash" ariaLabel={`Eliminar ${doc.name}`} onClick={() => setDeleteDocId(doc.id)}/>
                 </div>
               </article>
@@ -1311,22 +1777,96 @@ function PetDetail({ id }: { id: string }) {
       </section>
     )}
 
-    {!["Información general", "Vacunación", "Documentos"].includes(tab) && (
+    {tab === "Consultas" && (
       <section className="panel">
-        <EmptyState 
-          icon="file" 
-          title={`${tab} de ${pet.name}`} 
-          text={`Cuando haya nueva información de ${tab.toLowerCase()}, la vas a encontrar organizada acá.`} 
-          action="Nueva consulta"
-          onAction={() => go("/client/triage")}
-        />
+        <div className="panel__heading">
+          <div><span className="eyebrow">Atenciones</span><h2>Consultas de {pet.name}</h2></div>
+          <Button variant="soft" icon="plus" onClick={() => go("/client/triage")}>Nueva consulta</Button>
+        </div>
+        {(dossier?.consultations?.length ?? 0) > 0 ? (
+          <div className="table-list">
+            {dossier!.consultations.map((c) => (
+              <div className="table-row" key={c.id}>
+                <div><small>{formatDateAR(c.startedAt || c.createdAt)}</small><strong>{c.vet ? `Dr. ${c.vet.firstName} ${c.vet.lastName}` : "Veterinario de guardia"}</strong></div>
+                <div><small>Motivo</small><span>{c.notes || "Teleconsulta"}</span></div>
+                <div><Status tone={c.status === "COMPLETED" ? "teal" : c.status === "CANCELLED" ? "red" : "amber"}>{c.status}</Status></div>
+                <Button variant="secondary" onClick={() => go(`/client/consultations/${c.id}`)}>Ver</Button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState icon="video" title="Sin consultas registradas aún" text={`Cuando ${pet.name} tenga atenciones veterinarias, aparecerán acá.`} action="Nueva consulta" onAction={() => go("/client/triage")}/>
+        )}
       </section>
     )}
 
-    {editModal && (
-      <div className="modal-layer" role="presentation">
-        <button className="modal-scrim" onClick={() => setEditModal(false)} aria-label="Cerrar modal"/>
-        <div className="modal" role="dialog" aria-modal="true" style={{ textAlign: "left", width: "min(500px, calc(100% - 32px))" }}>
+    {tab === "Recetas" && (
+      <section className="panel">
+        <div className="panel__heading">
+          <div><span className="eyebrow">Indicaciones</span><h2>Recetas de {pet.name}</h2></div>
+        </div>
+        {(() => {
+          const petRx = (dossier?.consultations || []).flatMap((c) => c.prescriptions || []);
+          return petRx.length > 0 ? (
+            <div className="table-list">
+              {petRx.map((r) => (
+                <div className="table-row" key={r.id}>
+                  <div><small>{formatDateAR(r.issuedAt)}</small><strong>{r.medication}</strong></div>
+                  <div><small>Dosis</small><span>{r.dosage} · {r.frequency} ({r.durationDays} días)</span></div>
+                  <Button variant="secondary" onClick={() => go("/client/prescriptions")}>Ver receta</Button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyState icon="file" title="Sin recetas emitidas aún" text={`Las indicaciones médicas emitidas para ${pet.name} aparecerán acá.`}/>
+          );
+        })()}
+      </section>
+    )}
+
+    {tab === "Evolución" && (
+      <section className="panel">
+        <div className="panel__heading">
+          <div><span className="eyebrow">Seguimiento clínico</span><h2>Evolución de {pet.name}</h2></div>
+        </div>
+        {(dossier?.evolutions?.length ?? 0) > 0 ? (
+          <div className="timeline">
+            {dossier!.evolutions.map((evo) => (
+              <div key={evo.id}>
+                <span/>
+                <div>
+                  <b>{formatDateAR(evo.createdAt)}</b>
+                  <strong>{evo.vetName || "Profesional Veterinario"}</strong>
+                  {evo.diagnosis && <p><b>Diagnóstico:</b> {evo.diagnosis}</p>}
+                  <p>{evo.summary}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState icon="file" title="Sin notas de evolución aún" text={`Los registros clínicos guardados por el veterinario para ${pet.name} se sincronizarán acá.`}/>
+        )}
+      </section>
+    )}
+    </SectionStage>
+
+    <ClinicalMediaViewer
+      open={Boolean(viewerDoc)}
+      url={viewerDoc?.url}
+      title={viewerDoc?.title || "Documento clínico"}
+      mimeType={viewerDoc?.mimeType}
+      subtitle={viewerDoc?.subtitle}
+      onClose={() => setViewerDoc(null)}
+    />
+
+    <PetDossierModal
+      pet={dossierPetForModal}
+      dossier={dossier}
+      isOpen={dossierOpen}
+      onClose={() => setDossierOpen(false)}
+    />
+
+    <TrappedModalLayer open={editModal} onClose={() => setEditModal(false)} width="min(500px, calc(100% - 32px))">
           <button className="button button--icon modal__close" onClick={() => setEditModal(false)} aria-label="Cerrar"><Icon name="close" size={18}/></button>
           <span className="modal__icon"><Icon name="edit"/></span>
           <h2 style={{ textAlign: "center" }}>Editar ficha de {pet.name}</h2>
@@ -1335,7 +1875,7 @@ function PetDetail({ id }: { id: string }) {
             <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
               {/* Cambiar foto en el modal */}
               <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 14px", background: "var(--cream, #fffbef)", borderRadius: 10, border: "1px dashed var(--line, #e4dfd2)" }}>
-                <img src={heroPhoto} alt={pet.name} style={{ width: 48, height: 48, borderRadius: 10, objectFit: "cover" }} />
+                <img src={resolvedHeroPhoto || heroPhoto} alt={pet.name} style={{ width: 48, height: 48, borderRadius: 10, objectFit: "cover" }} />
                 <div style={{ flex: 1 }}>
                   <span style={{ fontSize: 13, fontWeight: 600, display: "block", color: "var(--ink, #183c3a)", marginBottom: 2 }}>Foto de la mascota</span>
                   <label style={{ fontSize: 12, color: "var(--teal, #609f9c)", cursor: "pointer", textDecoration: "underline", display: "inline-block" }}>
@@ -1442,14 +1982,9 @@ function PetDetail({ id }: { id: string }) {
               <Button type="submit" variant="primary" disabled={updatePetMutation.isPending}>{updatePetMutation.isPending ? "Guardando..." : "Guardar cambios"}</Button>
             </div>
           </form>
-        </div>
-      </div>
-    )}
+    </TrappedModalLayer>
 
-    {vaccineModal && (
-      <div className="modal-layer" role="presentation">
-        <button className="modal-scrim" onClick={() => setVaccineModal(false)} aria-label="Cerrar modal"/>
-        <div className="modal" role="dialog" aria-modal="true" style={{ textAlign: "left", width: "min(460px, calc(100% - 32px))" }}>
+    <TrappedModalLayer open={vaccineModal} onClose={() => setVaccineModal(false)} width="min(460px, calc(100% - 32px))">
           <button className="button button--icon modal__close" onClick={() => setVaccineModal(false)} aria-label="Cerrar"><Icon name="close" size={18}/></button>
           <span className="modal__icon"><Icon name="shield"/></span>
           <h2 style={{ textAlign: "center" }}>Registrar vacuna</h2>
@@ -1474,14 +2009,9 @@ function PetDetail({ id }: { id: string }) {
               <Button type="submit" variant="primary">Guardar vacuna</Button>
             </div>
           </form>
-        </div>
-      </div>
-    )}
+    </TrappedModalLayer>
 
-    {documentModal && (
-      <div className="modal-layer" role="presentation">
-        <button className="modal-scrim" onClick={() => setDocumentModal(false)} aria-label="Cerrar modal"/>
-        <div className="modal" role="dialog" aria-modal="true" style={{ textAlign: "left", width: "min(460px, calc(100% - 32px))" }}>
+    <TrappedModalLayer open={documentModal} onClose={() => setDocumentModal(false)} width="min(460px, calc(100% - 32px))">
           <button className="button button--icon modal__close" onClick={() => setDocumentModal(false)} aria-label="Cerrar"><Icon name="close" size={18}/></button>
           <span className="modal__icon"><Icon name="file"/></span>
           <h2 style={{ textAlign: "center" }}>Adjuntar documento</h2>
@@ -1522,9 +2052,7 @@ function PetDetail({ id }: { id: string }) {
               <Button type="submit" variant="primary">Adjuntar</Button>
             </div>
           </form>
-        </div>
-      </div>
-    )}
+    </TrappedModalLayer>
 
     {deleteDocId && (
       <Modal 
@@ -1543,7 +2071,7 @@ function PetDetail({ id }: { id: string }) {
 }
 
 export function ConsultationsPage({ initialTab = "Próximas" }: { initialTab?: string }) {
-  const { consultations } = useClientData();
+  const { consultations, consultationsLoading, consultationsError, refetchConsultations } = useClientData();
   const [filter, setFilter] = useState(initialTab);
   const shown = filter === "Finalizadas" ? consultations.filter(c => c.status === "Finalizada")
     : filter === "En curso" ? consultations.filter(c => c.status === "Confirmada" || c.status === "Pendiente")
@@ -1553,7 +2081,10 @@ export function ConsultationsPage({ initialTab = "Próximas" }: { initialTab?: s
   return <>
     <PageHeader eyebrow="Atención veterinaria" title="Mis consultas" description="Seguí tus próximas consultas, revisá las anteriores y organizá tus turnos." action={<Button onClick={() => go("/client/triage")}>Nueva consulta</Button>}/>
     <Tabs tabs={["Próximas", "En curso", "Finalizadas", "Agenda"]} active={filter} onChange={setFilter}/>
-    {filter === "Agenda" ? (
+    <SectionStage stageKey={filter}>
+    {consultationsError && !consultationsLoading ? (
+      <ErrorState onRetry={() => void refetchConsultations()} />
+    ) : filter === "Agenda" ? (
       <AppointmentsCalendar consultations={consultations} />
     ) : (
       <>
@@ -1561,14 +2092,28 @@ export function ConsultationsPage({ initialTab = "Próximas" }: { initialTab?: s
         {shown.length === 0 ? <div className="panel"><EmptyState icon="video" title="No hay consultas en esta sección" text="Podés solicitar una nueva consulta de telemedicina veterinaria cuando lo necesites." action="Nueva consulta" onAction={() => go("/client/triage")}/></div> : <div className="consultation-list">{shown.map((item) => <ConsultationCard item={item} key={item.id}/>)}</div>}
       </>
     )}
+    </SectionStage>
   </>;
 }
 
 function ConsultationDetail() {
-  const { consultations, pets } = useClientData();
+  const { consultations, consultationsLoading, consultationsError, refetchConsultations, pets } = useClientData();
   const pathId = window.location.pathname.split("/").pop();
-  const activeConsultation = consultations.find(c => c.id === pathId) || consultations[0];
+  const activeConsultation = consultations.find(c => c.id === pathId);
   const [tab, setTab] = useState("Resumen");
+
+  if (consultationsLoading && !activeConsultation) {
+    return <SkeletonPage type="list" />;
+  }
+
+  if (consultationsError && !activeConsultation) {
+    return (
+      <>
+        <button className="back-link" onClick={() => go("/client/consultations")}><Icon name="arrow" size={17}/> Volver a mis consultas</button>
+        <ErrorState onRetry={() => void refetchConsultations()} />
+      </>
+    );
+  }
 
   if (!activeConsultation) {
     return (
@@ -1581,19 +2126,138 @@ function ConsultationDetail() {
     );
   }
 
+  const matchedPet = pets.find(
+    (p) => p.name.toLowerCase() === (activeConsultation.pet || "").toLowerCase()
+  );
+
   return <>
     <button className="back-link" onClick={() => go("/client/consultations")}><Icon name="arrow" size={17}/> Volver a mis consultas</button>
     <PageHeader eyebrow={`Consulta ${activeConsultation.status || "confirmada"}`} title={activeConsultation.title || "Consulta veterinaria"} description={`${activeConsultation.date || "Hoy"}, ${activeConsultation.time || "19:30"} · Videoconsulta`} action={<Button icon="video" onClick={() => go(`/call/${activeConsultation.id}?from=client`)}>Entrar a videoconsulta</Button>}/>
-    <section className="consultation-summary"><div className="vet-avatar">VC</div><div><small>Profesional</small><strong>{activeConsultation.vet || "Veterinario de guardia"}</strong><p>Clínica general</p></div><div><small>Mascota</small><strong>{activeConsultation.pet || pets[0]?.name || "Mascota"}</strong><p>{pets[0]?.kind || "Animal de compañía"}</p></div><div><small>Motivo</small><strong>{activeConsultation.reason || "Orientación médica"}</strong><p>Teleconsulta telemática</p></div><Status>{activeConsultation.status || "Confirmada"}</Status></section>
+    <section className="consultation-summary"><div className="vet-avatar">VC</div><div><small>Profesional</small><strong>{activeConsultation.vet || "Veterinario de guardia"}</strong><p>Clínica general</p></div><div><small>Mascota</small><strong>{activeConsultation.pet || "Mascota"}</strong><p>{matchedPet?.kind || "Animal de compañía"}</p></div><div><small>Motivo</small><strong>{activeConsultation.reason || "Orientación médica"}</strong><p>Teleconsulta telemática</p></div><Status>{activeConsultation.status || "Confirmada"}</Status></section>
     <Tabs tabs={["Resumen", "Mensajes", "Historial", "Recetas", "Documentos"]} active={tab} onChange={setTab}/>
+    <SectionStage stageKey={tab}>
     {tab === "Resumen" ? <div className="detail-grid"><section className="panel"><div className="panel__heading"><h2>Antes de la consulta</h2></div><div className="checklist"><p><Icon name="check"/> Tené a tu mascota cerca</p><p><Icon name="check"/> Buscá un lugar tranquilo</p><p><Icon name="check"/> Revisá tu conexión</p></div></section><section className="panel"><div className="panel__heading"><h2>Notas para el veterinario</h2></div><p className="muted">{activeConsultation.reason || "Consulta médica general registrada en sistema."}</p><Button variant="soft" icon="edit" onClick={() => go("/client/triage")}>Editar consulta</Button></section></div> : <section className="panel"><EmptyState icon={tab === "Mensajes" ? "message" : "file"} title={tab} text={`La información de ${tab.toLowerCase()} de esta consulta aparecerá acá.`}/></section>}
+    </SectionStage>
   </>;
 }
 
 function AppointmentsCalendar({ consultations }: { consultations: ClientViewConsultation[] }) {
   const queryClient = useQueryClient();
+  const { pets } = useClientData({ includeConsultations: false });
   const [modal, setModal] = useState<string | null>(null);
+  const [reschedId, setReschedId] = useState<string | null>(null);
+  const [reschedAt, setReschedAt] = useState("");
+  const [reschedBusy, setReschedBusy] = useState(false);
+
+  const [bookOpen, setBookOpen] = useState(false);
+  const [bookPetId, setBookPetId] = useState("");
+  const [bookVetId, setBookVetId] = useState("");
+  const [bookDate, setBookDate] = useState(() => new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
+  const [bookSlotIso, setBookSlotIso] = useState("");
+  const [bookNotes, setBookNotes] = useState("");
+  const [bookBusy, setBookBusy] = useState(false);
+
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  const vetsQuery = useQuery({
+    queryKey: ["scheduling", "vets"],
+    enabled: bookOpen,
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<Array<{ id: string; firstName: string; lastName: string; specialty: string | null }>>>("/api/scheduling/vets");
+      return res.data.success && res.data.data ? res.data.data : [];
+    },
+  });
+
+  const slotsQuery = useQuery({
+    queryKey: ["scheduling", "slots", bookVetId, bookDate],
+    enabled: Boolean(bookOpen && bookVetId && bookDate),
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<{ slots: Array<{ startIso: string; label: string; available: boolean }> }>>(
+        `/api/scheduling/vets/${bookVetId}/slots?date=${encodeURIComponent(bookDate)}`
+      );
+      return res.data.success && res.data.data ? res.data.data.slots : [];
+    },
+  });
+
+  const [fuReschedId, setFuReschedId] = useState<string | null>(null);
+  const [fuReschedAt, setFuReschedAt] = useState("");
+  const [fuActionBusy, setFuActionBusy] = useState(false);
+
+  const followUpsQuery = useQuery({
+    queryKey: ["follow-ups", "client"],
+    retry: false,
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<Array<{ id: string; petName?: string; vetName?: string; title: string; notes?: string | null; scheduledAt: string; status: string }>>>("/api/scheduling/follow-ups");
+      return res.data.success && res.data.data ? res.data.data : [];
+    },
+  });
+
+  useEffect(() => {
+    if (bookOpen && !bookPetId && pets.length > 0) {
+      setBookPetId(pets[0].id);
+    }
+  }, [bookOpen, bookPetId, pets]);
+
+  useEffect(() => {
+    if (bookOpen && !bookVetId && vetsQuery.data && vetsQuery.data.length > 0) {
+      setBookVetId(vetsQuery.data[0].id);
+    }
+  }, [bookOpen, bookVetId, vetsQuery.data]);
+
+  useEffect(() => {
+    if (bookOpen && slotsQuery.data && slotsQuery.data.length > 0) {
+      const firstAvailable = slotsQuery.data.find((s) => s.available);
+      setBookSlotIso(firstAvailable?.startIso || "");
+    } else if (bookOpen) {
+      setBookSlotIso("");
+    }
+  }, [bookOpen, slotsQuery.data]);
+
+  const handleBookAppointment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bookPetId || !bookVetId || !bookNotes.trim()) return;
+    const targetIso = bookSlotIso || new Date(`${bookDate}T14:00:00.000Z`).toISOString();
+    setBookBusy(true);
+    try {
+      await api.post("/api/scheduling/appointments", {
+        petId: bookPetId,
+        vetId: bookVetId,
+        scheduledAt: targetIso,
+        notes: bookNotes.trim(),
+      });
+      await queryClient.invalidateQueries({ queryKey: ["consultations", "mine"] });
+      setBookOpen(false);
+      setBookNotes("");
+      setToastMsg("Turno programado correctamente");
+      setTimeout(() => setToastMsg(null), 3500);
+    } catch {
+      setToastMsg("No pudimos programar el turno en ese horario");
+      setTimeout(() => setToastMsg(null), 3500);
+    } finally {
+      setBookBusy(false);
+    }
+  };
+
+  const handleRescheduleSubmit = async () => {
+    if (!reschedId || !reschedAt) return;
+    setReschedBusy(true);
+    try {
+      await api.patch(`/api/consultations/${reschedId}/reschedule`, {
+        scheduledAt: new Date(reschedAt).toISOString(),
+        reason: "Reprogramado desde la agenda del tutor",
+      });
+      await queryClient.invalidateQueries({ queryKey: ["consultations", "mine"] });
+      setReschedId(null);
+      setReschedAt("");
+      setToastMsg("Turno reprogramado correctamente");
+      setTimeout(() => setToastMsg(null), 3500);
+    } catch {
+      setToastMsg("No se pudo reprogramar el turno");
+      setTimeout(() => setToastMsg(null), 3500);
+    } finally {
+      setReschedBusy(false);
+    }
+  };
 
   // Real-time Calendar state
   const [viewDate, setViewDate] = useState(() => new Date());
@@ -1649,7 +2313,9 @@ function AppointmentsCalendar({ consultations }: { consultations: ClientViewCons
 
   const cancelMutation = useMutation({
     mutationFn: async (consId: string) => {
-      const res = await api.patch<ApiResponse<BackendConsultation>>(`/api/consultations/${consId}/status`, { status: "CANCELLED" });
+      const res = await api.patch<ApiResponse<BackendConsultation>>(`/api/consultations/${consId}/cancel`, {
+        reason: "Cancelado desde la agenda del tutor",
+      });
       return res.data;
     },
     onSuccess: () => {
@@ -1686,7 +2352,7 @@ function AppointmentsCalendar({ consultations }: { consultations: ClientViewCons
         <div className="calendar__days">
           {/* Empty padding days for previous month */}
           {Array.from({ length: firstDayOfWeek }).map((_, i) => (
-            <button key={`pad-${i}`} disabled style={{ opacity: 0.2 }}> </button>
+            <span key={`pad-${i}`} aria-hidden="true" style={{ opacity: 0.2 }} />
           ))}
           {/* Month days */}
           {Array.from({ length: daysInMonth }, (_, i) => {
@@ -1725,6 +2391,7 @@ function AppointmentsCalendar({ consultations }: { consultations: ClientViewCons
             <span className="eyebrow">{selectedDateStr ? `Día ${selectedDateStr} de ${capitalizedMonth}` : "Próximos"}</span>
             <h2>{selectedDateStr ? "Turnos del día" : "Tus turnos"}</h2>
           </div>
+          <Button icon="plus" onClick={() => setBookOpen(true)}>Programar turno</Button>
         </div>
         {filteredConsultations.length > 0 ? (
           filteredConsultations.map(item => (
@@ -1739,7 +2406,10 @@ function AppointmentsCalendar({ consultations }: { consultations: ClientViewCons
                   {item.status}
                 </Status>
                 {item.status !== "Cancelada" && item.status !== "Finalizada" && (
-                  <button onClick={() => setModal(item.id)}>Cancelar turno</button>
+                  <>
+                    <button onClick={() => { setReschedId(item.id); setReschedAt(""); }}>Reprogramar</button>
+                    <button onClick={() => setModal(item.id)}>Cancelar turno</button>
+                  </>
                 )}
               </div>
             </div>
@@ -1749,8 +2419,163 @@ function AppointmentsCalendar({ consultations }: { consultations: ClientViewCons
             {selectedDateStr ? "No tenés turnos agendados para este día." : "No tenés turnos programados."}
           </p>
         )}
+
+        {(followUpsQuery.data?.length ?? 0) > 0 && (
+          <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--line, #e4dfd2)" }}>
+            <span className="eyebrow">Continuidad médica</span>
+            <h3 style={{ fontSize: 15, marginBottom: 10 }}>Próximos seguimientos</h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {followUpsQuery.data!.map((fu) => (
+                <div key={fu.id} className="agenda-item">
+                  <div>
+                    <b>{formatDateAR(fu.scheduledAt, true)}</b>
+                    <strong>{fu.title}</strong>
+                    <span>{fu.petName || "Mascota"} {fu.vetName ? `· ${fu.vetName}` : ""}</span>
+                    {fu.notes && <small style={{ display: "block", color: "var(--ink-soft)", marginTop: 2 }}>{fu.notes}</small>}
+                  </div>
+                  <div className="agenda-item__actions">
+                    <Status tone={fu.status === "COMPLETED" ? "teal" : fu.status === "CANCELLED" ? "gray" : "amber"}>
+                      {fu.status === "COMPLETED" ? "Realizado" : fu.status === "CANCELLED" ? "Cancelado" : "Pendiente"}
+                    </Status>
+                    {fu.status === "PENDING" && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFuReschedId(fu.id);
+                            setFuReschedAt("");
+                          }}
+                        >
+                          Proponer otro horario
+                        </button>
+                        <button
+                          type="button"
+                          disabled={fuActionBusy}
+                          onClick={async () => {
+                            setFuActionBusy(true);
+                            try {
+                              await api.patch(`/api/scheduling/follow-ups/${fu.id}`, { status: "CANCELLED" });
+                              await queryClient.invalidateQueries({ queryKey: ["follow-ups"] });
+                              setToastMsg("Seguimiento cancelado; avisamos al veterinario");
+                              setTimeout(() => setToastMsg(null), 3500);
+                            } catch {
+                              setToastMsg("No se pudo actualizar el seguimiento");
+                              setTimeout(() => setToastMsg(null), 3500);
+                            } finally {
+                              setFuActionBusy(false);
+                            }
+                          }}
+                        >
+                          No puedo asistir
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </aside>
     </div>
+
+    <TrappedModalLayer open={Boolean(fuReschedId)} onClose={() => setFuReschedId(null)} width="min(420px, calc(100% - 32px))">
+      <button className="button button--icon modal__close" onClick={() => setFuReschedId(null)} aria-label="Cerrar"><Icon name="close" size={18}/></button>
+      <h2 style={{ textAlign: "center" }}>Proponer otro horario</h2>
+      <p style={{ textAlign: "center", marginBottom: 16 }}>Elegí el día y horario en que podés asistir con tu mascota.</p>
+      <label className="field">
+        <span>Nueva fecha y hora</span>
+        <input type="datetime-local" value={fuReschedAt} onChange={(e) => setFuReschedAt(e.target.value)} required />
+      </label>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
+        <Button variant="secondary" onClick={() => setFuReschedId(null)}>Volver</Button>
+        <Button
+          disabled={!fuReschedAt || fuActionBusy}
+          onClick={async () => {
+            if (!fuReschedId || !fuReschedAt) return;
+            setFuActionBusy(true);
+            try {
+              await api.patch(`/api/scheduling/follow-ups/${fuReschedId}`, {
+                dueAt: new Date(fuReschedAt).toISOString(),
+              });
+              await queryClient.invalidateQueries({ queryKey: ["follow-ups"] });
+              setFuReschedId(null);
+              setFuReschedAt("");
+              setToastMsg("Nuevo horario propuesto al veterinario");
+              setTimeout(() => setToastMsg(null), 3500);
+            } catch {
+              setToastMsg("No se pudo proponer ese horario");
+              setTimeout(() => setToastMsg(null), 3500);
+            } finally {
+              setFuActionBusy(false);
+            }
+          }}
+        >
+          {fuActionBusy ? "Enviando..." : "Enviar propuesta"}
+        </Button>
+      </div>
+    </TrappedModalLayer>
+
+    <TrappedModalLayer open={bookOpen} onClose={() => setBookOpen(false)} width="min(480px, calc(100% - 32px))">
+      <button className="button button--icon modal__close" onClick={() => setBookOpen(false)} aria-label="Cerrar"><Icon name="close" size={18}/></button>
+      <span className="modal__icon"><Icon name="calendar"/></span>
+      <h2 style={{ textAlign: "center" }}>Programar turno</h2>
+      <p style={{ textAlign: "center", marginBottom: 16 }}>Elegí tu mascota, profesional y horario disponible.</p>
+      <form onSubmit={handleBookAppointment}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <label className="field">
+            <span>Mascota</span>
+            <select value={bookPetId} onChange={(e) => setBookPetId(e.target.value)} style={{ width: "100%", height: 42, borderRadius: 10, border: "1px solid var(--line)", padding: "0 12px", background: "white" }} required>
+              {pets.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.kind})</option>)}
+            </select>
+          </label>
+          <label className="field">
+            <span>Profesional veterinario</span>
+            <select value={bookVetId} onChange={(e) => setBookVetId(e.target.value)} style={{ width: "100%", height: 42, borderRadius: 10, border: "1px solid var(--line)", padding: "0 12px", background: "white" }} required>
+              {(vetsQuery.data || []).map((v) => <option key={v.id} value={v.id}>Dr. {v.firstName} {v.lastName}</option>)}
+            </select>
+          </label>
+          <label className="field">
+            <span>Fecha</span>
+            <input type="date" value={bookDate} onChange={(e) => setBookDate(e.target.value)} required />
+          </label>
+          <label className="field">
+            <span>Horario disponible</span>
+            <select value={bookSlotIso} onChange={(e) => setBookSlotIso(e.target.value)} style={{ width: "100%", height: 42, borderRadius: 10, border: "1px solid var(--line)", padding: "0 12px", background: "white" }}>
+              {(slotsQuery.data || []).filter((s) => s.available).length > 0 ? (
+                (slotsQuery.data || []).filter((s) => s.available).map((s) => (
+                  <option key={s.startIso} value={s.startIso}>{s.label} hs</option>
+                ))
+              ) : (
+                <option value="">14:00 hs (horario sugerido)</option>
+              )}
+            </select>
+          </label>
+          <label className="field">
+            <span>Motivo de la consulta</span>
+            <input value={bookNotes} onChange={(e) => setBookNotes(e.target.value)} placeholder="Ej: Control anual, vacunación, revisión" required />
+          </label>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
+          <Button variant="secondary" onClick={() => setBookOpen(false)}>Cancelar</Button>
+          <Button type="submit" disabled={bookBusy}>{bookBusy ? "Reservando..." : "Confirmar turno"}</Button>
+        </div>
+      </form>
+    </TrappedModalLayer>
+
+    <TrappedModalLayer open={Boolean(reschedId)} onClose={() => setReschedId(null)} width="min(420px, calc(100% - 32px))">
+      <button className="button button--icon modal__close" onClick={() => setReschedId(null)} aria-label="Cerrar"><Icon name="close" size={18}/></button>
+      <h2 style={{ textAlign: "center" }}>Reprogramar turno</h2>
+      <p style={{ textAlign: "center", marginBottom: 16 }}>Seleccioná la nueva fecha y hora para tu consulta.</p>
+      <label className="field">
+        <span>Nueva fecha y hora</span>
+        <input type="datetime-local" value={reschedAt} onChange={(e) => setReschedAt(e.target.value)} required />
+      </label>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
+        <Button variant="secondary" onClick={() => setReschedId(null)}>Volver</Button>
+        <Button disabled={!reschedAt || reschedBusy} onClick={handleRescheduleSubmit}>{reschedBusy ? "Guardando..." : "Guardar horario"}</Button>
+      </div>
+    </TrappedModalLayer>
 
     {modal && (
       <Modal 
@@ -1795,6 +2620,7 @@ interface WADocAttachment {
 
 interface WAMessageItem {
   id: string;
+  clientMsgId?: string;
   sender: "me" | "them";
   senderName?: string;
   text?: string;
@@ -1849,6 +2675,7 @@ interface ClientChatRawMessage {
   consultationId?: string;
   senderId?: string;
   content: string;
+  attachmentUrl?: string | null;
   createdAt?: string;
   sender?: {
     firstName?: string;
@@ -1856,8 +2683,26 @@ interface ClientChatRawMessage {
   };
 }
 
+const CLIENT_CHAT_IMAGE_RE = /\.(png|jpe?g|webp|gif|bmp|avif)(\?|$)/i;
+
+function buildClientDocFromMessage(m: ClientChatRawMessage): WADocAttachment | undefined {
+  const resolved = normalizeMediaUrl(m.attachmentUrl);
+  if (!resolved) return undefined;
+  const contentText = (m.content || "").trim();
+  const title = contentText.replace(/^📎\s*Adjunto:\s*/i, "") || "Archivo clínico adjunto";
+  const isImage = CLIENT_CHAT_IMAGE_RE.test(resolved) || CLIENT_CHAT_IMAGE_RE.test(title);
+  return {
+    title,
+    sub: isImage ? "Imagen clínica adjunta" : "Documento clínico adjunto",
+    bannerTag: isImage ? "FOTO / ARCHIVO CLÍNICO" : "DOCUMENTO ADJUNTO",
+    bannerTitle: "Huellicam · Expediente Clínico",
+    fileUrl: resolved,
+    isImage,
+  };
+}
+
 export function MessagesPage() {
-  const { pets, consultations } = useClientData();
+  const { pets, consultations, consultationsLoading, consultationsError, refetchConsultations } = useClientData();
   const { user } = useAuth();
   const { socket, joinConsultation, leaveConsultation } = useSocket();
   const roomActionsRef = useRef({ joinConsultation, leaveConsultation });
@@ -1873,6 +2718,11 @@ export function MessagesPage() {
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [mobileThreadOpen, setMobileThreadOpen] = useState(false);
   const [showNotificationBanner, setShowNotificationBanner] = useState(true);
+  const [deletedIds, setDeletedIds] = useState<string[]>(() => readDeletedChatIds(user?.id));
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  const [confirmDeleteChat, setConfirmDeleteChat] = useState<WAChatConversation | null>(null);
+  const [deletingChat, setDeletingChat] = useState(false);
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const imgInputRef = useRef<HTMLInputElement>(null);
 
@@ -1880,10 +2730,64 @@ export function MessagesPage() {
 
   const [conversations, setConversations] = useState<WAChatConversation[]>([]);
 
-  const activeChat = conversations.find((c) => c.id === activeChatId) || conversations[0] || null;
+  useEffect(() => {
+    setDeletedIds(readDeletedChatIds(user?.id));
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!openMenuId && !headerMenuOpen) return;
+    const onDocClick = () => {
+      setOpenMenuId(null);
+      setHeaderMenuOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpenMenuId(null);
+        setHeaderMenuOpen(false);
+      }
+    };
+    document.addEventListener("click", onDocClick);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("click", onDocClick);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [openMenuId, headerMenuOpen]);
+
+  const deletedSet = useMemo(() => new Set(deletedIds), [deletedIds]);
+  const availableConversations = useMemo(
+    () => conversations.filter((c) => !deletedSet.has(c.id)),
+    [conversations, deletedSet]
+  );
+
+  const handleConfirmDeleteChat = async () => {
+    if (!confirmDeleteChat) return;
+    const target = confirmDeleteChat;
+    setDeletingChat(true);
+    try {
+      await api.delete(`/api/consultations/${target.id}/messages`);
+      clearChatLocalCache(target.id);
+      setConversations((prev) => prev.map((c) => (c.id === target.id ? { ...c, messages: [] } : c)));
+      const next = addDeletedChatId(deletedIds, target.id);
+      setDeletedIds(next);
+      saveDeletedChatIds(user?.id, next);
+      if (activeChatId === target.id) {
+        setActiveChatId("");
+        setMobileThreadOpen(false);
+      }
+      setConfirmDeleteChat(null);
+      setToastMsg(`Chat con ${target.name} eliminado permanentemente.`);
+      setTimeout(() => setToastMsg(null), 3000);
+    } catch {
+      setToastMsg("No se pudo eliminar el chat. Intentá nuevamente.");
+      setTimeout(() => setToastMsg(null), 3500);
+    } finally {
+      setDeletingChat(false);
+    }
+  };
 
   const filteredChats = useMemo(() => {
-    return conversations.filter((chat) => {
+    return availableConversations.filter((chat) => {
       if (activeChip === "En curso" && !chat.isOnline && !chat.role.includes("Confirmada") && !chat.role.includes("Pendiente")) return false;
       if (activeChip === "Finalizadas" && !chat.role.includes("Finalizada")) return false;
 
@@ -1891,7 +2795,14 @@ export function MessagesPage() {
       const q = searchQuery.toLowerCase();
       return chat.name.toLowerCase().includes(q) || chat.preview.toLowerCase().includes(q) || chat.role.toLowerCase().includes(q);
     });
-  }, [conversations, activeChip, searchQuery]);
+  }, [availableConversations, activeChip, searchQuery]);
+
+  const activeChat =
+    filteredChats.find((c) => c.id === activeChatId) ||
+    availableConversations.find((c) => c.id === activeChatId) ||
+    filteredChats[0] ||
+    availableConversations[0] ||
+    null;
 
   const scrollToBottom = () => {
     if (typeof messagesEndRef.current?.scrollIntoView === "function") {
@@ -1911,12 +2822,7 @@ export function MessagesPage() {
     if (consultations && consultations.length > 0) {
       const realConvs: WAChatConversation[] = consultations.map((c) => {
         const vetName = c.vet && c.vet !== "Sin asignar" ? c.vet : "Guardia / Pendiente";
-        const initials = vetName
-          .split(" ")
-          .map((n) => n[0])
-          .slice(0, 2)
-          .join("")
-          .toUpperCase() || "VC";
+        const initials = getInitials(vetName, "VC");
         return {
           id: c.id,
           name: vetName,
@@ -1978,11 +2884,16 @@ export function MessagesPage() {
             const time = m.createdAt
               ? new Date(m.createdAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })
               : "Ahora";
+            const doc = buildClientDocFromMessage(m);
+            const displayText =
+              doc && m.content?.startsWith("📎 Adjunto:") ? undefined : m.content;
             return {
               id: m.id || m.clientMsgId || `${time}-${Math.random()}`,
+              clientMsgId: m.clientMsgId,
               sender: isMine ? "me" : "them",
               senderName: m.sender ? `${m.sender.firstName ?? ""} ${m.sender.lastName ?? ""}`.trim() : activeVetNameRef.current,
-              text: m.content,
+              text: displayText,
+              doc,
               time,
               state: "read",
             };
@@ -2020,11 +2931,16 @@ export function MessagesPage() {
       const time = msg.createdAt
         ? new Date(msg.createdAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })
         : "Ahora";
+      const doc = buildClientDocFromMessage(msg);
+      const displayText =
+        doc && msg.content?.startsWith("📎 Adjunto:") ? undefined : msg.content;
       const newWAMsg: WAMessageItem = {
         id: msg.id || msg.clientMsgId || `${time}-${Math.random()}`,
+        clientMsgId: msg.clientMsgId,
         sender: isMine ? "me" : "them",
         senderName: msg.sender ? `${msg.sender.firstName ?? ""} ${msg.sender.lastName ?? ""}`.trim() : activeVetNameRef.current,
-        text: msg.content,
+        text: displayText,
+        doc,
         time,
         state: "read",
       };
@@ -2032,8 +2948,24 @@ export function MessagesPage() {
       setConversations((prev) =>
         prev.map((c) => {
           if (c.id === activeConsultationId) {
-            if (c.messages.some((m) => m.id === newWAMsg.id)) return c;
-            const updated = [...c.messages, newWAMsg];
+            const existingIdx = c.messages.findIndex(
+              (m) =>
+                m.id === newWAMsg.id ||
+                (msg.clientMsgId &&
+                  (m.clientMsgId === msg.clientMsgId || m.id === msg.clientMsgId))
+            );
+            const updated =
+              existingIdx >= 0
+                ? c.messages.map((m, i) =>
+                    i === existingIdx
+                      ? {
+                          ...m,
+                          ...newWAMsg,
+                          doc: newWAMsg.doc ?? m.doc,
+                        }
+                      : m
+                  )
+                : [...c.messages, newWAMsg];
             saveChatMessages(c.id, updated);
             return {
               ...c,
@@ -2047,10 +2979,20 @@ export function MessagesPage() {
       );
     };
 
+    const handleChatDeleted = (payload?: { consultationId?: string }) => {
+      if (payload?.consultationId && payload.consultationId !== activeConsultationId) return;
+      clearChatLocalCache(activeConsultationId);
+      setConversations((prev) =>
+        prev.map((c) => (c.id === activeConsultationId ? { ...c, messages: [], preview: "Sin mensajes" } : c))
+      );
+    };
+
     socket?.on?.("message:new", handleNewMessage);
+    socket?.on?.("chat:deleted", handleChatDeleted);
 
     return () => {
       socket?.off?.("message:new", handleNewMessage);
+      socket?.off?.("chat:deleted", handleChatDeleted);
       roomActionsRef.current.leaveConsultation(activeConsultationId);
     };
   }, [socket, activeConsultationId, user?.id]);
@@ -2067,11 +3009,12 @@ export function MessagesPage() {
     const content = (textToSend !== undefined ? textToSend : inputText).trim();
     if (!content || !activeChat) return;
 
-    const newMsgId = `msg-${Date.now()}`;
+    const newMsgId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const nowTime = new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
 
     const newMsg: WAMessageItem = {
       id: newMsgId,
+      clientMsgId: newMsgId,
       sender: "me",
       text: content,
       time: nowTime,
@@ -2108,106 +3051,151 @@ export function MessagesPage() {
     }
   };
 
-  const handleRealFileSelect = (e: React.ChangeEvent<HTMLInputElement>, isImage: boolean) => {
+  const handleRealFileSelect = async (e: React.ChangeEvent<HTMLInputElement>, isImage: boolean) => {
     const file = e.target.files?.[0];
+    e.target.value = "";
     if (!file || !activeChat) return;
 
-    const newMsgId = `file-${Date.now()}`;
+    const targetConsultationId = activeConsultationId || activeChat.id;
+    const clientMsgId = `file-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const nowTime = new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
-    const fileUrl = URL.createObjectURL(file);
     const sizeKB = (file.size / 1024).toFixed(1);
+    const previewBlobUrl = URL.createObjectURL(file);
 
+    setShowAttachMenu(false);
+
+    let uploadedAttachmentUrl: string | undefined;
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("consultationId", targetConsultationId);
+      const uploadRes = await api.post<ApiResponse<{ id?: string; url?: string }>>("/api/media", formData);
+      uploadedAttachmentUrl = uploadRes.data?.data?.url
+        ? normalizeMediaUrl(uploadRes.data.data.url)
+        : uploadRes.data?.data?.id
+          ? `/api/media/${uploadRes.data.data.id}`
+          : undefined;
+    } catch {
+      try {
+        URL.revokeObjectURL(previewBlobUrl);
+      } catch {}
+      setToastMsg("Error al subir el archivo adjunto");
+      setTimeout(() => setToastMsg(null), 3500);
+      return;
+    }
+
+    if (!uploadedAttachmentUrl) {
+      try {
+        URL.revokeObjectURL(previewBlobUrl);
+      } catch {}
+      setToastMsg("Error: el servidor no devolvió el adjunto");
+      setTimeout(() => setToastMsg(null), 3500);
+      return;
+    }
+
+    const content = `📎 Adjunto: ${file.name}`;
     const newDocMsg: WAMessageItem = {
-      id: newMsgId,
+      id: clientMsgId,
+      clientMsgId,
       sender: "me",
       doc: {
         title: file.name,
         sub: isImage ? `Imagen clínica • ${sizeKB} KB` : `Documento clínico • ${sizeKB} KB`,
         bannerTag: isImage ? "FOTO / ARCHIVO CLÍNICO" : "DOCUMENTO ADJUNTO",
         bannerTitle: "Huellicam · Expediente Clínico",
-        fileUrl: fileUrl,
-        isImage: isImage,
+        fileUrl: uploadedAttachmentUrl,
+        isImage,
       },
       time: nowTime,
       state: "sent",
     };
 
+    try {
+      URL.revokeObjectURL(previewBlobUrl);
+    } catch {}
+
     setConversations((prev) =>
       prev.map((chat) => {
-        if (chat.id === activeChat.id) {
+        if (chat.id === targetConsultationId) {
+          const updated = [...chat.messages, newDocMsg];
+          saveChatMessages(chat.id, updated);
           return {
             ...chat,
             lastTime: nowTime,
             preview: isImage ? `📷 ${file.name}` : `📄 ${file.name}`,
-            messages: [...chat.messages, newDocMsg],
+            messages: updated,
           };
         }
         return chat;
       })
     );
 
-    setShowAttachMenu(false);
-    setToastMsg(`Archivo adjuntado: ${file.name}`);
-    setTimeout(() => setToastMsg(null), 3000);
-    e.target.value = "";
-  };
-
-  const handleAttachDoc = (docTitle: string) => {
-    if (!activeChat) return;
-    setShowAttachMenu(false);
-    const newMsgId = `doc-${Date.now()}`;
-    const nowTime = new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
-    const newDocMsg: WAMessageItem = {
-      id: newMsgId,
-      sender: "me",
-      doc: {
-        title: docTitle,
-        sub: "Documento clínico • PDF",
-        bannerTag: "DOCUMENTO ADJUNTO",
-        bannerTitle: "Huellicam · Expediente Clínico",
-      },
-      time: nowTime,
-      state: "sent",
-    };
-
-    setConversations((prev) =>
-      prev.map((chat) => {
-        if (chat.id === activeChat.id) {
-          return {
-            ...chat,
-            lastTime: nowTime,
-            preview: `📄 ${docTitle}`,
-            messages: [...chat.messages, newDocMsg],
-          };
+    try {
+      const msgRes = await api.post<ApiResponse<ClientChatRawMessage>>(
+        `/api/consultations/${targetConsultationId}/messages`,
+        {
+          content,
+          clientMsgId,
+          attachmentUrl: uploadedAttachmentUrl,
         }
-        return chat;
-      })
-    );
-    setToastMsg(`Documento adjuntado: ${docTitle}`);
-    setTimeout(() => setToastMsg(null), 3000);
+      );
+      if (msgRes.data?.success && msgRes.data.data?.id) {
+        const persistedId = msgRes.data.data.id;
+        setConversations((prev) =>
+          prev.map((chat) => {
+            if (chat.id === targetConsultationId) {
+              const updated = chat.messages.map((m) =>
+                m.clientMsgId === clientMsgId ? { ...m, id: persistedId, state: "delivered" as const } : m
+              );
+              saveChatMessages(chat.id, updated);
+              return { ...chat, messages: updated };
+            }
+            return chat;
+          })
+        );
+      }
+      setToastMsg(`Archivo adjuntado: ${file.name}`);
+      setTimeout(() => setToastMsg(null), 3000);
+    } catch {
+      setToastMsg("No se pudo enviar el adjunto al chat");
+      setTimeout(() => setToastMsg(null), 3500);
+    }
   };
 
   const handleDownloadDoc = (title: string, fileUrl?: string) => {
     if (fileUrl) {
-      const a = document.createElement("a");
-      a.href = fileUrl;
-      a.download = title;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setToastMsg(`Descargando archivo: ${title}`);
+      void downloadAuthenticatedMedia(fileUrl, title)
+        .then(() => {
+          setToastMsg(`Descargando archivo: ${title}`);
+          setTimeout(() => setToastMsg(null), 3000);
+        })
+        .catch(() => {
+          setToastMsg(`No se pudo descargar ${title}`);
+          setTimeout(() => setToastMsg(null), 3500);
+        });
     } else {
-      setToastMsg(`Descargando ${title}...`);
-      setTimeout(() => {
-        setToastMsg(`Archivo descargado correctamente: ${title}`);
-        setTimeout(() => setToastMsg(null), 3500);
-      }, 1200);
+      setToastMsg(`Archivo no disponible: ${title}`);
+      setTimeout(() => setToastMsg(null), 3000);
     }
   };
 
   const chips = ["Todos", "En curso", "Finalizadas"];
 
-  if (!consultations || consultations.length === 0) {
+  if (consultationsError && !consultationsLoading) {
+    return (
+      <>
+        <PageHeader
+          eyebrow="Comunicación médica"
+          title="Mensajes"
+          description="Canal directo y seguimiento clínico con los veterinarios asignados a tus consultas."
+        />
+        <ErrorState onRetry={() => void refetchConsultations()} />
+        {toastMsg && <Toast message={toastMsg} tone="success" />}
+      </>
+    );
+  }
+
+  if (!consultations || availableConversations.length === 0) {
     return (
       <>
         <PageHeader
@@ -2370,44 +3358,83 @@ export function MessagesPage() {
                   { bg: "#fcece9", color: "#ae4d45" },
                 ];
                 const themeColor = avatarColors[idx % avatarColors.length];
+                const isMenuOpen = openMenuId === chat.id;
 
                 return (
-                  <button
+                  <div
                     key={chat.id}
-                    className={`doctor-chat-card ${isSelected ? "is-active" : ""} ${hasUnread ? "has-unread" : ""}`}
-                    onClick={() => handleSelectChat(chat.id)}
-                    data-testid={`chat-item-${chat.id}`}
+                    className={`doctor-chat-card-wrap ${isSelected ? "is-active" : ""}`}
                   >
-                    <div
-                      className="doctor-chat-card__avatar"
-                      style={{ background: themeColor.bg, color: themeColor.color }}
+                    <button
+                      type="button"
+                      className={`doctor-chat-card ${isSelected ? "is-active" : ""} ${hasUnread ? "has-unread" : ""}`}
+                      onClick={() => handleSelectChat(chat.id)}
+                      data-testid={`chat-item-${chat.id}`}
                     >
-                      <span style={{ fontSize: 13, fontWeight: 800 }}>{chat.avatarText}</span>
-                      {chat.isOnline && <span className="wa-online-badge" />}
-                    </div>
-
-                    <div className="doctor-chat-card__content">
-                      <div className="doctor-chat-card__header">
-                        <span className="doctor-chat-card__name">{chat.name}</span>
-                        <span className="doctor-chat-card__time">{chat.lastTime}</span>
+                      <div
+                        className="doctor-chat-card__avatar"
+                        style={{ background: themeColor.bg, color: themeColor.color }}
+                      >
+                        <span style={{ fontSize: 13, fontWeight: 800 }}>{chat.avatarText}</span>
+                        {chat.isOnline && <span className="wa-online-badge" />}
                       </div>
-                      <div className="doctor-chat-card__footer">
-                        <span className="doctor-chat-card__preview">
-                          {chat.messages[chat.messages.length - 1]?.sender === "me" && (
-                            <span style={{ color: "var(--teal-dark, #315f5d)", fontWeight: 700, marginRight: 3 }}>✓✓</span>
+
+                      <div className="doctor-chat-card__content">
+                        <div className="doctor-chat-card__header">
+                          <span className="doctor-chat-card__name">{chat.name}</span>
+                          <span className="doctor-chat-card__time">{chat.lastTime}</span>
+                        </div>
+                        <div className="doctor-chat-card__footer">
+                          <span className="doctor-chat-card__preview">
+                            {chat.messages[chat.messages.length - 1]?.sender === "me" && (
+                              <span style={{ color: "var(--teal-dark, #315f5d)", fontWeight: 700, marginRight: 3 }}>✓✓</span>
+                            )}
+                            {chat.preview}
+                          </span>
+                          {hasUnread && (
+                            <span className="doctor-chat-card__badge">{formatBadgeCount(chat.unreadCount)}</span>
                           )}
-                          {chat.preview}
-                        </span>
-                        {hasUnread && (
-                          <span className="doctor-chat-card__badge">{chat.unreadCount}</span>
-                        )}
+                        </div>
                       </div>
-                    </div>
+                    </button>
 
-                    <div className="doctor-chat-card__chevron">
-                      <Icon name="chevron" size={16} />
-                    </div>
-                  </button>
+                    <button
+                      type="button"
+                      className="doctor-chat-card__more"
+                      aria-label={`Opciones de conversación con ${chat.name}`}
+                      aria-expanded={isMenuOpen}
+                      aria-haspopup="menu"
+                      data-testid={`chat-more-${chat.id}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setHeaderMenuOpen(false);
+                        setOpenMenuId((curr) => (curr === chat.id ? null : chat.id));
+                      }}
+                    >
+                      <Icon name="more" size={16} />
+                    </button>
+
+                    {isMenuOpen && (
+                      <div
+                        className="hc-chat-menu hc-popover"
+                        role="menu"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="hc-chat-menu__item is-danger"
+                          onClick={() => {
+                            setOpenMenuId(null);
+                            setConfirmDeleteChat(chat);
+                          }}
+                        >
+                          <Icon name="trash" size={14} />
+                          <span>Eliminar chat</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 );
               })
             )}
@@ -2461,6 +3488,42 @@ export function MessagesPage() {
                   >
                     <Icon name="video" size={18} />
                   </button>
+                  <div className="hc-thread-menu-wrap">
+                    <button
+                      type="button"
+                      className="wa-icon-btn"
+                      aria-label="Opciones del chat actual"
+                      aria-expanded={headerMenuOpen}
+                      aria-haspopup="menu"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenMenuId(null);
+                        setHeaderMenuOpen((v) => !v);
+                      }}
+                    >
+                      <Icon name="more" size={18} />
+                    </button>
+                    {headerMenuOpen && (
+                      <div
+                        className="hc-chat-menu hc-popover"
+                        role="menu"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="hc-chat-menu__item is-danger"
+                          onClick={() => {
+                            setHeaderMenuOpen(false);
+                            setConfirmDeleteChat(activeChat);
+                          }}
+                        >
+                          <Icon name="trash" size={14} />
+                          <span>Eliminar chat</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -2494,7 +3557,7 @@ export function MessagesPage() {
                           <div className="wa-doc-card">
                             {msg.doc.isImage && msg.doc.fileUrl && (
                               <div className="wa-doc-card__img-preview" style={{ borderRadius: 8, overflow: "hidden", marginBottom: 8 }}>
-                                <img src={msg.doc.fileUrl} alt={msg.doc.title} style={{ width: "100%", maxHeight: 240, objectFit: "cover", display: "block" }} />
+                                <AuthenticatedMediaImage src={msg.doc.fileUrl} alt={msg.doc.title} style={{ width: "100%", maxHeight: 240, objectFit: "cover", display: "block" }} />
                               </div>
                             )}
                             <div className="wa-doc-card__banner">
@@ -2649,7 +3712,7 @@ export function MessagesPage() {
                       }
                     }}
                     data-testid="chat-message-input"
-                    style={{ background: "transparent", border: "none", outline: "none", width: "100%", fontSize: 14 }}
+                    style={{ background: "transparent", border: "none", width: "100%" }}
                   />
                 </div>
 
@@ -2660,7 +3723,7 @@ export function MessagesPage() {
                   title="Enviar mensaje"
                   aria-label="Enviar"
                   data-testid="chat-send-btn"
-                  style={{ background: "var(--teal-dark, #315f5d)", color: "#ffffff", borderRadius: "50%", width: 42, height: 42, display: "grid", placeItems: "center", border: "none", cursor: inputText.trim() ? "pointer" : "default", opacity: inputText.trim() ? 1 : 0.6 }}
+                  style={{ background: "var(--teal-dark, #315f5d)", color: "#ffffff", borderRadius: "50%", width: 44, height: 44, minWidth: 44, minHeight: 44, display: "grid", placeItems: "center", border: "none", cursor: inputText.trim() ? "pointer" : "default", opacity: inputText.trim() ? 1 : 0.6 }}
                 >
                   <Icon name="send" size={17} />
                 </button>
@@ -2670,6 +3733,18 @@ export function MessagesPage() {
         </section>
       </div>
 
+      {confirmDeleteChat && (
+        <Modal
+          title="Eliminar chat"
+          text={`¿Querés eliminar la conversación con ${confirmDeleteChat.name}? Se borrarán permanentemente todos los mensajes y archivos enviados en este chat.`}
+          cancel="Cancelar"
+          confirm={deletingChat ? "Eliminando..." : "Eliminar chat"}
+          destructive
+          onClose={() => !deletingChat && setConfirmDeleteChat(null)}
+          onConfirm={() => { void handleConfirmDeleteChat(); }}
+        />
+      )}
+
       {toastMsg && <Toast message={toastMsg} tone="success" />}
     </div>
   );
@@ -2677,7 +3752,7 @@ export function MessagesPage() {
 
 function NotificationsPage() {
   const queryClient = useQueryClient();
-  const { data: notifications = [], isLoading } = useQuery({
+  const { data: notifications = [], isLoading, isError, refetch } = useQuery({
     queryKey: ['notifications'],
     queryFn: async () => {
       const res = await api.get<ApiResponse<any[]>>('/api/notifications');
@@ -2696,10 +3771,34 @@ function NotificationsPage() {
 
   useEffect(() => {
     const hasUnread = notifications.some((n: any) => !n.isRead && !n.read);
-    if (hasUnread) {
+    if (hasUnread && !markAllMutation.isPending) {
       markAllMutation.mutate();
     }
-  }, [notifications.length]);
+  }, [notifications.length, markAllMutation.isPending]);
+
+  const [pushPerm, setPushPerm] = useState(() => getNotificationPermissionState());
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushMsg, setPushMsg] = useState<string | null>(null);
+
+  const handleEnablePush = async () => {
+    setPushBusy(true);
+    setPushMsg(null);
+    try {
+      const res = await subscribeToWebPush();
+      setPushPerm(getNotificationPermissionState());
+      if (res.subscribed) {
+        setPushMsg("Notificaciones push activadas en este navegador.");
+      } else if (res.reason === "denied") {
+        setPushMsg("Bloqueaste los avisos en tu navegador. Habilitalos desde el ícono de candado en la barra de direcciones.");
+      } else if (res.reason === "vapid_unconfigured") {
+        setPushMsg("Permiso guardado. El servidor push Web VAPID aún no está configurado en este entorno.");
+      } else {
+        setPushMsg("No se pudo activar Web Push en este dispositivo.");
+      }
+    } finally {
+      setPushBusy(false);
+    }
+  };
 
   return (
     <>
@@ -2708,9 +3807,46 @@ function NotificationsPage() {
         title="Notificaciones"
         description="Todo lo que necesitás saber sobre la salud de tus mascotas."
       />
+      {isWebPushSupported() && pushPerm !== "granted" && (
+        <div
+          className="panel"
+          style={{
+            marginBottom: 16,
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            background: "var(--teal-pale, #edf6f4)",
+            border: "1px solid var(--teal, #609f9c)",
+          }}
+        >
+          <div>
+            <strong>Activá los avisos en tu navegador</strong>
+            <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--ink-soft)" }}>
+              Recibí recordatorios de vacunas, turnos y consultas incluso con la pestaña en segundo plano.
+            </p>
+            {pushMsg && <small style={{ display: "block", marginTop: 4, color: "var(--ink)" }}>{pushMsg}</small>}
+          </div>
+          <Button variant="primary" disabled={pushBusy || pushPerm === "denied"} onClick={handleEnablePush}>
+            {pushBusy ? "Activando..." : pushPerm === "denied" ? "Permiso denegado" : "Activar notificaciones push"}
+          </Button>
+        </div>
+      )}
+      {pushMsg && pushPerm === "granted" && (
+        <p style={{ marginBottom: 12, fontSize: 13, color: "var(--teal-deep)" }}>{pushMsg}</p>
+      )}
       <div className="panel">
         {isLoading ? (
-          <div style={{ padding: 40, textAlign: "center", color: "var(--ink-soft)" }}>Cargando notificaciones...</div>
+          <SkeletonPage type="list" />
+        ) : isError ? (
+          <EmptyState
+            icon="alert"
+            title="No pudimos cargar tus notificaciones"
+            text="Revisá tu conexión e intentá nuevamente."
+            action="Reintentar"
+            onAction={() => { void refetch(); }}
+          />
         ) : notifications.length === 0 ? (
           <EmptyState
             icon="bell"
@@ -2751,14 +3887,7 @@ function NotificationsPage() {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
                     <strong style={{ fontSize: 15, color: "var(--ink)" }}>{notif.title}</strong>
                     <small style={{ color: "var(--ink-soft)", fontSize: 12 }}>
-                      {notif.createdAt
-                        ? new Date(notif.createdAt).toLocaleDateString("es-AR", {
-                            day: "2-digit",
-                            month: "short",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })
-                        : ""}
+                      {notif.createdAt ? formatDateAR(notif.createdAt, true) : ""}
                     </small>
                   </div>
                   <p style={{ margin: 0, fontSize: 14, color: "var(--ink-soft)", lineHeight: 1.5 }}>{notif.body}</p>
@@ -2774,7 +3903,7 @@ function NotificationsPage() {
 
 function PrescriptionsPage() {
   const [active, setActive] = useState("Activas");
-  const { prescriptions = [], prescriptionsLoading: loading } = useClientData();
+  const { prescriptions = [], prescriptionsLoading: loading, prescriptionsError, refetchPrescriptions } = useClientData({ includeConsultations: false, includePrescriptions: true });
   const visiblePrescriptions = useMemo(() => {
     const now = Date.now();
     return prescriptions.filter((rx) => {
@@ -2793,11 +3922,11 @@ function PrescriptionsPage() {
         description="Consultá tratamientos e indicaciones oficiales emitidas por tus veterinarios."
       />
       <Tabs tabs={["Activas", "Anteriores"]} active={active} onChange={setActive} />
-      
+      <SectionStage stageKey={active}>
       {loading ? (
-        <div className="panel" style={{ textAlign: "center", padding: "40px" }}>
-          <p>Cargando recetas médicas...</p>
-        </div>
+        <SkeletonPage type="list" />
+      ) : prescriptionsError ? (
+        <ErrorState onRetry={() => { void refetchPrescriptions(); }} />
       ) : prescriptions.length === 0 ? (
         <div className="panel">
           <EmptyState
@@ -2897,6 +4026,7 @@ function PrescriptionsPage() {
           })}
         </div>
       )}
+      </SectionStage>
     </>
   );
 }
@@ -2985,7 +4115,7 @@ function evaluateClientTriage(symptom: string, timeframe: string): TriageTierInf
 }
 
 export function TriagePage() {
-  const { pets, petsLoading } = useClientData();
+  const { pets, petsLoading } = useClientData({ includeConsultations: false });
   const [step, setStep] = useState(0);
   const [symptom, setSymptom] = useState("");
   const [customSymptom, setCustomSymptom] = useState("");
@@ -3074,7 +4204,7 @@ export function TriagePage() {
         <button onClick={() => go("/client/dashboard")}><Icon name="close"/> Salir</button>
       </div>
       <div className="triage-progress">
-        <span style={{ width: `${(currentStepNumber / totalSteps) * 100}%` }}/>
+        <span style={{ transform: `scaleX(${currentStepNumber / totalSteps})` }}/>
         <small>Paso {currentStepNumber} de {totalSteps} · Cerca de 60 segundos</small>
       </div>
       <main className="triage-card">
@@ -3114,7 +4244,10 @@ export function TriagePage() {
               key={pet.id}
               data-testid={`triage-pet-${pet.id}`}
             >
-              <img src={pet.photo} alt={pet.name}/>
+              <SafePetImg
+                src={pet.photo}
+                alt={pet.name}
+              />
               <span>
                 <strong>{pet.name.trim()}</strong>
                 <small>{pet.kind} · {pet.breed}</small>
@@ -3162,10 +4295,8 @@ export function TriagePage() {
                 padding: "10px 12px",
                 borderRadius: 12,
                 border: "1px solid var(--line, #e4dfd2)",
-                fontSize: 14,
                 fontFamily: "inherit",
                 resize: "none",
-                outline: "none",
                 boxSizing: "border-box",
                 background: "#fff",
               }}
@@ -3209,6 +4340,27 @@ export function TriagePage() {
   );
 }
 
+const TRIAGE_DURATION_MAP: Record<
+  string,
+  'LESS_THAN_2_HOURS' | 'HOURS_2_TO_12' | 'DAYS_1_TO_2' | 'MORE_THAN_2_DAYS'
+> = {
+  "Hace menos de una hora": "LESS_THAN_2_HOURS",
+  "Hoy": "HOURS_2_TO_12",
+  "Entre ayer y hoy": "DAYS_1_TO_2",
+  "Hace varios días": "MORE_THAN_2_DAYS",
+};
+
+const TRIAGE_SYMPTOM_KEY_MAP: Record<string, string[]> = {
+  "Dificultad para respirar / Asfixia": ["respiratory_distress"],
+  "Convulsiones o pérdida de consciencia": ["seizures", "unconscious"],
+  "Intoxicación o ingesta de tóxico": ["poisoning"],
+  "Hemorragia o sangrado abundante": ["massive_bleeding"],
+  "Vómitos o diarrea frecuentes": ["persistent_vomiting", "diarrhea"],
+  "Herida, corte o traumatismo": ["deep_wound"],
+  "Dolor evidente o renguera": ["acute_lameness"],
+  "Decaimiento o inapetencia": ["lethargy"],
+};
+
 export function TriageResult({
   evaluation,
   symptom,
@@ -3228,11 +4380,28 @@ export function TriageResult({
 }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [consentOpen, setConsentOpen] = useState(false);
+  const [consentAccepted, setConsentAccepted] = useState<boolean | undefined>(undefined);
   const queryClient = useQueryClient();
-  const { pets } = useClientData();
+  const { pets } = useClientData({ includeConsultations: false });
   const selectedPet = pets.find((p) => p.id === petId);
 
-  const handleConnect = async () => {
+  useEffect(() => {
+    let active = true;
+    api
+      .get<ApiResponse<{ accepted: boolean }>>("/api/users/telemedicine-consent")
+      .then((res) => {
+        if (active && res.data?.success && typeof res.data.data?.accepted === "boolean") {
+          setConsentAccepted(res.data.data.accepted);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const executeConnect = async () => {
     if (!petId) {
       setErrorMessage("No se ha seleccionado ninguna mascota válida.");
       return;
@@ -3240,19 +4409,20 @@ export function TriageResult({
     setIsSubmitting(true);
     setErrorMessage(null);
     try {
-      // BUG-03: Formateo determinista de notas clínicas sin duración en consultas de rutina
-      const formattedNotes = formatConsultationNotes({
-        tier: evaluation.tier,
-        symptom,
-        timeframe,
-        isRoutine,
-      });
+      const cleanSymptom = symptom.trim() || "Consulta médica general";
+      const cleanTimeframe = timeframe.trim();
+      const notes =
+        isRoutine || !cleanTimeframe
+          ? cleanSymptom
+          : `${cleanSymptom} (${cleanTimeframe})`;
+      const mappedDuration = isRoutine ? undefined : TRIAGE_DURATION_MAP[cleanTimeframe];
+      const mappedSymptoms = TRIAGE_SYMPTOM_KEY_MAP[cleanSymptom] ?? [];
 
       const res = await api.post<ApiResponse<BackendConsultation>>('/api/consultations', {
         petId,
-        notes: formattedNotes,
-        symptoms: [symptom || "Consulta general"],
-        duration: isRoutine || timeframe.includes("hora") ? "LESS_THAN_2_HOURS" : "HOURS_2_TO_12",
+        notes,
+        ...(mappedSymptoms.length > 0 ? { symptoms: mappedSymptoms } : {}),
+        ...(mappedDuration ? { duration: mappedDuration } : {}),
       });
       if (res.data.success && res.data.data) {
         queryClient.invalidateQueries({ queryKey: ['consultations', 'mine'] });
@@ -3268,6 +4438,14 @@ export function TriageResult({
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleConnect = () => {
+    if (consentAccepted === false) {
+      setConsentOpen(true);
+      return;
+    }
+    void executeConnect();
   };
 
   const isCritical = evaluation.tier === "ROJO";
@@ -3310,6 +4488,15 @@ export function TriageResult({
         <button className="text-button" onClick={onBack || onRestart}>Volver y revisar respuestas</button>
         <small className="triage-disclaimer">Huellicam no reemplaza una guardia veterinaria presencial.</small>
       </main>
+      <TelemedicineConsentModal
+        open={consentOpen}
+        onClose={() => setConsentOpen(false)}
+        onAccepted={() => {
+          setConsentAccepted(true);
+          setConsentOpen(false);
+          void executeConnect();
+        }}
+      />
     </div>
   );
 }
@@ -3339,9 +4526,7 @@ function ProfilePage() {
   const displayName = fullName || (user?.firstName ? user.firstName : (user?.email ? firstName : "Tutor"));
   const email = user?.email || "";
   const phone = user?.phone || "";
-  const initials = user
-    ? `${user.firstName?.[0] || firstName[0] || "T"}${user.lastName?.[0] || ""}`.toUpperCase()
-    : "TU";
+  const initials = getInitials(displayName, firstName[0] || "T");
 
   const handleSave = async () => {
     if (formFirstName.trim().length < 2) {
@@ -3460,6 +4645,25 @@ function SettingsPage() {
   const { logout } = useAuth();
 
   useEffect(() => {
+    api.get("/api/notifications/preferences").then((res) => {
+      if (res.data?.success && res.data?.data) {
+        const d = res.data.data as {
+          appointmentReminders?: boolean;
+          inAppEnabled?: boolean;
+          marketingEnabled?: boolean;
+          emailRemindersEnabled?: boolean;
+        };
+        setToggles([
+          d.appointmentReminders ?? true,
+          d.inAppEnabled ?? true,
+          d.marketingEnabled ?? false,
+          d.emailRemindersEnabled ?? true,
+        ]);
+      }
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
     if (!passwordToast) return;
     const timer = window.setTimeout(() => setPasswordToast(null), 3200);
     return () => window.clearTimeout(timer);
@@ -3471,6 +4675,21 @@ function SettingsPage() {
       try {
         localStorage.setItem('huellicam_notification_preferences', JSON.stringify(next));
       } catch {}
+      const payload =
+        index === 0
+          ? { appointmentReminders: next[0] }
+          : index === 1
+          ? { inAppEnabled: next[1], pushEnabled: next[1] }
+          : index === 2
+          ? { marketingEnabled: next[2] }
+          : { emailRemindersEnabled: next[3], vaccineReminders: next[3] };
+      api.put("/api/notifications/preferences", payload).catch((err: unknown) => {
+        if (!(err as { response?: unknown })?.response) {
+          import("../lib/offlineQueue").then(({ enqueueOfflineMutation }) => {
+            enqueueOfflineMutation({ method: "PUT", url: "/api/notifications/preferences", data: payload });
+          }).catch(() => {});
+        }
+      });
       return next;
     });
   };
@@ -3479,10 +4698,7 @@ function SettingsPage() {
     if (loggingOut) return;
     setLoggingOut(true);
     try {
-      await Promise.race([
-        logout(),
-        new Promise((resolve) => setTimeout(resolve, 800)),
-      ]);
+      await logout();
     } finally {
       window.location.href = "/login";
     }
@@ -3588,7 +4804,7 @@ function SettingsPage() {
   );
 }
 
-function SkeletonPage({ type }: { type: "dashboard" | "list" | "messages" }) {
+function SkeletonPage({ type }: { type: "dashboard" | "list" | "messages" | "cards" }) {
   return <div className={`skeleton-page skeleton-page--${type}`} aria-busy="true" aria-live="polite">
     <span className="sr-only">Cargando contenido</span>
     <div className="skeleton skeleton--eyebrow"/>
@@ -3603,8 +4819,18 @@ function SkeletonPage({ type }: { type: "dashboard" | "list" | "messages" }) {
   </div>;
 }
 
-function ErrorState() {
-  return <div className="panel"><EmptyState icon="heart" title="No pudimos cargar esta información" text="Intentá nuevamente en unos segundos." action="Reintentar" onAction={() => window.location.reload()}/></div>;
+function ErrorState({ onRetry }: { onRetry?: () => void }) {
+  return (
+    <div className="panel" data-testid="consultations-error-state">
+      <EmptyState
+        icon="heart"
+        title="No pudimos cargar esta información"
+        text="Intentá nuevamente en unos segundos."
+        action="Reintentar"
+        onAction={onRetry ?? (() => window.location.reload())}
+      />
+    </div>
+  );
 }
 
 
@@ -3626,7 +4852,10 @@ export default function ClientApp() {
   const page = useMemo(() => {
     if (path === "/" || path === "/client" || path === "/client/dashboard") return <Dashboard/>;
     if (path === "/client/pets") return <PetsPage/>;
-    if (path.startsWith("/client/pets/")) return <PetDetail id={path.split("/").pop() || "milo"}/>;
+    if (path.startsWith("/client/pets/")) {
+      const petSegment = path.slice("/client/pets/".length).split("/")[0]?.trim();
+      return petSegment ? <PetDetail id={petSegment} /> : <NotFound />;
+    }
     if (path === "/client/consultations") return <ConsultationsPage/>;
     if (path.startsWith("/client/consultations/")) return <ConsultationDetail/>;
     if (path === "/client/appointments") return <ConsultationsPage initialTab="Agenda"/>;
@@ -3638,10 +4867,14 @@ export default function ClientApp() {
     return <NotFound/>;
   }, [path]);
   if (path === "/vet" || path.startsWith("/vet/")) return <><ClientScopedStyle /><Suspense fallback={<div className="route-loading" role="status">Cargando consola profesional…</div>}><VetApp path={path}/></Suspense></>;
-  if (path.startsWith("/call/")) return <><ClientScopedStyle /><Suspense fallback={<div className="route-loading route-loading--dark" role="status">Preparando videoconsulta…</div>}><CallRoom id={path.split("/")[2] || "milo"}/></Suspense></>;
+  if (path.startsWith("/call/")) {
+    const callSegment = path.split("/")[2]?.trim();
+    if (!callSegment) return <><ClientScopedStyle /><AppShell path={path}><NotFound /></AppShell></>;
+    return <><ClientScopedStyle /><Suspense fallback={<div className="route-loading route-loading--dark" role="status">Preparando videoconsulta…</div>}><CallRoom id={callSegment}/></Suspense></>;
+  }
   if (path === "/client/triage") return <><ClientScopedStyle /><TriagePage/></>;
   const state = new URLSearchParams(window.location.search).get("state");
   if (state === "loading") return <><ClientScopedStyle /><AppShell path={path}><SkeletonPage type={path === "/client/messages" ? "messages" : path === "/client/dashboard" ? "dashboard" : "list"}/></AppShell></>;
   if (state === "error") return <><ClientScopedStyle /><AppShell path={path}><ErrorState/></AppShell></>;
-  return <><ClientScopedStyle /><AppShell path={path}>{page}</AppShell></>;
+  return <><ClientScopedStyle /><AppShell path={path}><div key={path} className="hc-page-stage" style={path === "/client/messages" ? { display: "flex", flex: 1, minHeight: 0, width: "100%" } : undefined}>{page}</div></AppShell></>;
 }

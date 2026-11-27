@@ -1,15 +1,20 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { ShieldAlert, LogIn } from 'lucide-react';
+import { useFocusTrap } from './DialogOverlay';
 
 export const SessionTerminatedModal: React.FC = () => {
   const { sessionTerminated, dismissSessionTerminated } = useAuth();
   const navigate = useNavigate();
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useFocusTrap(Boolean(sessionTerminated), dialogRef);
 
   if (!sessionTerminated) return null;
 
   const isBanned = sessionTerminated.reason === 'ACCOUNT_BANNED';
+  const isHandoff = sessionTerminated.reason === 'SESSION_MIGRATED_NEW_DEVICE';
 
   const handleAction = () => {
     dismissSessionTerminated();
@@ -30,7 +35,8 @@ export const SessionTerminatedModal: React.FC = () => {
       style={{ backgroundColor: 'rgba(24, 60, 58, 0.72)', backdropFilter: 'blur(6px)' }}
     >
       <div
-        className="rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl text-center space-y-5 animate-fadeIn"
+        ref={dialogRef}
+        className="rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl text-center space-y-5 hc-dialog-panel"
         style={{
           backgroundColor: '#fffbef',
           border: isBanned ? '1.5px solid #e98b70' : '1.5px solid #e4dfd2',
@@ -62,16 +68,22 @@ export const SessionTerminatedModal: React.FC = () => {
             className="text-xl sm:text-2xl font-extrabold tracking-tight"
             style={{ color: isBanned ? '#8b2615' : '#183c3a' }}
           >
-            {isBanned ? 'Cuenta Suspendida Definitivamente' : 'Sesión cerrada en este dispositivo'}
+            {isBanned
+              ? 'Cuenta Suspendida Definitivamente'
+              : isHandoff
+                ? 'Llamada transferida a otro dispositivo'
+                : 'Sesión cerrada en este dispositivo'}
           </h2>
           <p
             className="text-sm font-medium leading-relaxed"
-            style={{ color: '#607674' }}
+            style={{ color: '#4a6866' }}
           >
             {sessionTerminated.message ||
               (isBanned
                 ? 'Tu cuenta ha sido suspendida permanentemente por un administrador por infracción de normativas y términos de la plataforma. El acceso a este perfil ha sido revocado.'
-                : 'Se ha detectado un inicio de sesión en tu cuenta desde otro dispositivo o navegador. Por razones de confidencialidad clínica y seguridad del paciente, esta sesión anterior ha sido finalizada.')}
+                : isHandoff
+                  ? 'Retomaste esta consulta desde otro dispositivo o navegador. Para evitar conflictos de audio y video, esta ventana fue desconectada automáticamente.'
+                  : 'Se ha detectado un inicio de sesión en tu cuenta desde otro dispositivo o navegador. Por razones de confidencialidad clínica y seguridad del paciente, esta sesión anterior ha sido finalizada.')}
           </p>
         </div>
 
@@ -80,7 +92,7 @@ export const SessionTerminatedModal: React.FC = () => {
             type="button"
             onClick={handleAction}
             className={`w-full inline-flex items-center justify-center gap-2 py-3.5 px-6 rounded-full font-bold text-sm text-white transition-colors shadow-sm cursor-pointer ${
-              isBanned ? 'bg-[#ae4d45] hover:bg-[#8d3d36]' : 'bg-[#609f9c] hover:bg-[#4d8d89]'
+              isBanned ? 'bg-[#ae4d45] hover:bg-[#8d3d36]' : 'bg-[#315f5d] hover:bg-[#183c3a]'
             }`}
           >
             <LogIn className="w-4 h-4" aria-hidden="true" />

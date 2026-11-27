@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import api from '../../services/api';
 import { Pet, ApiResponse } from '../../types';
 import { SpeciesIcon } from '../icons/SpeciesIcons';
+import { useFocusTrap } from '../common/DialogOverlay';
 import {
   X,
   Phone,
@@ -26,6 +27,9 @@ export const VetPatientProfile: React.FC<VetPatientProfileProps> = ({ petId, isO
   const [pet, setPet] = useState<Pet | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const drawerRef = useRef<HTMLDivElement>(null);
+
+  useFocusTrap(isOpen, drawerRef, { onEscape: onClose });
 
   useEffect(() => {
     if (!isOpen || !petId) {
@@ -68,9 +72,12 @@ export const VetPatientProfile: React.FC<VetPatientProfileProps> = ({ petId, isO
       aria-modal="true"
       aria-labelledby="vet-drawer-title"
       data-testid="vet-patient-profile-drawer"
-      className="fixed inset-0 z-50 overflow-hidden bg-[#183c3a]/55 backdrop-blur-sm flex justify-end animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 overflow-hidden bg-[#183c3a]/55 backdrop-blur-sm flex justify-end hc-dialog-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
     >
-      <div className="bg-[#fffbef] w-full max-w-md h-full shadow-2xl flex flex-col justify-between border-l border-[#e4dfd2] animate-in slide-in-from-right duration-300 overflow-y-auto">
+      <div ref={drawerRef} className="bg-[#fffbef] w-full max-w-md h-full shadow-2xl flex flex-col justify-between border-l border-[#e4dfd2] hc-drawer-right overflow-y-auto">
         {/* Drawer Header */}
         <div className="bg-gradient-to-r from-[#183c3a] to-[#315f5d] text-white p-5 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
@@ -115,15 +122,15 @@ export const VetPatientProfile: React.FC<VetPatientProfileProps> = ({ petId, isO
                 <div className="w-14 h-14 rounded-2xl bg-[#edf6f4] border border-[#609f9c]/30 text-[#315f5d] flex items-center justify-center shrink-0 shadow-inner">
                   <SpeciesIcon species={pet.species} className="w-7 h-7 text-[#315f5d]" />
                 </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-lg font-black text-[#183c3a]">{pet.name}</h3>
-                    <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-[#fffbef] border border-[#e4dfd2] text-[#183c3a]">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <h3 className="text-lg font-black text-[#183c3a] truncate">{pet.name}</h3>
+                    <span className="shrink-0 whitespace-nowrap text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-[#fffbef] border border-[#e4dfd2] text-[#183c3a]">
                       {pet.species}
                     </span>
                   </div>
-                  <p className="text-xs text-[#454e4e] font-medium">{pet.breed || 'Raza sin especificar'}</p>
-                  <p className="text-[11px] text-[#607674] mt-1 flex items-center gap-2">
+                  <p className="text-xs text-[#454e4e] font-medium truncate">{pet.breed || 'Raza sin especificar'}</p>
+                  <p className="text-[11px] text-[#607674] mt-1 flex flex-wrap items-center gap-2">
                     {pet.weightKg && (
                       <span className="inline-flex items-center gap-1 font-semibold text-[#9a621c]">
                         <Scale className="w-3 h-3 text-[#c88a2e]" />
@@ -190,11 +197,11 @@ export const VetPatientProfile: React.FC<VetPatientProfileProps> = ({ petId, isO
                   </h4>
                 </div>
 
-                <div className="text-xs space-y-1">
-                  <p className="font-extrabold text-[#183c3a]">
+                <div className="text-xs space-y-1 min-w-0">
+                  <p className="font-extrabold text-[#183c3a] break-words">
                     {pet.owner ? `${pet.owner.firstName || ''} ${pet.owner.lastName || ''}`.trim() : 'Tutor Registrado'}
                   </p>
-                  {pet.owner?.email && <p className="text-[#607674]">{pet.owner.email}</p>}
+                  {pet.owner?.email && <p className="text-[#607674] break-all">{pet.owner.email}</p>}
                 </div>
 
                 {pet.owner?.phone ? (

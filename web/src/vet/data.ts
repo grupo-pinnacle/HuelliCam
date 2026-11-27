@@ -138,7 +138,7 @@ export const getPatient = (id: string): Patient => {
   };
 };
 
-export type QueueItem = { id: string; petId: string; reason: string; triage: Triage; wait: number; requested: string; note: string };
+export type QueueItem = { id: string; petId: string; reason: string; triage: Triage; wait: number; createdAt?: string; requested: string; note: string };
 
 export const initialQueue: QueueItem[] = [
   { id: "q-milo", petId: "milo", reason: "Vómitos recurrentes", triage: "Moderado", wait: 222, requested: "18:38", note: "3 episodios desde la mañana. Toma agua. Sin fiebre referida." },

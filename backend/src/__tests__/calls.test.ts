@@ -176,6 +176,50 @@ describe('Calls Module (/api/calls)', () => {
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe('INVALID_CONSULTATION_STATE');
     });
+
+    it('should bind activeDeviceId via CAS when initially null and reject stale/mismatched x-device-id with 409 DEVICE_SESSION_STALE', async () => {
+      mockPrismaUser.findUnique.mockResolvedValue(mockClient);
+      mockPrismaConsultation.findUnique.mockResolvedValueOnce({
+        id: 'consultation-bind-1',
+        clientId: mockClient.id,
+        vetId: 'vet-uuid-1',
+        petId: 'pet-uuid-1',
+        status: 'ACTIVE',
+        activeDeviceId: null,
+        stateVersion: 1,
+        deletedAt: null,
+      } as any);
+      (mockPrismaConsultation.updateMany as jest.Mock).mockResolvedValueOnce({ count: 1 });
+
+      const boundRes = await request(app)
+        .post('/api/calls/consultation-bind-1/token')
+        .set('Authorization', `Bearer ${clientToken}`)
+        .set('X-Device-Id', 'device-B-123');
+
+      expect(boundRes.status).toBe(200);
+      const boundJwt: any = jwt.decode(boundRes.body.data.token);
+      expect(boundJwt.sub).toBe(`tutor_${mockClient.id}:device-B-123`);
+
+      // Mismatched or missing device header once bound -> 409 DEVICE_SESSION_STALE
+      mockPrismaConsultation.findUnique.mockResolvedValueOnce({
+        id: 'consultation-bind-1',
+        clientId: mockClient.id,
+        vetId: 'vet-uuid-1',
+        petId: 'pet-uuid-1',
+        status: 'ACTIVE',
+        activeDeviceId: 'device-B-123',
+        stateVersion: 2,
+        deletedAt: null,
+      } as any);
+
+      const staleRes = await request(app)
+        .post('/api/calls/consultation-bind-1/token')
+        .set('Authorization', `Bearer ${clientToken}`)
+        .set('X-Device-Id', 'device-A-old');
+
+      expect(staleRes.status).toBe(409);
+      expect(staleRes.body.error.code).toBe('DEVICE_SESSION_STALE');
+    });
   });
 
   describe('POST /api/calls/:consultationId/ring', () => {

@@ -1,11 +1,12 @@
 import bcrypt from 'bcryptjs';
 import { Role, VetStatus } from '@prisma/client';
-import prisma from '../../lib/prisma';
+import prisma, { isMissingTableError } from '../../lib/prisma';
 import { AppError } from '../../middlewares/errorHandler';
 import { AuthService } from '../auth/auth.service';
 import { ChangePasswordDTO, UpdateProfileDTO } from './users.schemas';
 import { io } from '../../realtime/socket.server';
 import { presenceService } from '../../realtime/presence.service';
+import { evictUserRealtimeAndCall } from '../../realtime/sessionEviction.helper';
 
 const userSelectFields = {
   id: true,
@@ -112,6 +113,73 @@ export class UsersService {
       },
     });
 
+    await evictUserRealtimeAndCall({
+      userId,
+      role: updatedUser.role,
+      reason: 'SESSION_REVOKED',
+      message: 'Tu contraseña fue actualizada. Iniciá sesión nuevamente.',
+    }).catch(() => {});
+
     return AuthService.generateTokens(updatedUser);
+  }
+
+  public async getTelemedicineConsent(userId: string) {
+    const record = prisma.telemedicineConsent?.findFirst
+      ? await prisma.telemedicineConsent
+          .findFirst({
+            where: { userId, version: '1.0' },
+            orderBy: { acceptedAt: 'desc' },
+          })
+          .catch((err) => {
+            if (isMissingTableError(err)) return null;
+            throw err;
+          })
+      : null;
+
+    return {
+      accepted: Boolean(record),
+      consent: record
+        ? {
+            id: record.id,
+            userId: record.userId,
+            version: record.version,
+            acceptedAt: record.acceptedAt.toISOString(),
+          }
+        : null,
+    };
+  }
+
+  public async acceptTelemedicineConsent(
+    userId: string,
+    meta: { version?: string; ipAddress?: string; userAgent?: string }
+  ) {
+    const version = meta.version || '1.0';
+    const existing = await prisma.telemedicineConsent.findFirst({
+      where: { userId, version },
+    });
+    if (existing) {
+      return {
+        id: existing.id,
+        userId: existing.userId,
+        version: existing.version,
+        acceptedAt: existing.acceptedAt.toISOString(),
+      };
+    }
+
+    const created = await prisma.telemedicineConsent.create({
+      data: {
+        userId,
+        version,
+        ipAddress: meta.ipAddress || null,
+        userAgent: meta.userAgent || null,
+      },
+    });
+
+    return {
+      id: created.id,
+      userId: created.userId,
+      version: created.version,
+      acceptedAt: created.acceptedAt.toISOString(),
+    };
   }
 }

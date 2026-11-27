@@ -11,7 +11,7 @@ interface LegalLayoutProps {
 
 export const LegalLayout: React.FC<LegalLayoutProps> = ({ icon, title, subtitle, children }) => {
   return (
-    <div className="min-h-screen bg-[#fffbef] text-[#183c3a] flex flex-col font-['Manrope',sans-serif]">
+    <div className="min-h-dvh bg-[#fffbef] text-[#183c3a] flex flex-col font-['Manrope',sans-serif]">
       <header className="bg-[#fffbef]/95 backdrop-blur-md border-b border-[#e4dfd2] sticky top-0 z-30">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between gap-4">
           <Link

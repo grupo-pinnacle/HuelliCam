@@ -53,9 +53,11 @@
   transition: color 150ms ease, transform 150ms ease;
 }
 
-.auth-visual__back:hover {
-  color: #ffffff;
-  transform: translateX(-2px);
+@media (hover: hover) and (pointer: fine) {
+  .auth-visual__back:hover {
+    color: #ffffff;
+    transform: translateX(-2px);
+  }
 }
 
 .auth-visual__back .icon {
@@ -281,9 +283,11 @@
   transition: color 150ms ease;
 }
 
-.auth-panel__legal a:hover {
-  color: #183c3a;
-  text-decoration: underline;
+@media (hover: hover) and (pointer: fine) {
+  .auth-panel__legal a:hover {
+    color: #183c3a;
+    text-decoration: underline;
+  }
 }
 
 .auth-header {
@@ -388,7 +392,6 @@
   height: 54px;
   border: 1.5px solid #e2ddd0;
   border-radius: 14px;
-  outline: 0;
   padding: 0 44px 0 16px;
   background: #ffffff;
   color: var(--ink);
@@ -396,6 +399,11 @@
   font-size: 16px;
   letter-spacing: -0.01em;
   transition: border 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.auth-field input:focus:not(:focus-visible),
+.auth-field select:focus:not(:focus-visible) {
+  outline: 0;
 }
 
 .auth-field select {
@@ -411,9 +419,11 @@
   color: rgba(24, 60, 58, 0.35);
 }
 
-.auth-field input:hover,
-.auth-field select:hover {
-  border-color: rgba(96, 159, 156, 0.72);
+@media (hover: hover) and (pointer: fine) {
+  .auth-field input:hover,
+  .auth-field select:hover {
+    border-color: rgba(96, 159, 156, 0.72);
+  }
 }
 
 .auth-field input:focus,
@@ -552,8 +562,8 @@
   border: 0;
   border-radius: 999px;
   padding: 0 24px;
-  background: var(--brand);
-  box-shadow: 0 8px 22px rgba(67, 128, 125, 0.2);
+  background: var(--brand-dark);
+  box-shadow: 0 8px 22px rgba(49, 95, 93, 0.24);
   color: var(--white);
   cursor: pointer;
   font-size: 17px;
@@ -562,10 +572,12 @@
   transition: transform 160ms ease, background 160ms ease, box-shadow 160ms ease;
 }
 
-.auth-submit:hover:not(:disabled) {
-  background: #4d8d89;
-  box-shadow: 0 11px 28px rgba(49, 95, 93, 0.22);
-  transform: translateY(-2px);
+@media (hover: hover) and (pointer: fine) {
+  .auth-submit:hover:not(:disabled) {
+    background: var(--brand-deep);
+    box-shadow: 0 11px 28px rgba(24, 60, 58, 0.26);
+    transform: translateY(-2px);
+  }
 }
 
 .auth-submit:active:not(:disabled) {
@@ -641,9 +653,11 @@
   transition: color 150ms ease, background 150ms ease;
 }
 
-.auth-inline-link:hover {
-  color: var(--brand-dark);
-  background: rgba(96, 159, 156, 0.1);
+@media (hover: hover) and (pointer: fine) {
+  .auth-inline-link:hover {
+    color: var(--brand-dark);
+    background: rgba(96, 159, 156, 0.1);
+  }
 }
 
 .auth-demo-note {
@@ -742,11 +756,17 @@
   transition: border 160ms ease, background 160ms ease, transform 160ms ease, box-shadow 160ms ease;
 }
 
-.role-card:hover {
-  border-color: var(--brand);
-  background: #ffffff;
-  box-shadow: var(--shadow-sm);
-  transform: translateY(-2px);
+@media (hover: hover) and (pointer: fine) {
+  .role-card:hover {
+    border-color: var(--brand);
+    background: #ffffff;
+    box-shadow: var(--shadow-sm);
+    transform: translateY(-2px);
+  }
+}
+
+.role-card:active {
+  transform: scale(0.985);
 }
 
 .role-card--selected {
@@ -1025,9 +1045,15 @@
   transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
 }
 
-.auth-back-button:hover {
-  border-color: var(--brand);
-  background: rgba(96, 159, 156, 0.08);
+@media (hover: hover) and (pointer: fine) {
+  .auth-back-button:hover {
+    border-color: var(--brand);
+    background: rgba(96, 159, 156, 0.08);
+  }
+}
+
+.auth-back-button:active {
+  transform: scale(0.98);
 }
 
 .auth-review {
@@ -1362,5 +1388,21 @@
 
   .auth-success {
     padding-top: 22px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-visual__back,
+  .auth-panel__legal a,
+  .auth-field input,
+  .auth-field select,
+  .auth-submit,
+  .auth-inline-link,
+  .role-card,
+  .role-card__check,
+  .auth-back-button,
+  .spinner {
+    animation: none !important;
+    transition: none !important;
   }
 }

@@ -11,7 +11,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ allowedRoles }) 
   const { user, loading } = useAuth();
 
   if (loading) {
-    return <div className="flex items-center justify-center h-screen">Cargando...</div>;
+    return <div className="flex items-center justify-center h-dvh">Cargando...</div>;
   }
 
   if (!user) {

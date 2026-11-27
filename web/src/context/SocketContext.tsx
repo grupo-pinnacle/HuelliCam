@@ -48,7 +48,18 @@ export interface PrescriptionNewPayload {
 export interface VetPresencePayload {
   vetId?: string;
   isOnline?: boolean;
-  lastSeen?: string;
+  lastSeen?: string | null;
+}
+
+export interface TutorReconnectingPayload {
+  consultationId?: string;
+  userId?: string;
+  startedAt?: string;
+}
+
+export interface TutorReconnectedPayload {
+  consultationId?: string;
+  userId?: string;
 }
 
 export interface SessionTerminatedPayload {
@@ -60,6 +71,7 @@ export interface SessionTerminatedPayload {
 export interface SocketContextValue {
   socket: Socket | null;
   isConnected: boolean;
+  reconnectingConsultations: Record<string, string>;
   joinConsultation: (consultationId: string) => void;
   leaveConsultation: (consultationId: string) => void;
   emitEvent: <T = unknown>(
@@ -72,6 +84,7 @@ export interface SocketContextValue {
 const NOOP_SOCKET_CONTEXT: SocketContextValue = {
   socket: null,
   isConnected: false,
+  reconnectingConsultations: {},
   joinConsultation: () => {},
   leaveConsultation: () => {},
   emitEvent: () => false,
@@ -138,6 +151,7 @@ export const SocketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
   const [socketInstance, setSocketInstance] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [reconnectingConsultations, setReconnectingConsultations] = useState<Record<string, string>>({});
 
   const buildAuthPayload = useCallback(() => {
     const rawToken = resolveToken();
@@ -196,11 +210,13 @@ export const SocketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       }
       setIsConnected(false);
       setSocketInstance(null);
+      setReconnectingConsultations({});
       return;
     }
 
     if (userChanged) {
       roomRefCountsRef.current.clear();
+      setReconnectingConsultations({});
     }
 
     if (socketRef.current && activeUserIdRef.current === userId) {
@@ -290,9 +306,29 @@ export const SocketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
     const handleSessionInvalidated = (data?: SessionTerminatedPayload) => {
       dispatchSessionTerminated(
-        data?.reason || 'MULTIPLE_DEVICES_DETECTED',
+        data?.reason || 'SESSION_MIGRATED_NEW_DEVICE',
         data?.message || 'Tu sesión fue transferida a otro dispositivo.'
       );
+    };
+
+    const handleTutorReconnecting = (data?: TutorReconnectingPayload) => {
+      const cid = data?.consultationId;
+      if (!cid) return;
+      setReconnectingConsultations((prev) => ({
+        ...prev,
+        [cid]: data?.startedAt || new Date().toISOString(),
+      }));
+    };
+
+    const handleTutorReconnected = (data?: TutorReconnectedPayload) => {
+      const cid = data?.consultationId;
+      if (!cid) return;
+      setReconnectingConsultations((prev) => {
+        if (!(cid in prev)) return prev;
+        const next = { ...prev };
+        delete next[cid];
+        return next;
+      });
     };
 
     const handleConsultationNew = () => {
@@ -315,6 +351,15 @@ export const SocketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
     const handleConsultationCancelled = (data?: ConsultationCancelledPayload) => {
       const qc = queryClientRef.current;
+      if (data?.consultationId) {
+        const cid = data.consultationId;
+        setReconnectingConsultations((prev) => {
+          if (!(cid in prev)) return prev;
+          const next = { ...prev };
+          delete next[cid];
+          return next;
+        });
+      }
       if (!qc) return;
       if (data?.consultationId) {
         void qc.invalidateQueries({ queryKey: ['consultation', data.consultationId] });
@@ -326,6 +371,15 @@ export const SocketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
     const handleCallEnded = (data?: CallEndedPayload) => {
       const qc = queryClientRef.current;
+      if (data?.consultationId) {
+        const cid = data.consultationId;
+        setReconnectingConsultations((prev) => {
+          if (!(cid in prev)) return prev;
+          const next = { ...prev };
+          delete next[cid];
+          return next;
+        });
+      }
       if (!qc) return;
       if (data?.consultationId) {
         void qc.invalidateQueries({ queryKey: ['consultation', data.consultationId] });
@@ -371,6 +425,8 @@ export const SocketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     socket.on?.('consultation:new', handleConsultationNew);
     socket.on?.('consultation:assigned', handleConsultationAssigned);
     socket.on?.('consultation:cancelled', handleConsultationCancelled);
+    socket.on?.('consultation:tutor_reconnecting', handleTutorReconnecting);
+    socket.on?.('consultation:tutor_reconnected', handleTutorReconnected);
     socket.on?.('call:ended', handleCallEnded);
     socket.on?.('notification:new', handleNotificationNew);
     socket.on?.('prescription:new', handlePrescriptionNew);
@@ -386,6 +442,8 @@ export const SocketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       socket.off?.('consultation:new', handleConsultationNew);
       socket.off?.('consultation:assigned', handleConsultationAssigned);
       socket.off?.('consultation:cancelled', handleConsultationCancelled);
+      socket.off?.('consultation:tutor_reconnecting', handleTutorReconnecting);
+      socket.off?.('consultation:tutor_reconnected', handleTutorReconnected);
       socket.off?.('call:ended', handleCallEnded);
       socket.off?.('notification:new', handleNotificationNew);
       socket.off?.('prescription:new', handlePrescriptionNew);
@@ -451,11 +509,12 @@ export const SocketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     () => ({
       socket: socketInstance,
       isConnected,
+      reconnectingConsultations,
       joinConsultation,
       leaveConsultation,
       emitEvent,
     }),
-    [socketInstance, isConnected, joinConsultation, leaveConsultation, emitEvent]
+    [socketInstance, isConnected, reconnectingConsultations, joinConsultation, leaveConsultation, emitEvent]
   );
 
   return <SocketContext.Provider value={value}>{children}</SocketContext.Provider>;

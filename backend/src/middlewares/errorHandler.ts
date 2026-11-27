@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
 import { Prisma } from '@prisma/client';
 import { logger, serializeError } from '../lib/logger';
+import { captureTelemetryException } from '../lib/telemetry';
 import { getRequestId } from './requestId';
 
 export class AppError extends Error {
@@ -126,6 +127,12 @@ export const errorHandler = (
     },
     'Unhandled Server Error'
   );
+  void captureTelemetryException(err, {
+    code: 'INTERNAL_SERVER_ERROR',
+    path: req.originalUrl,
+    method: req.method,
+    requestId,
+  });
 
   res.status(500).json({
     success: false,

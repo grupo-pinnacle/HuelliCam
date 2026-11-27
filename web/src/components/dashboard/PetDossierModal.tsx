@@ -1,7 +1,9 @@
 import React, { useRef, useState } from 'react';
-import { Pet } from '../../types';
+import { Pet, type PetDossierDTO } from '../../types';
 import { SpeciesIcon } from '../icons/SpeciesIcons';
+import { formatDateAR } from '../../lib/formatters';
 import { requestMobilePrintOrFallback } from '../../lib/mobileBridge';
+import { useFocusTrap } from '../common/DialogOverlay';
 import {
   X,
   Printer,
@@ -21,11 +23,15 @@ interface PetDossierModalProps {
   pet: Pet | null;
   isOpen: boolean;
   onClose: () => void;
+  dossier?: PetDossierDTO | null;
 }
 
-export const PetDossierModal: React.FC<PetDossierModalProps> = ({ pet, isOpen, onClose }) => {
+export const PetDossierModal: React.FC<PetDossierModalProps> = ({ pet, isOpen, onClose, dossier }) => {
   const [copied, setCopied] = useState(false);
   const printableRef = useRef<HTMLDivElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useFocusTrap(Boolean(isOpen && pet), dialogRef, { onEscape: onClose });
 
   if (!isOpen || !pet) return null;
 
@@ -51,9 +57,12 @@ export const PetDossierModal: React.FC<PetDossierModalProps> = ({ pet, isOpen, o
       aria-modal="true"
       aria-labelledby="dossier-modal-title"
       data-testid="pet-dossier-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-[#06241D]/60 backdrop-blur-sm overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-[#06241D]/60 backdrop-blur-sm overflow-y-auto hc-dialog-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
     >
-      <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-[#E8E2D5] overflow-hidden my-auto animate-in zoom-in-95 duration-200">
+      <div ref={dialogRef} className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-[#E8E2D5] overflow-hidden my-auto hc-dialog-panel">
         {/* Printable & Header section */}
         <div className="bg-gradient-to-r from-[#06241D] to-[#0B3B30] text-white p-6 flex items-center justify-between no-print">
           <div className="flex items-center gap-3">
@@ -78,7 +87,7 @@ export const PetDossierModal: React.FC<PetDossierModalProps> = ({ pet, isOpen, o
               type="button"
               data-testid="print-dossier-button"
               onClick={handlePrint}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/20 active:bg-white/30 text-white rounded-xl text-xs font-bold transition-all border border-white/20 cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/20 active:bg-white/30 active:scale-[0.97] text-white rounded-xl text-xs font-bold transition-[transform,background-color] duration-150 border border-white/20 cursor-pointer"
               title="Imprimir o Guardar en PDF"
             >
               <Printer className="w-3.5 h-3.5" />
@@ -112,15 +121,15 @@ export const PetDossierModal: React.FC<PetDossierModalProps> = ({ pet, isOpen, o
                 Padrón Único de Identificación y Registro Clínico Digital
               </p>
             </div>
-            <div className="text-right text-[11px] text-slate-500">
+            <div className="text-right text-[11px] text-slate-500 min-w-0">
               {pet.owner && (
-                <div className="mb-1">
+                <div className="mb-1 min-w-0">
                   <p className="font-semibold text-slate-700">Tutor Responsable:</p>
-                  <p className="font-medium text-slate-900">{pet.owner.firstName} {pet.owner.lastName}</p>
+                  <p className="font-medium text-slate-900 break-words">{pet.owner.firstName} {pet.owner.lastName}</p>
                 </div>
               )}
               <p className="font-semibold text-slate-700">Fecha de Emisión:</p>
-              <p>{new Date().toLocaleDateString('es-AR', { day: '2-digit', month: 'long', year: 'numeric' })}</p>
+              <p>{formatDateAR(new Date(), { day: '2-digit', month: 'long', year: 'numeric' })}</p>
             </div>
           </div>
 
@@ -169,7 +178,7 @@ export const PetDossierModal: React.FC<PetDossierModalProps> = ({ pet, isOpen, o
                 <p className="text-xs font-bold text-sky-950 uppercase tracking-wider">
                   Microchip ISO 11784/11785 (15 Dígitos)
                 </p>
-                <p className="font-mono text-sm font-black text-sky-900" data-testid="dossier-microchip" data-testcode="dossier-microchip-code">
+                <p className="font-mono text-sm font-black text-sky-900 break-all" data-testid="dossier-microchip" data-testcode="dossier-microchip-code">
                   {pet.microchip || 'SIN MICROCHIP HOMOLOGADO'}
                 </p>
               </div>
@@ -180,7 +189,7 @@ export const PetDossierModal: React.FC<PetDossierModalProps> = ({ pet, isOpen, o
                 type="button"
                 data-testid="copy-microchip-btn"
                 onClick={handleCopyChip}
-                className="no-print inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-sky-900 hover:bg-sky-100 active:bg-sky-200 rounded-xl text-xs font-extrabold border border-sky-300 shadow-sm transition-all cursor-pointer"
+                className="no-print inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-sky-900 hover:bg-sky-100 active:bg-sky-200 active:scale-[0.97] rounded-xl text-xs font-extrabold border border-sky-300 shadow-sm transition-[transform,background-color] duration-150 cursor-pointer"
               >
                 {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-sky-700" />}
                 <span>{copied ? '¡Copiado!' : 'Copiar ISO'}</span>
@@ -241,6 +250,123 @@ export const PetDossierModal: React.FC<PetDossierModalProps> = ({ pet, isOpen, o
             </div>
           </div>
 
+          {/* Real Clinical History & Dossier Sections (when dossier prop provided) */}
+          {dossier && (
+            <div className="space-y-4">
+              {dossier.coOwners.length > 0 && (
+                <div className="p-4 rounded-2xl bg-[#FAF8F5] border border-[#E8E2D5] space-y-2">
+                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-[#06241D]">
+                    Co-tutores Autorizados
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    {dossier.coOwners.map((co) => (
+                      <span
+                        key={co.id}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-[#E8E2D5] text-xs font-semibold text-[#06241D]"
+                      >
+                        {co.name} ({co.email})
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="p-4 rounded-2xl bg-[#FAF8F5] border border-[#E8E2D5] space-y-2">
+                <h3 className="text-xs font-extrabold uppercase tracking-wider text-[#06241D]">
+                  Carnet de Vacunación ({dossier.vaccines.length})
+                </h3>
+                {dossier.vaccines.length === 0 ? (
+                  <p className="text-xs text-slate-500 italic">Sin vacunas registradas en la ficha clínica.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {dossier.vaccines.map((v) => (
+                      <div key={v.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white px-3 py-2 border border-[#E8E2D5] text-xs">
+                        <div>
+                          <span className="font-bold text-[#06241D]">{v.name}</span>
+                          {v.lotNumber && <span className="ml-2 text-slate-500">Lote {v.lotNumber}</span>}
+                        </div>
+                        <div className="text-slate-600">
+                          Aplicada: {formatDateAR(v.appliedAt)}
+                          {v.nextDueAt ? ` · Próxima: ${formatDateAR(v.nextDueAt)}` : ''}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 rounded-2xl bg-[#FAF8F5] border border-[#E8E2D5] space-y-2">
+                <h3 className="text-xs font-extrabold uppercase tracking-wider text-[#06241D]">
+                  Evoluciones Clínicas ({dossier.evolutions.length})
+                </h3>
+                {dossier.evolutions.length === 0 ? (
+                  <p className="text-xs text-slate-500 italic">Sin notas de evolución registradas.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {dossier.evolutions.map((evo) => (
+                      <div key={evo.id} className="rounded-lg bg-white px-3 py-2 border border-[#E8E2D5] text-xs space-y-1">
+                        <div className="flex items-center justify-between gap-2 font-bold text-[#06241D]">
+                          <span>{evo.vetName || 'Profesional Veterinario'}</span>
+                          <span className="text-slate-500 font-medium">{formatDateAR(evo.createdAt)}</span>
+                        </div>
+                        {evo.diagnosis && <p className="font-semibold text-[#0B4F4A]">Diagnóstico: {evo.diagnosis}</p>}
+                        <p className="text-slate-700 whitespace-pre-line">{evo.summary}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 rounded-2xl bg-[#FAF8F5] border border-[#E8E2D5] space-y-2">
+                <h3 className="text-xs font-extrabold uppercase tracking-wider text-[#06241D]">
+                  Consultas y Recetas ({dossier.consultations.length})
+                </h3>
+                {dossier.consultations.length === 0 ? (
+                  <p className="text-xs text-slate-500 italic">Sin consultas registradas aún.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {dossier.consultations.map((c) => (
+                      <div key={c.id} className="rounded-lg bg-white px-3 py-2 border border-[#E8E2D5] text-xs space-y-1">
+                        <div className="flex items-center justify-between gap-2 font-bold text-[#06241D]">
+                          <span>
+                            {c.vet ? `Dr. ${c.vet.firstName} ${c.vet.lastName}` : 'Veterinario de guardia'} · {c.status}
+                          </span>
+                          <span className="text-slate-500 font-medium">{formatDateAR(c.startedAt || c.createdAt)}</span>
+                        </div>
+                        {c.notes && <p className="text-slate-700">{c.notes}</p>}
+                        {c.prescriptions && c.prescriptions.length > 0 && (
+                          <div className="pt-1 border-t border-[#E8E2D5] space-y-0.5">
+                            {c.prescriptions.map((rx) => (
+                              <p key={rx.id} className="text-[#0B4F4A] font-semibold">
+                                Receta: {rx.medication} — {rx.dosage} · {rx.frequency} ({rx.durationDays} días)
+                              </p>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {dossier.documents.length > 0 && (
+                <div className="p-4 rounded-2xl bg-[#FAF8F5] border border-[#E8E2D5] space-y-2">
+                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-[#06241D]">
+                    Documentación y Estudios Adjuntos ({dossier.documents.length})
+                  </h3>
+                  <ul className="space-y-1 text-xs text-slate-700">
+                    {dossier.documents.map((doc) => (
+                      <li key={doc.id} className="flex items-center justify-between gap-2 rounded-lg bg-white px-3 py-1.5 border border-[#E8E2D5]">
+                        <span className="font-semibold text-[#06241D]">{doc.title}</span>
+                        <span className="text-slate-500">{doc.category} · {formatDateAR(doc.createdAt)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Legal Compliance Footer under Ley 25.326 */}
           <div className="pt-4 border-t border-[#E8E2D5] text-[10px] text-slate-500 space-y-1">
             <p className="font-semibold text-slate-700">Marco Legal y Protección de Datos:</p>
@@ -255,7 +381,7 @@ export const PetDossierModal: React.FC<PetDossierModalProps> = ({ pet, isOpen, o
           <button
             type="button"
             onClick={onClose}
-            className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 active:bg-slate-200 border border-[#E8E2D5] transition-all cursor-pointer"
+            className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 active:bg-slate-200 active:scale-[0.97] border border-[#E8E2D5] transition-[transform,background-color] duration-150 cursor-pointer"
           >
             Cerrar Expediente
           </button>

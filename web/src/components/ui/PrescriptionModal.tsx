@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Loader2, QrCode, Check } from 'lucide-react';
 import { PrescriptionModalProps, Prescription, ApiResponse } from '../../types';
 import api from '../../services/api';
 import { cn } from '../../lib/utils';
+import { useFocusTrap } from '../common/DialogOverlay';
 
 export const PrescriptionModal: React.FC<PrescriptionModalProps> = ({
   isOpen,
@@ -24,6 +25,9 @@ export const PrescriptionModal: React.FC<PrescriptionModalProps> = ({
   const [internalLoading, setInternalLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [issuedPrescription, setIssuedPrescription] = useState<Prescription | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useFocusTrap(isOpen, dialogRef, { onEscape: onClose });
 
   // Sync initial values on open or when initialValues change
   useEffect(() => {
@@ -37,20 +41,6 @@ export const PrescriptionModal: React.FC<PrescriptionModalProps> = ({
       setIssuedPrescription(null);
     }
   }, [isOpen, initialValues]);
-
-  // Handle ESC key to close modal
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -110,7 +100,7 @@ export const PrescriptionModal: React.FC<PrescriptionModalProps> = ({
   return (
     <div
       data-testid={testId}
-      className="fixed inset-0 bg-[#183c3a]/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto"
+      className="fixed inset-0 bg-[#183c3a]/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto hc-dialog-backdrop"
       role="dialog"
       aria-modal="true"
       aria-labelledby="prescription-modal-title"
@@ -119,8 +109,9 @@ export const PrescriptionModal: React.FC<PrescriptionModalProps> = ({
       }}
     >
       <div
+        ref={dialogRef}
         className={cn(
-          'bg-[#fffbef] rounded-3xl max-w-lg w-full shadow-2xl border border-[#e4dfd2] p-6 relative my-8 font-sans text-[#183c3a]',
+          'bg-[#fffbef] rounded-3xl max-w-lg w-full shadow-2xl border border-[#e4dfd2] p-6 relative my-8 font-sans text-[#183c3a] hc-dialog-panel',
           className
         )}
       >
@@ -129,7 +120,7 @@ export const PrescriptionModal: React.FC<PrescriptionModalProps> = ({
           type="button"
           onClick={onClose}
           aria-label="Cerrar modal"
-          className="absolute top-4 right-4 text-[#607674] hover:text-[#183c3a] p-1.5 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#609f9c] transition-colors"
+          className="absolute top-4 right-4 text-[#4a6866] hover:text-[#183c3a] p-1.5 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#315f5d] transition-colors"
         >
           <X className="w-5 h-5" aria-hidden="true" />
         </button>
@@ -145,7 +136,7 @@ export const PrescriptionModal: React.FC<PrescriptionModalProps> = ({
         </p>
 
         {issuedPrescription ? (
-          <div className="text-center space-y-4 pt-2" data-testid="prescription-success-container">
+          <div className="text-center space-y-4 pt-2 hc-reveal" data-testid="prescription-success-container">
             <div className="p-4 bg-[#edf6f4] border border-[#609f9c]/40 rounded-2xl text-[#183c3a] text-sm font-semibold flex items-center justify-center gap-2">
               <Check className="w-5 h-5 text-[#315f5d]" />
               <span>¡Receta Digital Emitida Exitosamente!</span>
@@ -334,7 +325,7 @@ export const PrescriptionModal: React.FC<PrescriptionModalProps> = ({
                 type="submit"
                 data-testid="save-prescription-button"
                 disabled={isSubmitting || !isIndicationsValid}
-                className="flex-1 px-4 py-2.5 bg-[#609f9c] hover:bg-[#315f5d] text-white rounded-full text-sm font-bold shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#609f9c] focus-visible:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
+                className="flex-1 px-4 py-2.5 bg-[#315f5d] hover:bg-[#183c3a] text-white rounded-full text-sm font-bold shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#315f5d] focus-visible:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
               >
                 {isSubmitting ? (
                   <>

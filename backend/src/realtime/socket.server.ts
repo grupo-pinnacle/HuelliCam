@@ -2,6 +2,7 @@ import { Server as HttpServer } from 'http';
 import { Server } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 import type Redis from 'ioredis';
+import { ConsultationStatus } from '@prisma/client';
 import { config } from '../config/env';
 import {
   closeRedisClient,
@@ -20,13 +21,11 @@ import {
   InterServerEvents,
   SocketData,
 } from './socket.types';
-
 import { isAllowedOrigin } from '../config/cors';
-import {
-  consultationConcurrencyService,
-  PostCommitEvictionParams,
-} from '../modules/consultations/consultationConcurrency.service';
-import { disconnectQueue } from './disconnectQueue';
+import { vetDisconnectTracker } from './vetDisconnectTracker';
+import { evictUserRealtimeAndCall } from './sessionEviction.helper';
+import { consultationsService } from '../modules/consultations/consultations.service';
+import prisma from '../lib/prisma';
 import { logger, runWithLogContext, serializeError } from '../lib/logger';
 
 type AppSocketServer = Server<
@@ -73,12 +72,6 @@ const guardUnawaitedRedisMethod = <T extends object, K extends keyof T>(
 };
 
 export const whenSocketRedisReady = (): Promise<void> => socketRedisReadyPromise;
-
-export const evictRevokedSessionAndResume = async (
-  params: PostCommitEvictionParams
-): Promise<void> => {
-  await consultationConcurrencyService.handlePostCommitEvictionAndResume(params);
-};
 
 export const initializeSocketServer = (httpServer: HttpServer) => {
   const nodeEnv = process.env.NODE_ENV || config.NODE_ENV;
@@ -139,16 +132,14 @@ export const initializeSocketServer = (httpServer: HttpServer) => {
   let isClosing = false;
   let redisAdapterReady = !isProduction || !redisUrl;
   const trackedRedisClients: Redis[] = [];
-  let nextConnectionEpoch = 0;
-  const deviceConnectionEpoch = new Map<string, number>();
-  const activeLocalDeviceSockets = new Map<string, Set<string>>();
+
   const previousCloseListener = closeListeners.get(httpServer);
   if (previousCloseListener) {
     httpServer.off('close', previousCloseListener);
   }
   const onHttpServerClose = () => {
     isClosing = true;
-    disconnectQueue.clear();
+    vetDisconnectTracker.clear();
   };
   closeListeners.set(httpServer, onHttpServerClose);
   httpServer.once('close', onHttpServerClose);
@@ -214,7 +205,6 @@ export const initializeSocketServer = (httpServer: HttpServer) => {
     guardUnawaitedRedisMethod(subClient, 'unsubscribe');
     trackedRedisClients.push(pubClient, subClient);
 
-    // Suppress console spam while probing the initial connection
     const handleProbeError = () => {};
     pubClient.on('error', handleProbeError);
     subClient.on('error', handleProbeError);
@@ -292,10 +282,8 @@ export const initializeSocketServer = (httpServer: HttpServer) => {
     next();
   });
 
-  // Middleware
   currentIo.use(socketAuthMiddleware);
 
-  // Connection Handler
   currentIo.on('connection', (socket) => {
     applySocketRateLimiting(socket);
     const user = socket.data.user;
@@ -324,6 +312,7 @@ export const initializeSocketServer = (httpServer: HttpServer) => {
         () => next()
       );
     });
+
     const isCurrentlyApprovedVet = () =>
       Boolean(user && user.role === 'VET' && user.vetStatus === 'APPROVED');
     const EXPLICIT_HEARTBEAT_COOLDOWN_MS = 2_000;
@@ -363,31 +352,81 @@ export const initializeSocketServer = (httpServer: HttpServer) => {
     };
 
     if (user) {
-      // Join personal user room for direct signaling (e.g. call:incoming)
       socket.join(`user:${user.id}`);
 
-      // Join device room for device-targeted handoff signaling
       if (deviceId) {
         socket.join(`device:${deviceId}`);
-        if (user.role === 'CLIENT') {
-          const deviceKey = `${user.id}:${deviceId}`;
-          const epoch = ++nextConnectionEpoch;
-          deviceConnectionEpoch.set(deviceKey, epoch);
+      }
 
-          let activeSockets = activeLocalDeviceSockets.get(deviceKey);
-          if (!activeSockets) {
-            activeSockets = new Set<string>();
-            activeLocalDeviceSockets.set(deviceKey, activeSockets);
+      if (user.role === 'CLIENT') {
+        void (async () => {
+          try {
+            if (deviceId && typeof prisma.consultation?.findFirst === 'function') {
+              const handoff = await consultationsService.handoffTutorDevice(user.id, deviceId);
+              if (handoff.hasActiveConsultation && handoff.consultationId && !isSocketDisconnected && !isClosing) {
+                if (handoff.didSwapDevice && handoff.revokedDeviceId) {
+                  await evictUserRealtimeAndCall({
+                    userId: user.id,
+                    role: 'CLIENT',
+                    reason: 'SESSION_MIGRATED_NEW_DEVICE',
+                    message: 'Tu consulta activa fue transferida a otro dispositivo.',
+                    consultationId: handoff.consultationId,
+                    revokedDeviceId: handoff.revokedDeviceId,
+                  });
+                }
+
+                if (handoff.didSwapDevice && deviceId && !isSocketDisconnected && !isClosing) {
+                  currentIo.to(`device:${deviceId}`).emit('consultation:critical_resume', {
+                    consultationId: handoff.consultationId,
+                    status: handoff.status ?? ConsultationStatus.ACTIVE,
+                    stateVersion: handoff.stateVersion ?? 1,
+                    vetId: handoff.vetId ?? null,
+                  });
+                }
+
+                if (
+                  handoff.status === ConsultationStatus.ACTIVE &&
+                  handoff.vetId
+                ) {
+                  currentIo
+                    .to([`user:${handoff.vetId}`, `consultation:${handoff.consultationId}`])
+                    .emit('consultation:tutor_reconnected', {
+                      consultationId: handoff.consultationId,
+                    });
+                }
+              }
+            } else if (typeof prisma.consultation?.findFirst === 'function') {
+              const active = await prisma.consultation.findFirst({
+                where: {
+                  clientId: user.id,
+                  status: ConsultationStatus.ACTIVE,
+                  deletedAt: null,
+                },
+                orderBy: { createdAt: 'desc' },
+                select: { id: true, vetId: true },
+              });
+              if (active?.vetId) {
+                currentIo
+                  .to([`user:${active.vetId}`, `consultation:${active.id}`])
+                  .emit('consultation:tutor_reconnected', {
+                    consultationId: active.id,
+                  });
+              }
+            }
+          } catch (err) {
+            logger.warn(
+              { userId: user.id, deviceId, err: serializeError(err) },
+              '[Socket Connect] Error checking or handing off tutor device session'
+            );
           }
-          activeSockets.add(socket.id);
+        })();
+      }
 
-          disconnectQueue.cancel(user.id, deviceId);
-        }
+      if (isCurrentlyApprovedVet()) {
+        void vetDisconnectTracker.cancel(user.id).catch(() => {});
       }
 
       const isAdmin = user.role === 'ADMIN';
-
-      // Join role room for approved vets and admins to receive sanitized triage alerts
       if (isCurrentlyApprovedVet() || isAdmin) {
         socket.join('role:vets');
       }
@@ -454,57 +493,6 @@ export const initializeSocketServer = (httpServer: HttpServer) => {
         socket.conn?.off?.('heartbeat', onConnHeartbeat);
         socket.offAny?.(onAnySocketEvent);
 
-        // Debounced guard on socket disconnect:
-        // Coalesces transient drops and cancels if tutor reconnects within DISCONNECT_DEBOUNCE_MS.
-        // Only enqueue if no other active socket for (user.id, deviceId) remains connected
-        // and no newer connection for (user.id, deviceId) occurred while fetchSockets() was in flight.
-        if (deviceId && user.role === 'CLIENT') {
-          const deviceKey = `${user.id}:${deviceId}`;
-          const epochBefore = deviceConnectionEpoch.get(deviceKey);
-
-          let hasOtherLocalSocket = false;
-          const activeSockets = activeLocalDeviceSockets.get(deviceKey);
-          if (activeSockets) {
-            activeSockets.delete(socket.id);
-            if (activeSockets.size === 0) {
-              activeLocalDeviceSockets.delete(deviceKey);
-            } else {
-              hasOtherLocalSocket = true;
-            }
-          }
-
-          if (!isClosing && reason !== 'server shutting down' && !hasOtherLocalSocket) {
-            let hasOtherActiveSocketOnDevice = false;
-            try {
-              const deviceSockets = await currentIo.in(`device:${deviceId}`).fetchSockets();
-              hasOtherActiveSocketOnDevice = deviceSockets.some(
-                (s) => s.id !== socket.id && s.data?.user?.id === user.id
-              );
-            } catch {
-              hasOtherActiveSocketOnDevice = false;
-            }
-
-            const currentEpoch = deviceConnectionEpoch.get(deviceKey);
-            const hasActiveLocalAfter = (activeLocalDeviceSockets.get(deviceKey)?.size ?? 0) > 0;
-
-            if (
-              !hasOtherActiveSocketOnDevice &&
-              !hasActiveLocalAfter &&
-              !isClosing &&
-              currentEpoch !== undefined &&
-              currentEpoch === epochBefore
-            ) {
-              disconnectQueue.enqueue(user.id, deviceId);
-            }
-
-            if (currentEpoch === epochBefore && !hasActiveLocalAfter) {
-              deviceConnectionEpoch.delete(deviceKey);
-            }
-          } else if (!hasOtherLocalSocket && deviceConnectionEpoch.get(deviceKey) === epochBefore) {
-            deviceConnectionEpoch.delete(deviceKey);
-          }
-        }
-
         try {
           await connectPresencePromise;
         } catch {
@@ -518,12 +506,47 @@ export const initializeSocketServer = (httpServer: HttpServer) => {
             role: user.role,
             vetStatus: user.vetStatus,
           });
+
+          if (
+            user.role === 'CLIENT' &&
+            presenceResult.wentOffline &&
+            !isClosing &&
+            reason !== 'server shutting down' &&
+            typeof prisma.consultation?.findFirst === 'function'
+          ) {
+            const active = await prisma.consultation.findFirst({
+              where: {
+                clientId: user.id,
+                status: ConsultationStatus.ACTIVE,
+                deletedAt: null,
+              },
+              orderBy: { createdAt: 'desc' },
+              select: { id: true, vetId: true },
+            });
+            if (active?.vetId) {
+              currentIo
+                .to([`user:${active.vetId}`, `consultation:${active.id}`])
+                .emit('consultation:tutor_reconnecting', {
+                  consultationId: active.id,
+                  message: 'El tutor perdió conexión y está reconectando…',
+                });
+            }
+          }
+
           if (isCurrentlyApprovedVet() && presenceResult.wentOffline && presenceResult.wasOnlineVet) {
             currentIo.to('role:vets').emit('vet:presence', {
               vetId: user.id,
               isOnline: false,
               lastSeen: presenceResult.lastSeen,
             });
+          }
+          if (
+            isCurrentlyApprovedVet() &&
+            presenceResult.wentOffline &&
+            !isClosing &&
+            reason !== 'server shutting down'
+          ) {
+            void vetDisconnectTracker.schedule(user.id).catch(() => {});
           }
         } catch {
           // Gracefully ignore error during server teardown

@@ -1,13 +1,20 @@
-import { useState } from "react";
-import { Button, EmptyState, Icon, Modal, PageHeader, Tabs, go } from "../shared";
+import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button, EmptyState, Icon, Modal, PageHeader, SectionStage, Tabs, go } from "../shared";
 import { useAuth } from "../context/AuthContext";
+import { useSocket } from "../context/SocketContext";
+import api from "../services/api";
+import { useAuthenticatedMediaUrl } from "../lib/authenticatedMedia";
+import type { ApiResponse, ClinicalTemplateDTO, PetDossierDTO } from "../types";
 import { getPatient, patients, type ConsultStatus as CS, type Patient } from "./data";
 import { ConsultStatus, ChatPanel, FilterSelect, Lightbox, PetPhoto, TriageBadge, useVet } from "./vetkit";
 
 const tabMap: Record<string, CS> = { Próximas: "Próxima", Activas: "Activa", Finalizadas: "Finalizada", Canceladas: "Cancelada" };
 
+const CONSULTATIONS_PAGE_SIZE = 20;
+
 export function ConsultationsPage() {
-  const { consults, patientsList } = useVet();
+  const { consults, patientsList, consultsLoading, consultsError, refetchConsults, forceEmpty } = useVet();
   const [tab, setTabState] = useState(() => {
     if (typeof window !== "undefined") {
       const param = new URLSearchParams(window.location.search).get("tab");
@@ -70,31 +77,118 @@ export function ConsultationsPage() {
   const allPets = patientsList;
   const count = (s: CS) => consults.filter((c) => c.status === s).length;
   const shown = consults.filter((c) => c.status === status && (day === "Todas" || c.day === day) && (kind === "Todas" || getPatient(c.petId).kind === kind) && (mode === "Todas" || c.mode === mode));
+  const [page, setPage] = useState(1);
   const filtered = day !== "Todas" || kind !== "Todas" || mode !== "Todas";
+  const totalPages = Math.max(1, Math.ceil(shown.length / CONSULTATIONS_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const paged = shown.slice((safePage - 1) * CONSULTATIONS_PAGE_SIZE, safePage * CONSULTATIONS_PAGE_SIZE);
   return <>
     <PageHeader eyebrow="Trabajo clínico" title="Consultas" description="Próximas, activas, finalizadas y canceladas, en un solo lugar."/>
-    <Tabs tabs={Object.keys(tabMap)} active={tab} onChange={setTab}/>
+    <Tabs tabs={Object.keys(tabMap)} active={tab} onChange={(next) => { setTab(next); setPage(1); }}/>
+    <SectionStage stageKey={tab}>
     <div className="v-filters" role="group" aria-label="Filtros de consultas">
-      <FilterSelect label="Fecha" value={day} onChange={setDay} options={["Todas", "Hoy", "Mañana", "Ayer"]}/>
-      <FilterSelect label="Estado" value={tab} onChange={setTab} options={Object.keys(tabMap)}/>
-      <FilterSelect label="Especie" value={kind} onChange={setKind} options={["Todas", ...Array.from(new Set(allPets.map((p) => p.kind)))]}/>
-      <FilterSelect label="Modalidad" value={mode} onChange={setMode} options={["Todas", "Videoconsulta", "Chat"]}/>
-      {filtered && <button className="v-link" onClick={clearFilters}>Limpiar filtros</button>}
+      <FilterSelect label="Fecha" value={day} onChange={(next) => { setDay(next); setPage(1); }} options={["Todas", "Hoy", "Mañana", "Ayer"]}/>
+      <FilterSelect label="Estado" value={tab} onChange={(next) => { setTab(next); setPage(1); }} options={Object.keys(tabMap)}/>
+      <FilterSelect label="Especie" value={kind} onChange={(next) => { setKind(next); setPage(1); }} options={["Todas", ...Array.from(new Set(allPets.map((p) => p.kind)))]}/>
+      <FilterSelect label="Modalidad" value={mode} onChange={(next) => { setMode(next); setPage(1); }} options={["Todas", "Videoconsulta", "Chat"]}/>
+      {filtered && <button className="v-link" onClick={() => { clearFilters(); setPage(1); }}>Limpiar filtros</button>}
       <span className="v-filters__count" aria-live="polite">{shown.length} de {count(status)} {tab.toLowerCase()}</span>
     </div>
-    {shown.length === 0 ? <div className="panel"><EmptyState icon="video" title="No tenés consultas para mostrar." text={filtered ? "Probá con otros filtros." : "Cuando haya actividad en esta categoría, aparecerá acá."}/></div> :
-      <div className="v-rows" role="list">{shown.map((c) => { const p = getPatient(c.petId); return <article role="listitem" className={`v-row v-row--${c.status.toLowerCase()}`} key={c.id}>
+    {!forceEmpty && consultsLoading && consults.length === 0 ? (
+      <div className="panel" aria-busy="true" aria-live="polite" style={{ padding: 20 }}>
+        <span className="sr-only">Cargando consultas</span>
+        <div className="skeleton skeleton--subtitle" />
+        <div className="skeleton skeleton--card" style={{ marginTop: 12 }} />
+      </div>
+    ) : !forceEmpty && consultsError ? (
+      <div className="panel" data-testid="vet-consultations-error-state">
+        <EmptyState
+          icon="alert"
+          title="No pudimos cargar las consultas"
+          text="Revisá tu conexión e intentá nuevamente."
+          action="Reintentar"
+          onAction={refetchConsults}
+        />
+      </div>
+    ) : shown.length === 0 ? <div className="panel"><EmptyState icon="video" title="No tenés consultas para mostrar." text={filtered ? "Probá con otros filtros." : "Cuando haya actividad en esta categoría, aparecerá acá."}/></div> : <>
+      <div className="v-rows" role="list">{paged.map((c) => { const p = getPatient(c.petId); return <article role="listitem" className={`v-row v-row--${c.status.toLowerCase()}`} key={c.id}>
         <div className="v-row__time"><b>{c.time}</b><span>{c.day}</span></div>
         <PetPhoto pet={p} size={44}/>
         <div className="v-row__main"><h3>{p.name} <small>{p.kind} · {p.breed}</small></h3><p>{c.reason}</p><small>Tutor: {p.tutor}</small></div>
         <div className="v-row__meta"><span className="v-chip"><Icon name={c.mode === "Chat" ? "message" : "video"} size={14}/>{c.mode}</span>{c.triage && <TriageBadge level={c.triage} compact/>}</div>
         <ConsultStatus status={c.status}/>
         <Button variant={c.status === "Activa" ? "primary" : "secondary"} onClick={() => go(`/vet/consultations/${c.id}`)}>Ver consulta</Button>
-      </article>; })}</div>}
+      </article>; })}</div>
+      {totalPages > 1 && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 14, gap: 12 }}>
+          <span style={{ fontSize: 13, color: "var(--ink-soft)", fontVariantNumeric: "tabular-nums" }}>
+            Página {safePage} de {totalPages} · {shown.length} consultas
+          </span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Button variant="secondary" disabled={safePage <= 1} onClick={() => setPage(Math.max(1, safePage - 1))}>Anterior</Button>
+            <Button variant="secondary" disabled={safePage >= totalPages} onClick={() => setPage(Math.min(totalPages, safePage + 1))}>Siguiente</Button>
+          </div>
+        </div>
+      )}
+    </>}
+    </SectionStage>
   </>;
 }
 
-export function FichaClinica({ p, showEvolution = false }: { p: Patient; showEvolution?: boolean }) {
+function mergeDossierIntoPatient(base: Patient, dossier?: PetDossierDTO | null): Patient {
+  if (!dossier) return base;
+  return {
+    ...base,
+    name: dossier.pet.name || base.name,
+    kind: dossier.pet.species || base.kind,
+    breed: dossier.pet.breed || base.breed,
+    weight: dossier.pet.weightKg != null ? `${dossier.pet.weightKg} kg` : base.weight,
+    sex: dossier.pet.sex || base.sex,
+    chip: dossier.pet.microchip || base.chip,
+    photo: dossier.pet.photoUrl || base.photo,
+    vaccines: dossier.vaccines.map((v) => ({
+      name: v.name,
+      date: new Date(v.appliedAt).toLocaleDateString("es-AR", { day: "2-digit", month: "short", year: "numeric" }),
+      next: v.nextDueAt ? new Date(v.nextDueAt).toLocaleDateString("es-AR", { day: "2-digit", month: "short", year: "numeric" }) : "Sin fecha",
+      state: v.status === "VENCIDA" ? "Vencida" : v.status === "PROXIMA" ? "Próxima" : "Al día",
+    })),
+    docs: dossier.documents.map((d) => ({
+      name: d.title,
+      kind: d.category,
+      date: new Date(d.createdAt).toLocaleDateString("es-AR", { day: "2-digit", month: "short", year: "numeric" }),
+      size: `${Math.max(1, Math.round(d.sizeBytes / 1024))} KB`,
+    })),
+    evolution: dossier.evolutions.map((e) => ({
+      date: new Date(e.createdAt).toLocaleDateString("es-AR", { day: "2-digit", month: "short", year: "numeric" }),
+      time: new Date(e.createdAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }),
+      author: e.vetName || "Profesional Veterinario",
+      text: e.diagnosis ? `${e.diagnosis} — ${e.summary}` : e.summary,
+    })),
+    past: dossier.consultations.map((c) => ({
+      date: new Date(c.startedAt || c.createdAt).toLocaleDateString("es-AR", { day: "2-digit", month: "short", year: "numeric" }),
+      title: c.status,
+      note: c.notes || "Consulta registrada",
+    })),
+  };
+}
+
+function SafeVetPhotoImg({ src, alt, style, onError }: { src?: string | null; alt: string; style?: React.CSSProperties; onError?: () => void }) {
+  const resolved = useAuthenticatedMediaUrl(src);
+  if (!resolved) return <span className="v-mini-empty" style={{ fontSize: 11, padding: 8 }}>Cargando...</span>;
+  return <img src={resolved} alt={alt} style={style} loading="lazy" onError={onError} />;
+}
+
+export function FichaClinica({ p: baseP, showEvolution = false }: { p: Patient; showEvolution?: boolean }) {
+  const dossierQuery = useQuery({
+    queryKey: ["pet-dossier", baseP.id],
+    enabled: Boolean(baseP.id && baseP.id !== "unknown"),
+    retry: false,
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<PetDossierDTO>>(`/api/pets/${baseP.id}/dossier`);
+      return res.data.success && res.data.data ? res.data.data : null;
+    },
+  });
+  const p = mergeDossierIntoPatient(baseP, dossierQuery.data ?? null);
   const kv = (k: string, v: string) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>;
   return <div className="v-ficha">
     <div className="v-alerts">
@@ -104,10 +198,10 @@ export function FichaClinica({ p, showEvolution = false }: { p: Patient; showEvo
     <details open><summary>Datos del paciente</summary><dl className="v-kv">{[kv("Especie", p.kind), kv("Raza", p.breed), kv("Edad", p.age), kv("Peso", p.weight), kv("Sexo", p.sex), kv("Microchip", p.chip)]}</dl></details>
     <details open><summary>Datos del tutor</summary><dl className="v-kv">{[kv("Nombre", p.tutor), kv("Teléfono", p.tutorPhone), kv("Email", p.tutorEmail)]}</dl></details>
     <details open><summary>Antecedentes<em>{p.history.length}</em></summary><ul className="v-bullets">{p.history.map((h) => <li key={h}>{h}</li>)}</ul></details>
-    <details><summary>Vacunas<em>{p.vaccines.length}</em></summary>{p.vaccines.length ? <table className="v-mini-table"><thead><tr><th>Vacuna</th><th>Aplicada</th><th>Próxima</th><th>Estado</th></tr></thead><tbody>{p.vaccines.map((v) => <tr key={v.name}><td>{v.name}</td><td>{v.date}</td><td>{v.next}</td><td><span className={`v-vacc v-vacc--${v.state === "Al día" ? "ok" : v.state === "Próxima" ? "soon" : "late"}`}>{v.state === "Vencida" && <Icon name="alert" size={12}/>}{v.state}</span></td></tr>)}</tbody></table> : <p className="v-none">No corresponde por la especie o no hay registros.</p>}</details>
-    <details><summary>Consultas anteriores<em>{p.past.length}</em></summary><ul className="v-past">{p.past.map((c) => <li key={c.date}><b>{c.date}</b><div><strong>{c.title}</strong><p>{c.note}</p></div></li>)}</ul></details>
+    <details><summary>Vacunas<em>{p.vaccines.length}</em></summary>{p.vaccines.length ? <table className="v-mini-table"><thead><tr><th>Vacuna</th><th>Aplicada</th><th>Próxima</th><th>Estado</th></tr></thead><tbody>{p.vaccines.map((v, idx) => <tr key={`${v.name}-${idx}`}><td>{v.name}</td><td>{v.date}</td><td>{v.next}</td><td><span className={`v-vacc v-vacc--${v.state === "Al día" ? "ok" : v.state === "Próxima" ? "soon" : "late"}`}>{v.state === "Vencida" && <Icon name="alert" size={12}/>}{v.state}</span></td></tr>)}</tbody></table> : <p className="v-none">No corresponde por la especie o no hay registros.</p>}</details>
+    <details><summary>Consultas anteriores<em>{p.past.length}</em></summary><ul className="v-past">{p.past.map((c, idx) => <li key={`${c.date}-${idx}`}><b>{c.date}</b><div><strong>{c.title}</strong><p>{c.note}</p></div></li>)}</ul></details>
     <details><summary>Estudios<em>{p.studies.length}</em></summary>{p.studies.length ? <ul className="v-files">{p.studies.map((s) => <li key={s.name}><Icon name="file" size={16}/><span>{s.name}</span><small>{s.date}</small></li>)}</ul> : <p className="v-none">Sin estudios cargados.</p>}</details>
-    <details><summary>Documentos<em>{p.docs.length}</em></summary>{p.docs.length ? <ul className="v-files">{p.docs.map((s) => <li key={s.name}><Icon name="file" size={16}/><span>{s.name}</span><small>{s.kind} · {s.size}</small></li>)}</ul> : <p className="v-none">Sin documentos cargados.</p>}</details>
+    <details><summary>Documentos<em>{p.docs.length}</em></summary>{p.docs.length ? <ul className="v-files">{p.docs.map((s, idx) => <li key={`${s.name}-${idx}`}><Icon name="file" size={16}/><span>{s.name}</span><small>{s.kind} · {s.size}</small></li>)}</ul> : <p className="v-none">Sin documentos cargados.</p>}</details>
     {showEvolution && <details open><summary>Evolución<em>{p.evolution.length}</em></summary><EvolutionList items={p.evolution}/></details>}
   </div>;
 }
@@ -120,31 +214,120 @@ type Save = "idle" | "saving" | "saved" | "error";
 
 export function EvolutionEditor({ p, consultationId }: { p: Patient; consultationId?: string }) {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const vetName = user ? (user.lastName ? `Dr. ${user.firstName} ${user.lastName}` : (user.firstName ? `Dr. ${user.firstName}` : "Profesional Veterinario")) : "Profesional Veterinario";
   const now = new Date();
   const dateStr = now.toLocaleDateString("es-AR", { day: "numeric", month: "short", year: "numeric" });
   const timeStr = now.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
   const [text, setText] = useState("");
   const [state, setState] = useState<Save>("idle");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [items, setItems] = useState(p.evolution);
-  const save = () => {
-    if (!text.trim()) { setState("error"); return; }
+  const [templateTitle, setTemplateTitle] = useState("");
+  const [savingTpl, setSavingTpl] = useState(false);
+
+  const templatesQuery = useQuery({
+    queryKey: ["templates", "EVOLUTION"],
+    retry: false,
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<ClinicalTemplateDTO[]>>("/api/templates?kind=EVOLUTION");
+      return res.data.success && res.data.data ? res.data.data : [];
+    },
+  });
+
+  useEffect(() => {
+    setItems(p.evolution);
+  }, [p.evolution]);
+
+  const applyTemplate = (tpl: ClinicalTemplateDTO) => {
+    const summary = typeof tpl.content?.summary === "string" ? tpl.content.summary : "";
+    if (!summary) return;
+    setText((prev) => (prev.trim() ? `${prev.trim()}\n\n${summary}` : summary));
+    if (state !== "saving") setState("idle");
+  };
+
+  const handleSaveTemplate = async () => {
+    const title = templateTitle.trim() || `Plantilla evolución ${dateStr}`;
+    if (!text.trim()) return;
+    setSavingTpl(true);
+    try {
+      await api.post("/api/templates", {
+        kind: "EVOLUTION",
+        title,
+        category: "Clínica",
+        content: { summary: text.trim() },
+      });
+      setTemplateTitle("");
+      void queryClient.invalidateQueries({ queryKey: ["templates", "EVOLUTION"] });
+    } catch {
+      // Non-blocking
+    } finally {
+      setSavingTpl(false);
+    }
+  };
+
+  const save = async () => {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      setErrorMsg("No se pudo guardar: escribí la evolución antes de guardar.");
+      setState("error");
+      return;
+    }
     setState("saving");
-    window.setTimeout(() => {
-      setItems((l) => [{ date: dateStr, time: timeStr, author: vetName, text: text.trim() }, ...l]);
-      setText(""); setState("saved");
-    }, 500);
+    setErrorMsg(null);
+    try {
+      await api.post(`/api/pets/${p.id}/evolutions`, {
+        summary: trimmed,
+        consultationId: consultationId || undefined,
+      });
+      setItems((l) => [{ date: dateStr, time: timeStr, author: vetName, text: trimmed }, ...l]);
+      setText("");
+      setState("saved");
+      queryClient.invalidateQueries({ queryKey: ["pet-dossier", p.id] });
+    } catch {
+      setErrorMsg("No pudimos guardar la evolución en el servidor. Reintentá.");
+      setState("error");
+    }
   };
   return <section className="panel v-evolution" aria-labelledby="evo-title">
     <div className="panel__heading"><div><span className="eyebrow">Registro clínico</span><h2 id="evo-title">Evolución clínica</h2></div></div>
     <div className="v-evolution__meta"><span><b>Fecha</b>{dateStr}</span><span><b>Hora</b>{timeStr}</span><span><b>Profesional</b>{vetName}</span></div>
+    {(templatesQuery.data?.length ?? 0) > 0 && (
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }} aria-label="Plantillas de evolución">
+        {templatesQuery.data!.map((tpl) => (
+          <button
+            key={tpl.id}
+            type="button"
+            className="v-chip"
+            style={{ cursor: "pointer", border: "1px solid var(--line, #e4dfd2)", background: "#faf8f5" }}
+            onClick={() => applyTemplate(tpl)}
+          >
+            + {tpl.title}
+          </button>
+        ))}
+      </div>
+    )}
     <label className="sr-only" htmlFor="evo-text">Contenido de la evolución</label>
     <textarea id="evo-text" className={`v-textarea ${state === "error" ? "is-error" : ""}`} rows={6} placeholder="Motivo, hallazgos, diagnóstico presuntivo e indicaciones…" value={text} onChange={(e) => { setText(e.target.value); if (state !== "saving") setState("idle"); }} aria-invalid={state === "error"} aria-describedby="evo-status"/>
+    {text.trim().length > 10 && (
+      <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+        <input
+          type="text"
+          placeholder="Nombre para guardar como plantilla (opcional)"
+          value={templateTitle}
+          onChange={(e) => setTemplateTitle(e.target.value)}
+          style={{ flex: 1, height: 34, borderRadius: 8, border: "1px solid var(--line)", padding: "0 10px", fontSize: 12 }}
+        />
+        <Button variant="soft" disabled={savingTpl} onClick={handleSaveTemplate}>
+          {savingTpl ? "Guardando..." : "Guardar como plantilla"}
+        </Button>
+      </div>
+    )}
     <div className="v-evolution__bar">
       <p id="evo-status" className={`v-save v-save--${state}`} role="status" aria-live="polite">
         {state === "saving" && <><span className="v-spin"/>Guardando…</>}
         {state === "saved" && <><Icon name="check" size={15}/>Guardado a las {timeStr}</>}
-        {state === "error" && <><Icon name="alert" size={15}/>No se pudo guardar: escribí la evolución antes de guardar.</>}
+        {state === "error" && <><Icon name="alert" size={15}/>{errorMsg || "No se pudo guardar: escribí la evolución antes de guardar."}</>}
         {state === "idle" && <span>{text.length ? `${text.length} caracteres sin guardar` : "Sin cambios"}</span>}
       </p>
       <Button onClick={save} disabled={state === "saving"} icon={state === "error" ? "repeat" : "check"}>{state === "error" ? "Reintentar guardado" : "Guardar evolución"}</Button>
@@ -154,14 +337,71 @@ export function EvolutionEditor({ p, consultationId }: { p: Patient; consultatio
 }
 
 export function ConsultationDetail({ id }: { id: string }) {
+  const { user } = useAuth();
   const { consults, threads, finish, setFollowUps, notify } = useVet();
+  const queryClient = useQueryClient();
+  const { reconnectingConsultations = {} } = useSocket();
   const c = consults.find((x) => x.id === id);
   const [pane, setPane] = useState("Video");
   const [finishing, setFinishing] = useState(false);
   const [box, setBox] = useState<number | null>(null);
+  const [videoCoverFailed, setVideoCoverFailed] = useState(false);
+  const [failedPhotoIds, setFailedPhotoIds] = useState<Record<string, boolean>>({});
+  const [followUpOpen, setFollowUpOpen] = useState(false);
+  const [fuTitle, setFuTitle] = useState("");
+  const [fuDate, setFuDate] = useState(() => new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
+  const [fuTime, setFuTime] = useState("18:00");
+  const [fuNotes, setFuNotes] = useState("");
+  const [fuBusy, setFuBusy] = useState(false);
+
+  const slotsQuery = useQuery({
+    queryKey: ["scheduling", "vet-slots", user?.id, fuDate],
+    enabled: Boolean(followUpOpen && user?.id && fuDate),
+    retry: false,
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<{ slots: Array<{ startIso: string; label: string; available: boolean }> }>>(
+        `/api/scheduling/vets/${user!.id}/slots?date=${encodeURIComponent(fuDate)}`
+      );
+      return res.data.success && res.data.data ? res.data.data.slots : [];
+    },
+  });
+  const dossierQuery = useQuery({
+    queryKey: ["pet-dossier", c?.petId],
+    enabled: Boolean(c?.petId && c.petId !== "unknown"),
+    retry: false,
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<PetDossierDTO>>(`/api/pets/${c!.petId}/dossier`);
+      return res.data.success && res.data.data ? res.data.data : null;
+    },
+  });
+  const basePatient = getPatient(c?.petId || "unknown");
+  const p = mergeDossierIntoPatient(basePatient, dossierQuery.data ?? null);
+  const coverSrc = useAuthenticatedMediaUrl(p.photo);
   if (!c) return <><button className="back-link" onClick={() => go("/vet/consultations")}><Icon name="arrow" size={17}/> Volver a consultas</button><div className="panel"><EmptyState icon="video" title="No encontramos esta consulta" text="Puede haber sido movida o eliminada."/></div></>;
-  const p = getPatient(c.petId);
-  const photos = (threads.find((t) => t.petId === p.id)?.msgs ?? []).filter((m) => m.kind === "image");
+  const chatPhotos = (threads.find((t) => t.petId === p.id)?.msgs ?? []).filter((m) => m.kind === "image").map((m) => ({
+    id: m.id,
+    src: m.src || "",
+    name: m.name || "Fotografía clínica",
+    time: m.time,
+    pos: m.pos,
+    date: c.date,
+  }));
+  const sharedPhotos = (dossierQuery.data?.sharedMedia ?? [])
+    .filter((m) => m.mimeType.startsWith("image/"))
+    .map((m) => ({
+      id: m.id,
+      src: m.url,
+      name: m.originalName || "Fotografía clínica",
+      time: new Date(m.createdAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }),
+      pos: undefined,
+      date: new Date(m.createdAt).toLocaleDateString("es-AR", { day: "2-digit", month: "short", year: "numeric" }),
+    }));
+  const seenSrc = new Set<string>();
+  const clinicalPhotos = [...chatPhotos, ...sharedPhotos].filter((item) => {
+    if (!item.src || seenSrc.has(item.src)) return false;
+    seenSrc.add(item.src);
+    return true;
+  });
   const live = c.status === "Activa" || c.status === "Próxima";
   const show = (n: string) => `v-pane ${pane === n ? "is-active" : ""}`;
   return <>
@@ -181,14 +421,16 @@ export function ConsultationDetail({ id }: { id: string }) {
     <div className="v-workspace">
       <section className={`${show("Video")} v-pane--video`} aria-label="Video y fotografías">
         <div className={`v-video ${live ? "" : "is-off"}`}>
-          <img src={p.photo} alt="" loading="lazy"/>
+          {!videoCoverFailed && coverSrc && (
+            <img src={coverSrc} alt="" loading="lazy" onError={() => setVideoCoverFailed(true)} />
+          )}
           <div className="v-video__overlay">
-            {c.mode === "Chat" ? <><Icon name="message" size={26}/><b>Consulta por chat</b><span>Podés pasar a video cuando lo necesites.</span></> : live ? <><Icon name="video" size={26}/><b>Sala lista</b><span>{p.tutor} {c.status === "Activa" ? "está conectado/a" : "aún no ingresó"}.</span></> : <><Icon name="video" size={26}/><b>Consulta {c.status === "Cancelada" ? "cancelada" : "finalizada"}</b><span>La videollamada ya no está disponible.</span></>}
+            {c.mode === "Chat" ? <><Icon name="message" size={26}/><b>Consulta por chat</b><span>Podés pasar a video cuando lo necesites.</span></> : live ? <><Icon name="video" size={26}/><b>Sala lista</b><span>{p.tutor} {c.status === "Activa" ? (reconnectingConsultations?.[c.id] ? "está reconectando…" : "está conectado/a") : "aún no ingresó"}.</span></> : <><Icon name="video" size={26}/><b>Consulta {c.status === "Cancelada" ? "cancelada" : "finalizada"}</b><span>La videollamada ya no está disponible.</span></>}
             {live && <Button variant="secondary" icon="video" onClick={() => go(`/call/${c.id}`)}>{c.mode === "Chat" ? "Iniciar videollamada" : "Unirme a la llamada"}</Button>}
           </div>
         </div>
-        <div className="panel v-photos"><div className="v-head v-head--tight"><h2>Fotografías clínicas</h2><span className="v-chip">{photos.length}</span></div>
-          {photos.length ? <div className="v-photos__grid">{photos.map((m, i) => <button key={m.id} onClick={() => setBox(i)} aria-label={`Ampliar ${m.name}`}><img src={m.src} alt={m.name} style={{ objectPosition: m.pos }} loading="lazy"/><span>{m.time}</span></button>)}</div> : <p className="v-none">El tutor todavía no envió fotografías.</p>}
+        <div className="panel v-photos"><div className="v-head v-head--tight"><h2>Fotografías clínicas</h2><span className="v-chip">{clinicalPhotos.length}</span></div>
+          {clinicalPhotos.length ? <div className="v-photos__grid">{clinicalPhotos.map((m, i) => <button key={m.id} onClick={() => setBox(i)} aria-label={`Ampliar ${m.name}`}>{failedPhotoIds[m.id] || !m.src ? <span className="v-mini-empty" style={{ fontSize: 11, padding: 8 }}>Sin vista</span> : <SafeVetPhotoImg src={m.src} alt={m.name} style={{ objectPosition: m.pos }} onError={() => setFailedPhotoIds((prev) => ({ ...prev, [m.id]: true }))} />}<span>{m.time}</span></button>)}</div> : <p className="v-none">El tutor todavía no envió fotografías.</p>}
         </div>
       </section>
       <section className={`${show("Ficha")} v-pane--ficha`} aria-label="Ficha clínica">
@@ -201,12 +443,130 @@ export function ConsultationDetail({ id }: { id: string }) {
         <EvolutionEditor p={p} consultationId={c.id}/>
         <aside className="panel v-actions" aria-label="Acciones clínicas"><span className="eyebrow">Acciones clínicas</span>
           <Button variant="secondary" icon="pill" onClick={() => go(`/vet/prescriptions/new?pet=${p.id}`)}>Nueva receta</Button>
-          <Button variant="secondary" icon="repeat" onClick={() => { setFollowUps((l) => [{ id: `f${Date.now()}`, petId: p.id, title: `Control: ${c.reason}`, when: "Mañana · 18:00", status: "Pendiente", note: "Creado desde la consulta." }, ...l]); notify("Seguimiento programado en esta vista para mañana · 18:00."); }}>Programar seguimiento</Button>
+          <Button
+            variant="secondary"
+            icon="repeat"
+            onClick={() => {
+              const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+              setFuTitle(`Control: ${c.reason}`);
+              setFuDate(tomorrow);
+              setFuTime("18:00");
+              setFuNotes("");
+              setFollowUpOpen(true);
+            }}
+          >
+            Programar seguimiento
+          </Button>
           <Button variant="secondary" icon="file" onClick={() => go(`/vet/patients/${p.id}`)}>Ver ficha completa</Button>
         </aside>
       </div>
     </div>
+    {followUpOpen && (
+      <Modal
+        title="Proponer seguimiento al tutor"
+        text={`Elegí fecha y horario para controlar a ${p.name}. El tutor recibirá una notificación y podrá confirmar o proponer otro horario si no está disponible.`}
+        cancel="Cancelar"
+        confirm={fuBusy ? "Enviando..." : "Enviar propuesta"}
+        onClose={() => { if (!fuBusy) setFollowUpOpen(false); }}
+        onConfirm={async () => {
+          if (fuBusy || !fuTitle.trim() || !fuDate || !fuTime) return;
+          setFuBusy(true);
+          try {
+            const localDate = new Date(`${fuDate}T${fuTime}:00`);
+            const dueIso = Number.isFinite(localDate.getTime())
+              ? localDate.toISOString()
+              : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+            await api.post("/api/scheduling/follow-ups", {
+              petId: p.id,
+              consultationId: c.id,
+              title: fuTitle.trim(),
+              dueAt: dueIso,
+              notes: fuNotes.trim() || "Propuesta de control clínico.",
+            });
+            await api
+              .post(`/api/consultations/${c.id}/messages`, {
+                content: `Propuesta de seguimiento clínico: "${fuTitle.trim()}" para el ${new Date(dueIso).toLocaleDateString("es-AR")} a las ${fuTime} hs.${fuNotes.trim() ? ` (${fuNotes.trim()})` : ""} Podés confirmar o proponer otro horario desde tu agenda.`,
+              })
+              .catch(() => {});
+            void queryClient.invalidateQueries({ queryKey: ["follow-ups"] });
+            const dueLabel = `${new Date(dueIso).toLocaleDateString("es-AR", { day: "2-digit", month: "short" })} · ${fuTime}`;
+            setFollowUps((l) => [
+              {
+                id: `f${Date.now()}`,
+                petId: p.id,
+                title: fuTitle.trim(),
+                when: dueLabel,
+                status: "Pendiente",
+                note: fuNotes.trim() || "Propuesta enviada al tutor.",
+              },
+              ...l,
+            ]);
+            setFollowUpOpen(false);
+            notify("Propuesta de seguimiento enviada al tutor.");
+          } catch {
+            notify("No pudimos enviar la propuesta de seguimiento. Revisá la fecha e intentá nuevamente.");
+          } finally {
+            setFuBusy(false);
+          }
+        }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, textAlign: "left", marginTop: 8 }}>
+          <label className="field">
+            <span>Motivo del control</span>
+            <input value={fuTitle} onChange={(e) => setFuTitle(e.target.value)} required />
+          </label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <label className="field">
+              <span>Fecha propuesta</span>
+              <input
+                type="date"
+                min={new Date().toISOString().slice(0, 10)}
+                value={fuDate}
+                onChange={(e) => setFuDate(e.target.value)}
+                required
+              />
+            </label>
+            <label className="field">
+              <span>Horario</span>
+              <input
+                type="time"
+                value={fuTime}
+                onChange={(e) => setFuTime(e.target.value)}
+                required
+              />
+            </label>
+          </div>
+          {(slotsQuery.data?.filter((s) => s.available).length ?? 0) > 0 && (
+            <div>
+              <span style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--ink-soft)", marginBottom: 6 }}>
+                Tus horarios disponibles ese día
+              </span>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {slotsQuery.data!.filter((s) => s.available).slice(0, 8).map((slot) => (
+                  <button
+                    key={slot.startIso}
+                    type="button"
+                    className={`wa-chip ${fuTime === slot.label ? "is-active" : ""}`}
+                    onClick={() => setFuTime(slot.label)}
+                  >
+                    {slot.label} hs
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <label className="field">
+            <span>Indicaciones para el tutor (opcional)</span>
+            <input
+              value={fuNotes}
+              onChange={(e) => setFuNotes(e.target.value)}
+              placeholder="Ej: Enviar foto de la evolución antes del control"
+            />
+          </label>
+        </div>
+      </Modal>
+    )}
     {finishing && <Modal title="Finalizar consulta" text={`¿Querés finalizar la consulta con ${p.name}? Revisá que la evolución clínica esté guardada.`} cancel="Seguir atendiendo" confirm="Finalizar consulta" onClose={() => setFinishing(false)} onConfirm={() => { finish(c.id); setFinishing(false); }}/>}
-    {box !== null && <Lightbox items={photos.map((m) => ({ src: m.src!, caption: m.name!, pos: m.pos }))} index={box} onIndex={setBox} onClose={() => setBox(null)} pet={p.name} consult={c.reason}/>}
+    {box !== null && <Lightbox items={clinicalPhotos.map((m) => ({ src: m.src, caption: m.name, pos: m.pos, date: m.date }))} index={box} onIndex={setBox} onClose={() => setBox(null)} pet={p.name} consult={c.reason}/>}
   </>;
 }

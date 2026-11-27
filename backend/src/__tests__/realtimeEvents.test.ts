@@ -5,14 +5,22 @@ const emittedRecords: Array<{ rooms: string | string[]; event: string; data: any
 jest.mock('../lib/prisma', () => ({
   __esModule: true,
   default: {
+    $transaction: jest.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb(prisma)),
     user: {
       findUnique: jest.fn(),
       update: jest.fn(),
     },
     consultation: {
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
       update: jest.fn(),
-      updateMany: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    consultationAuditLog: {
+      create: jest.fn().mockResolvedValue({ id: BigInt(1) }),
+    },
+    call: {
+      findFirst: jest.fn().mockResolvedValue(null),
     },
     prescription: {
       create: jest.fn(),
@@ -30,6 +38,10 @@ jest.mock('../services/email.service', () => ({
 }));
 
 jest.mock('../modules/calls/calls.service', () => ({
+  callsService: {
+    deleteLiveKitRoom: jest.fn().mockResolvedValue(undefined),
+    removeParticipant: jest.fn().mockResolvedValue(undefined),
+  },
   CallsService: jest.fn().mockImplementation(() => ({
     deleteLiveKitRoom: jest.fn().mockResolvedValue(undefined),
   })),
@@ -142,19 +154,21 @@ describe('Reactive Socket.io Events (M3)', () => {
 
   it('completeConsultation emits call:ended to consultation, client, and vet rooms (deduplicated)', async () => {
     const service = new ConsultationsService();
-    mockPrismaConsultation.findUnique.mockResolvedValue({
-      id: 'cons-comp-1',
-      clientId: 'client-ev-1',
-      vetId: 'vet-ev-1',
-      status: ConsultationStatus.ACTIVE,
-      deletedAt: null,
-    } as any);
-    mockPrismaConsultation.update.mockResolvedValue({
-      id: 'cons-comp-1',
-      clientId: 'client-ev-1',
-      vetId: 'vet-ev-1',
-      status: ConsultationStatus.COMPLETED,
-    } as any);
+    mockPrismaConsultation.findUnique
+      .mockResolvedValueOnce({
+        id: 'cons-comp-1',
+        clientId: 'client-ev-1',
+        vetId: 'vet-ev-1',
+        status: ConsultationStatus.ACTIVE,
+        deletedAt: null,
+      } as any)
+      .mockResolvedValueOnce({
+        id: 'cons-comp-1',
+        clientId: 'client-ev-1',
+        vetId: 'vet-ev-1',
+        status: ConsultationStatus.COMPLETED,
+      } as any);
+    (mockPrismaConsultation.updateMany as jest.Mock).mockResolvedValueOnce({ count: 1 });
 
     await service.completeConsultation('cons-comp-1', vetUser, { diagnosisNotes: 'OK' } as any);
 
@@ -172,19 +186,21 @@ describe('Reactive Socket.io Events (M3)', () => {
     const service = new ConsultationsService();
 
     // Manual cancel
-    mockPrismaConsultation.findUnique.mockResolvedValue({
-      id: 'cons-cancel-1',
-      clientId: 'client-ev-1',
-      vetId: 'vet-ev-1',
-      status: ConsultationStatus.WAITING,
-      notes: 'Triage',
-      deletedAt: null,
-    } as any);
-    mockPrismaConsultation.update.mockResolvedValue({
-      id: 'cons-cancel-1',
-      clientId: 'client-ev-1',
-      status: ConsultationStatus.CANCELLED,
-    } as any);
+    mockPrismaConsultation.findUnique
+      .mockResolvedValueOnce({
+        id: 'cons-cancel-1',
+        clientId: 'client-ev-1',
+        vetId: 'vet-ev-1',
+        status: ConsultationStatus.WAITING,
+        notes: 'Triage',
+        deletedAt: null,
+      } as any)
+      .mockResolvedValueOnce({
+        id: 'cons-cancel-1',
+        clientId: 'client-ev-1',
+        status: ConsultationStatus.CANCELLED,
+      } as any);
+    (mockPrismaConsultation.updateMany as jest.Mock).mockResolvedValueOnce({ count: 1 });
 
     await service.cancelConsultation('cons-cancel-1', clientUser, { reason: 'Resolved' });
     expect(emittedRecords).toContainEqual({
@@ -200,17 +216,19 @@ describe('Reactive Socket.io Events (M3)', () => {
     // Triage timeout
     emittedRecords.length = 0;
     const oldDate = new Date(Date.now() - 20 * 60 * 1000);
-    mockPrismaConsultation.findUnique.mockResolvedValue({
-      id: 'cons-triage-to',
-      clientId: 'client-ev-1',
-      status: ConsultationStatus.WAITING,
-      createdAt: oldDate,
-    } as any);
-    mockPrismaConsultation.update.mockResolvedValue({
-      id: 'cons-triage-to',
-      clientId: 'client-ev-1',
-      status: ConsultationStatus.CANCELLED,
-    } as any);
+    mockPrismaConsultation.findUnique
+      .mockResolvedValueOnce({
+        id: 'cons-triage-to',
+        clientId: 'client-ev-1',
+        status: ConsultationStatus.WAITING,
+        createdAt: oldDate,
+      } as any)
+      .mockResolvedValueOnce({
+        id: 'cons-triage-to',
+        clientId: 'client-ev-1',
+        status: ConsultationStatus.CANCELLED,
+      } as any);
+    (mockPrismaConsultation.updateMany as jest.Mock).mockResolvedValueOnce({ count: 1 });
     await service.checkTriageTimeout('cons-triage-to');
     expect(emittedRecords).toContainEqual({
       rooms: ['consultation:cons-triage-to', 'role:vets', 'user:client-ev-1'],
@@ -224,16 +242,18 @@ describe('Reactive Socket.io Events (M3)', () => {
 
     // Vet disconnect timeout
     emittedRecords.length = 0;
-    mockPrismaConsultation.findUnique.mockResolvedValue({
-      id: 'cons-vet-to',
-      clientId: 'client-ev-1',
-      status: ConsultationStatus.ACTIVE,
-    } as any);
-    mockPrismaConsultation.update.mockResolvedValue({
-      id: 'cons-vet-to',
-      clientId: 'client-ev-1',
-      status: ConsultationStatus.CANCELLED,
-    } as any);
+    mockPrismaConsultation.findUnique
+      .mockResolvedValueOnce({
+        id: 'cons-vet-to',
+        clientId: 'client-ev-1',
+        status: ConsultationStatus.ACTIVE,
+      } as any)
+      .mockResolvedValueOnce({
+        id: 'cons-vet-to',
+        clientId: 'client-ev-1',
+        status: ConsultationStatus.CANCELLED,
+      } as any);
+    (mockPrismaConsultation.updateMany as jest.Mock).mockResolvedValueOnce({ count: 1 });
     await service.checkVetDisconnectTimeout('cons-vet-to', new Date(Date.now() - 5 * 60 * 1000));
     expect(emittedRecords).toContainEqual({
       rooms: ['consultation:cons-vet-to', 'role:vets', 'user:client-ev-1'],
@@ -331,19 +351,34 @@ describe('Reactive Socket.io Events (M3)', () => {
 
     try {
       const consultationsService = new ConsultationsService();
-      mockPrismaConsultation.findUnique.mockResolvedValue({
-        id: 'cons-safe-1',
-        clientId: 'client-ev-1',
-        vetId: 'vet-ev-1',
-        status: ConsultationStatus.ACTIVE,
-        deletedAt: null,
-      } as any);
-      mockPrismaConsultation.update.mockResolvedValue({
-        id: 'cons-safe-1',
-        clientId: 'client-ev-1',
-        vetId: 'vet-ev-1',
-        status: ConsultationStatus.COMPLETED,
-      } as any);
+      mockPrismaConsultation.findUnique
+        .mockResolvedValueOnce({
+          id: 'cons-safe-1',
+          clientId: 'client-ev-1',
+          vetId: 'vet-ev-1',
+          status: ConsultationStatus.ACTIVE,
+          deletedAt: null,
+        } as any)
+        .mockResolvedValueOnce({
+          id: 'cons-safe-1',
+          clientId: 'client-ev-1',
+          vetId: 'vet-ev-1',
+          status: ConsultationStatus.COMPLETED,
+        } as any)
+        .mockResolvedValueOnce({
+          id: 'cons-safe-1',
+          clientId: 'client-ev-1',
+          vetId: 'vet-ev-1',
+          status: ConsultationStatus.ACTIVE,
+          deletedAt: null,
+        } as any)
+        .mockResolvedValueOnce({
+          id: 'cons-safe-1',
+          clientId: 'client-ev-1',
+          vetId: 'vet-ev-1',
+          status: ConsultationStatus.COMPLETED,
+        } as any);
+      (mockPrismaConsultation.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
 
       await expect(
         consultationsService.completeConsultation('cons-safe-1', vetUser, {} as any)

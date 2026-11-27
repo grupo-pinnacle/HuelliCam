@@ -12,5 +12,6 @@ router.use(authenticate);
 
 router.post('/:consultationId/token', controller.getToken);
 router.post('/:consultationId/ring', controller.ring);
+router.post('/:consultationId/incident', controller.reportIncident);
 
 export default router;

@@ -15,14 +15,14 @@ export const Button: React.FC<ButtonProps> = ({
   disabled,
   ...props
 }) => {
-  const baseStyles = 'inline-flex items-center justify-center font-bold rounded-full transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed';
+  const baseStyles = 'inline-flex items-center justify-center font-bold rounded-full transition-[transform,background-color,border-color,color,opacity] duration-150 active:scale-[0.97] focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100';
 
   const variantStyles = {
-    primary: 'bg-[#609f9c] text-white hover:bg-[#315f5d] focus:ring-[#609f9c] shadow-sm',
+    primary: 'bg-[#315f5d] text-white hover:bg-[#183c3a] focus:ring-[#315f5d] shadow-sm',
     secondary: 'bg-[#183c3a] text-[#fffbef] hover:bg-[#315f5d] focus:ring-[#183c3a] shadow-sm',
     outline: 'border border-[#183c3a]/25 text-[#183c3a] hover:bg-[#eaf7f0] focus:ring-[#609f9c] bg-white',
     danger: 'bg-[#ae4d45] text-white hover:bg-[#8e3b34] focus:ring-[#ae4d45] shadow-sm',
-    ghost: 'text-[#607674] hover:bg-[#eaf7f0] hover:text-[#183c3a] focus:ring-[#609f9c]',
+    ghost: 'text-[#4a6866] hover:bg-[#eaf7f0] hover:text-[#183c3a] focus:ring-[#609f9c]',
   };
 
   const sizeStyles = {

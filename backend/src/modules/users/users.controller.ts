@@ -33,4 +33,27 @@ export class UsersController {
       next(error);
     }
   };
+
+  public getTelemedicineConsent = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const data = await usersService.getTelemedicineConsent(req.user!.id);
+      res.status(200).json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public acceptTelemedicineConsent = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const version = typeof req.body?.version === 'string' ? req.body.version : '1.0';
+      const consent = await usersService.acceptTelemedicineConsent(req.user!.id, {
+        version,
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent') || undefined,
+      });
+      res.status(201).json({ success: true, data: consent });
+    } catch (error) {
+      next(error);
+    }
+  };
 }

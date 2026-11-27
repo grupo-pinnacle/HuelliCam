@@ -278,16 +278,16 @@ describe('BUG-03 & FEAT-01: Triage Flow in ClientApp (TriagePage & TriageResult)
         '/api/consultations',
         expect.objectContaining({
           petId: 'p1',
-          notes: '[Prioridad: VERDE] Control preventivo o consulta de rutina',
-          symptoms: ['Control preventivo o consulta de rutina'],
-          duration: 'LESS_THAN_2_HOURS',
+          notes: 'Control preventivo o consulta de rutina',
         })
       );
     });
 
-    // Ensure notes strictly did not append any (timeframe) suffix
+    // Ensure notes strictly did not inject legacy [Prioridad: ...] override or (timeframe) suffix
     const callArgs = (api.post as any).mock.calls[0][1];
+    expect(callArgs.notes).not.toContain('[Prioridad:');
     expect(callArgs.notes).not.toContain('(');
     expect(callArgs.notes).not.toContain('Hace menos de una hora');
+    expect(callArgs.duration).toBeUndefined();
   });
 });
